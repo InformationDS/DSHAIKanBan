@@ -1,0 +1,5 @@
+# 看板运行时数据（机器本地状态，不入库）
+.dsh-kanban.json
+
+# pnpm 本地缓存
+.pnpm-store/

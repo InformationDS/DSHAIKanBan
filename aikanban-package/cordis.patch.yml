@@ -1,0 +1,4 @@
+# AIKanBan persistent bundle patch.
+- insert:
+    - id: aikanban
+      name: '@omdsh-dev/dsh-aikanban'

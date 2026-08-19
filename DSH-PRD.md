@@ -1,8 +1,9 @@
-# AIKanBan for DSH（DSH 看板插件）需求契约 v2
+# AIKanBan for DSH（DSH 看板插件）需求契约 v3
 
 > 本文档是 AIKanBan（Codex 版，见 `PRD.md`）在 DSH 环境下的需求契约。
 > v1：浮层挂件形态（已废弃，保留数据层与记忆闭环内核）。
 > v2：经用户重新对齐确认的最终形态——Trello 式项目看板，任务分配给「对话」完成。
+> v3（本次迭代）：对话与工作项的显式绑定/解绑、对话显示 DSH 会话真实标题、工作项内一键新建对话。
 
 ## 1. 产品定位（一句话）
 
@@ -28,8 +29,9 @@
 ```
 Conversation {
   id            // DSH 会话 ID
-  title         // v1 显示「会话 xxxx」；后续可接会话标题
-  workItems     // 参与过的工作项列表
+  title         // 派生显示字段：DSH 会话真实标题；无标题回退「会话 xxxx」
+  workItemId    // 当前绑定的唯一工作项；同一时间至多一个
+  workItems     // 参与过的工作项历史（含已解绑/已改绑的旧归属，用于追溯）
   contextVersions: { [workItemId]: { projectMemory: verId|null, taskMemory: verId|null } }
                 // 该对话最近一次活动时收到/基于的确认版本
   createdAt, lastActiveAt
@@ -40,12 +42,34 @@ Conversation {
 - 上下文版本状态（计算值）：最新 / 已过期 / 未知（从未记录）。
 - 对话详情页内容：会话 ID、参与的工作项（含各任务上下文版本状态）、产出的建议（状态列表）、产出的记忆版本（V 号列表）。
 
+### 3.1 绑定与解绑（v3 新增）
+
+- **关系模型**：一个工作项可以有多条对话；一条对话同一时间只绑定一个工作项。
+- **绑定入口（双向）**：工作项详情页「绑定已有对话」从当前工作区的会话列表选择绑定；agent 可通过 kanban_bind_conversation 把当前会话绑定到指定工作项。
+- **改绑**：把已绑定其他工作项的对话绑定到本工作项时，UI 必须弹确认「从 X 改绑到 Y」；agent 侧改绑需用户明确同意。
+- **解绑**：工作项对话列表与对话详情页均可解绑；解绑不删除该对话的上下文版本记录、产出的建议与记忆版本来源。
+- **迁移规则**：既有数据中绑定多个工作项的对话（当前数据不存在），保留最早登记的工作项，其余自动解除并在 UI 提示。
+
+### 3.2 对话显示名（v3 新增）
+
+- 标题为派生显示字段：读取 DSH 会话真实标题（sessionTitle / readTitleSnapshots），不在看板数据中另存副本，避免双源。
+- 无标题时回退显示「会话 xxxx」。
+- 看板内重命名仅对已打开的活会话提供入口（DSH 只允许对活会话改名），重命名同步写入 DSH 会话标题；未打开的对话只读显示真实标题。
+- kanban_view 工具输出的 conversations 带 title 字段，供 agent 引用。
+
+### 3.3 在工作项内新建对话（v3 新增）
+
+- **入口**：工作项详情页对话区「＋ 新建对话」。
+- **流程**：走 DSH 标准新会话流程（workspaces.startSession）→ 看板记录「待绑定工作项 X」意图 → 新会话出现后自动绑定到该工作项 → 当前窗口跳转到新对话。
+- **不自动注入上下文**：新对话从空开始，agent 按需调用 kanban_get_handoff_context 获取交接上下文继续任务。
+- **失败处理**：新会话创建失败则不建立绑定；待绑定意图约 10 分钟未兑现自动作废，避免误绑后续打开的会话。
+
 ## 4. UI 结构（全宽看板视图）
 
 - **入口**：会话视图 Tab「📋 看板」（conversation.view 槽位，id: aikanban-board，与聊天/轨迹并列）。
 - **看板页**：顶栏（项目名=工作区、项目记忆入口、待审核数徽标、交接上下文入口、＋新建工作项）；5 列状态列（列头计数），卡片拖拽流转。
-- **工作项详情**：字段编辑、状态按钮、参与对话时间线（点击进对话详情）、任务记忆（最新版 + 版本历史 + 手动编辑）、本工作项建议审核、交接上下文生成、归档/删除。
-- **对话详情**：如上第 3 节。
+- **工作项详情**：字段编辑、状态按钮、参与对话列表（显示真实标题，点击进对话详情；支持绑定已有对话、解绑、重命名、＋新建对话）、任务记忆（最新版 + 版本历史 + 手动编辑）、本工作项建议审核、交接上下文生成、归档/删除。
+- **对话详情**：如上第 3 节（真实标题、活会话重命名、当前绑定工作项、解绑入口）。
 - **审核队列**：全部待审核建议（diff / 编辑 / 确认 / 放弃），过期建议处理。
 - **项目记忆页**：最新版 + 历史 + 手动编辑。
 - **交接页**：工作项选择 + 一次性说明 + 生成 + 复制。
@@ -62,7 +86,8 @@ Conversation {
 
 ## 6. 实现约束（DSH 动态插件）
 
-- 模型工具：kanban_view / kanban_create_work_item / kanban_update_work_item / kanban_start_memory_proposal / kanban_submit_memory_proposal / kanban_manual_edit_memory / kanban_get_handoff_context。
+- 模型工具：kanban_view / kanban_create_work_item / kanban_update_work_item / kanban_start_memory_proposal / kanban_submit_memory_proposal / kanban_manual_edit_memory / kanban_get_handoff_context / kanban_bind_conversation（把当前会话绑定到工作项，已归属其他工作项时需用户明确同意改绑）/ kanban_unbind_conversation（解绑当前会话）。
+- 会话能力来源：标题读取用 DSH sessionTitle / sessionQuery.readTitleSnapshots；重命名用 sessionTitle.rename（仅活会话）；新建对话复用客户端 workspaces.startSession；绑定候选列表只含当前工作区会话。
 - 工具定义必须用 harness.defineTool({parameters, output:{schema,render}}) + registerTool。
 - 文件写入必须传 sandboxPolicy.resolve({session}) 解析的策略。
 - 工作区解析：live 会话唯一 cwd → sessionPersistence header.cwd → workspaceRegistry 单例 → policy root → 文件推导。
@@ -72,3 +97,5 @@ Conversation {
 - 用本插件管理本插件自身开发（dsh-plugin 仓库）。
 - 至少 1 个工作项跨越 2 个 DSH 会话完成交接（对话时间线可见）。
 - 至少 1 次「agent 起草 → 看板审核 → 确认成版本」闭环；至少 1 次过期建议处理；至少 1 次拖拽流转。
+- 至少 1 次在工作项内「新建对话 → 自动绑定 → agent 取交接上下文继续」闭环。
+- 对话列表显示 DSH 真实标题；至少完成 1 次活会话重命名与 1 次改绑确认。

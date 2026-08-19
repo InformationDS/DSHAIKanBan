@@ -7,7 +7,7 @@
 ### 项目目的与范围
 dsh-plugin 工作区：为 DSH 构建 AIKanBan 风格的 Trello 式项目看板插件——任务分配给对话完成、跨会话记忆交接；同时以 PRD.md（Codex 原版）与 DSH-PRD.md（v2 契约）为需求事实源，用插件自管本插件开发。
 ### 共享约束与工作约定
-1) 记忆建议必须经用户在看板 diff 审核后确认才成为正式记忆，未确认内容不得进入交接上下文；2) 工作项状态由用户最终决定，agent 只在用户明确要求时直接修改，或在建议 fieldSuggestions 中提出随确认生效；3) 同一范围（任务=同一工作项，项目=全局）同时只允许一条活动建议；4) 数据持久化在工作区根目录 .dsh-kanban.json；5) 动态插件代码可重建：Host 源码 .host-v2.js、Client 源码 .client-check.js，均经 node --check 校验；6) 工具定义用 harness.defineTool({parameters, output:{schema,render}})，写入必须传 sandboxPolicy.resolve({session}) 的策略，返回值的 undefined 字段必须归一为 null。
+1) 记忆建议必须经用户在看板 diff 审核后确认才成为正式记忆，未确认内容不得进入交接上下文；2) 工作项状态由用户最终决定，agent 只在用户明确要求时直接修改，或在建议 fieldSuggestions 中提出随确认生效；3) 同一范围（任务=同一工作项，项目=全局）同时只允许一条活动建议；4) 数据持久化在工作区根目录 .dsh-kanban.json；5) 动态插件代码可重建：现行源码 AIKanBan/aikanban-package/lib/index.js（Host）与 lib/client.js（Client）；v2 旧源码存档于 AIKanBan/legacy/（.host-v2.js / .client-check.js）；6) 工具定义用 harness.defineTool({parameters, output:{schema,render}})，写入必须传 sandboxPolicy.resolve({session}) 的策略，返回值的 undefined 字段必须归一为 null。
 ### 已确认的项目级决策
 1) 产品形态：DSH 会话头部与「聊天」并列的「看板」全宽视图 Tab（conversation.view 槽位，id aikanban-board），不用浮层挂件；2) 看板交互：5 列状态流 + 卡片拖拽流转 + 按钮流转并存；3) 对话为一等对象：工作项详情含参与对话时间线，每条对话有独立详情页（参与任务/上下文版本状态/产出的建议与记忆版本）；4) 任务不分配给「人」而分配给「对话」，一个任务可由多条对话串行接力或并行探索。
 ### 跨工作项上下文与依赖
@@ -29,7 +29,7 @@ dsh-plugin 工作区：为 DSH 构建 AIKanBan 风格的 Trello 式项目看板�
 ### 已完成工作与当前进展
 v2 重构完成：全宽看板视图 Tab（conversation.view）、5 列拖拽流转、工作项详情（对话时间线）、对话详情页（参与任务/上下文版本状态/产出）、审核队列、项目记忆页、交接页；undefined 归一化修复；经用户浏览器验收通过；任务记忆 V1 与项目记忆 V1 已确认。
 ### 关键产物与验证结果
-工作区源码：.host-v2.js（Host，node --check 通过）、.client-check.js（Client，node --check 通过）、DSH-PRD.md（v2 契约）、REBUILD.md（新会话重建指引）；数据 .dsh-kanban.json。
+工作区源码：AikanBan/aikanban-package/lib/index.js（Host）、AikanBan/aikanban-package/lib/client.js（Client）、AikanBan/DSH-PRD.md（v3 契约）、AikanBan/REBUILD.md（新会话重建指引）；历史：AikanBan/legacy/.host-v2.js、.client-check.js（v2，已存档）；数据 .dsh-kanban.json。
 ### 未解决问题、阻塞与风险
 1) 跨会话交接未验证（本次新会话即验证）。2) 建议过期、归档/删除未实操。3) 进程重启清空动态插件注册（需重建，已演练两次）。
 ### 下一步

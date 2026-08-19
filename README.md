@@ -2,6 +2,8 @@
 
 Trello 式项目看板插件：任务不分配给「人」，而分配给「对话」（DSH 会话）来完成。一个任务可由多条对话串行接力或并行探索，跨会话交接由用户确认过的版本化记忆承载。
 
+所有 AIKanBan 相关文档、源码与产物已整理至 [`AikanBan/`](AikanBan/)。
+
 ## 核心概念
 
 | 工作看板概念 | 本插件对应 |
@@ -21,24 +23,28 @@ DSH 会话头部与「聊天」并列的**「📋 看板」全宽视图 Tab**（
 1. AI 生成内容永远是建议：agent 起草 → 用户在看板看 diff、编辑、确认或放弃 → 才成为正式记忆。
 2. 未确认内容不进入交接上下文。
 3. 同一范围（任务 = 同一工作项；项目 = 全局）同时只允许一条活动建议；基础版本被取代后旧建议自动过期。
-4. 数据落盘工作区根目录 `.dsh-kanban.json`（单文件），跨会话、跨重启复用。
+4. 数据落盘工作区根目录 `.dsh-kanban.json`（单文件，gitignore，每台机器独立），跨会话、跨重启复用。
 
-## 仓库内容
+## 目录结构
 
-- `PRD.md` — Codex 原版需求（AIKanBan MVP）
-- `DSH-PRD.md` — DSH v2 需求契约（对齐确认后的最终形态）
-- `.host-v2.js` / `.client-check.js` — 插件源码（Host/Client 半，均经 `node --check` 校验；按 `REBUILD.md` 去掉包装两行后即可作为 `cordis_define` 的 `code.host` / `code.client`）
-- `REBUILD.md` — 新 DSH 会话重建插件指引（动态插件随进程生命周期，重启后重建即可，数据不受影响）
-- `HANDOFF.md` — 跨会话交接上下文示例（由插件 `kanban_get_handoff_context` 工具生成）
-- `viz/` — 产品形态交互模拟（mockup）
-- `.dsh-kanban.json` — 看板运行时数据（已 gitignore，每台机器独立）
+```
+AikanBan/
+├── PRD.md                Codex 原版需求（AIKanBan MVP）
+├── DSH-PRD.md            DSH 需求契约（v3：对话绑定/解绑、真实标题、工作项内新建对话）
+├── PLAN.md               v3 执行方案（实现路径与验收清单）
+├── REBUILD.md            新 DSH 会话重建插件指引
+├── HANDOFF.md            跨会话交接上下文示例（由 kanban_get_handoff_context 生成）
+├── aikanban-package/     插件源码包（package.json / cordis.patch.yml / lib/index.js(Host) / lib/client.js(Client)）
+├── legacy/               v2 旧源码存档（.host-v2.js / .client-check.js，已被 aikanban-package 取代）
+└── viz/                  产品形态交互模拟（mockup）
+```
 
-## 模型工具（7 个 kanban_*）
+## 模型工具（9 个 kanban_*）
 
-`kanban_view` / `kanban_create_work_item` / `kanban_update_work_item` / `kanban_start_memory_proposal` / `kanban_submit_memory_proposal` / `kanban_manual_edit_memory` / `kanban_get_handoff_context`
+`kanban_view` / `kanban_create_work_item` / `kanban_update_work_item` / `kanban_start_memory_proposal` / `kanban_submit_memory_proposal` / `kanban_manual_edit_memory` / `kanban_get_handoff_context` / `kanban_bind_conversation` / `kanban_unbind_conversation`
 
 ## 使用方式
 
-1. 在任意 DSH 会话（工作区 = 本仓库目录）中让 agent 按 `REBUILD.md` 重建插件并批准运行。
+1. 在任意 DSH 会话（工作区 = 本仓库目录）中让 agent 按 [`AikanBan/REBUILD.md`](AikanBan/REBUILD.md) 重建插件并批准运行。
 2. 会话头部出现「📋 看板」Tab；在聊天中让 agent 起草记忆建议，在看板审核确认。
-3. 新会话继续同一工作项：让 agent 读 `HANDOFF.md` 或直接调用 `kanban_get_handoff_context`，对话时间线自动出现新对话。
+3. 新会话继续同一工作项：让 agent 读 [`AikanBan/HANDOFF.md`](AikanBan/HANDOFF.md) 或直接调用 `kanban_get_handoff_context`，对话时间线自动出现新对话。

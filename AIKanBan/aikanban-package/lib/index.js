@@ -116,6 +116,24 @@ const plugin = {
     let storageDiag = ''
     let lastPersistError = ''
 
+    // ---- v4.1：交接上下文静默挂起（随用户下一条消息同 step 注入，上下文在前）----
+    // sessionId -> { workItemId, messageId, at, deadline }；messageId 为空 = agent 未就绪的挂起意图（agent/created 兜底投递）。
+    const pendingHandoffs = new Map()
+    function pendingEntryOf(sessionId) {
+      const e = pendingHandoffs.get(sessionId)
+      if (!e) return undefined
+      if (e.deadline && Date.now() > e.deadline) { pendingHandoffs.delete(sessionId); return undefined }
+      return e
+    }
+    function pendingHandoffList() {
+      const out = []
+      for (const [sessionId, e] of pendingHandoffs.entries()) {
+        if (e.deadline && Date.now() > e.deadline) { pendingHandoffs.delete(sessionId); continue }
+        out.push({ sessionId, workItemId: e.workItemId })
+      }
+      return out
+    }
+
     let readyPromise = null
     function ensureReady() {
       if (readyPromise) return readyPromise
@@ -343,7 +361,7 @@ const plugin = {
       return out
     }
 
-    // 对外 state 视图：conversations 每项带派生 title/live，不污染落盘 state。
+    // 对外 state 视图：conversations 每项带派生 title/live，不污染落盘 state；附挂起注入清单供 UI 显示挂起态。
     async function viewState(exec) {
       await ensureReady()
       await refine(exec || undefined)
@@ -354,7 +372,7 @@ const plugin = {
         const live = !!(sess && sess.get(c.id))
         return Object.assign({}, cleanJson(c), { title: titles[c.id] || fallbackTitle(c.id), live })
       })
-      return Object.assign({}, cleanJson(state), { conversations })
+      return Object.assign({}, cleanJson(state), { conversations, pendingHandoffs: pendingHandoffList() })
     }
 
     // 对话一等对象：把当前会话登记为参与某工作项（或项目级活动）的对话。
@@ -376,6 +394,26 @@ const plugin = {
       }
       conv.lastActiveAt = nowIso()
       return conv
+    }
+
+    // ---- v4：插件 → 会话消息投递 ----
+    function pluginUserMessage(text) {
+      return {
+        id: makeId('msg'), role: 'user',
+        content: [{ type: 'text', text: text }],
+        source: { kind: 'plugin', plugin: 'dsh-aikanban', form: 'instructions' },
+      }
+    }
+    function liveAgentOf(sessionId) {
+      const a = ctx.get('agents')
+      if (!a) return undefined
+      try { return a.get(sessionId) } catch (err) { return undefined }
+    }
+    function canFollowup(agent) {
+      return !!(agent && typeof agent.followup === 'function')
+    }
+    function canInject(agent) {
+      return !!(agent && (typeof agent.inject === 'function' || typeof agent.send === 'function'))
     }
 
     async function opCreateWorkItem(args, exec) {
@@ -640,14 +678,9 @@ const plugin = {
       return lines.join('\n')
     }
 
-    async function opHandoffContext(args, exec) {
-      await ensureReady()
-      await refine(exec)
-      const workItemId = strOr(args && args.workItemId)
+    // v4：交接上下文文本组装（opHandoffContext 与 opInjectHandoff 共用）
+    function buildHandoffText(workItemId, note) {
       const wi = workItemId ? findWorkItem(workItemId) : undefined
-      if (workItemId && !wi) return { ok: false, error: '工作项不存在' }
-      const note = strOr(args && args.note)
-      if (exec) recordConversation(exec, workItemId || undefined)
       const lines = []
       lines.push('# 交接上下文（AIKanBan for DSH）')
       lines.push('')
@@ -669,8 +702,19 @@ const plugin = {
       }
       lines.push('')
       lines.push('## 本次补充说明')
-      lines.push(note.trim() || '（无）')
-      return { ok: true, text: lines.join('\n') }
+      lines.push((note || '').trim() || '（无）')
+      return lines.join('\n')
+    }
+
+    async function opHandoffContext(args, exec) {
+      await ensureReady()
+      await refine(exec)
+      const workItemId = strOr(args && args.workItemId)
+      if (workItemId && !findWorkItem(workItemId)) return { ok: false, error: '工作项不存在' }
+      const note = strOr(args && args.note)
+      if (exec) recordConversation(exec, workItemId || undefined)
+      const text = buildHandoffText(workItemId, note)
+      return { ok: true, text }
     }
 
     const handlers = {}
@@ -810,6 +854,180 @@ const plugin = {
       }
     }
 
+    // v4 RPC：看板按钮 → 当前会话 agent 起草记忆建议
+    async function opDispatchMemoryGeneration(args, exec) {
+      await ensureReady()
+      await refine(exec)
+      const kind = args && args.kind === 'project' ? 'project' : 'task'
+      const workItemId = kind === 'task' ? strOr(args && args.workItemId) : undefined
+      if (kind === 'task' && !findWorkItem(workItemId)) return { ok: false, error: '工作项不存在' }
+      const existing = state.proposals.find((p) =>
+        p.kind === kind && (kind === 'project' || p.workItemId === workItemId) && ACTIVE.indexOf(p.status) >= 0)
+      if (existing) {
+        return {
+          ok: false, code: 'active-proposal', proposalId: existing.id, proposalStatus: existing.status,
+          error: existing.status === 'pending'
+            ? '该范围已有待审核建议，请先审核或放弃后再生成'
+            : '该范围已有起草中建议，agent 起草时会复用它',
+        }
+      }
+      const sid = strOr(args && args.sessionId) || currentSessionId(exec)
+      const live = liveAgentOf(sid)
+      if (!canFollowup(live)) return { ok: false, code: 'agent-not-ready', error: '当前会话 agent 未就绪，请稍后重试' }
+      const head = kind === 'task'
+        ? '看板中点击了「生成任务记忆建议」。请基于本会话（及看板中该工作项相关记录）的进展，' +
+          '调用 kanban_start_memory_proposal({kind:"task", workItemId:"' + workItemId + '"}) 获取基础版本，' +
+          '保留仍有效的内容、只增删改确有变化的部分，起草更新后的 6 个分区，' +
+          '然后调用 kanban_submit_memory_proposal 提交为待审核建议。用户在审核队列确认后才成为正式记忆。'
+        : '看板中点击了「生成项目记忆建议」。请基于最新项目记忆与各工作项/对话的进展，' +
+          '调用 kanban_start_memory_proposal({kind:"project"}) 获取基础版本，' +
+          '保留仍有效内容、只增删改确有变化的部分，起草更新后的 5 个分区，' +
+          '然后调用 kanban_submit_memory_proposal 提交为待审核建议。用户在审核队列确认后才成为正式记忆。'
+      const note = strOr(args && args.note)
+      const wi = kind === 'task' ? findWorkItem(workItemId) : undefined
+      const text = head
+        + (note ? '\n本次生成说明：' + note : '')
+        + (wi ? '\n目标工作项：' + wi.title : '')
+      live.followup(pluginUserMessage(text))
+      return { ok: true, dispatched: true, sessionId: sid }
+    }
+
+    // v4 RPC：把交接上下文作为一条用户消息注入目标会话（新建对话自动注入 / 手动注入共用）
+    async function opInjectHandoff(args, exec) {
+      await ensureReady()
+      await refine(exec)
+      const sessionId = strOr(args && args.sessionId) || currentSessionId(exec)
+      if (!sessionId || sessionId === 'unknown') return { ok: false, error: '无法确定会话' }
+      const workItemId = strOr(args && args.workItemId)
+      const wi = workItemId ? findWorkItem(workItemId) : undefined
+      if (!wi) return { ok: false, error: '工作项不存在' }
+      const conv = state.conversations.find((c) => c.id === sessionId)
+      if (!conv || conv.workItemId !== workItemId) return { ok: false, code: 'not-bound', error: '该会话未绑定此工作项' }
+      const mode = (args && args.mode) === 'now' ? 'now' : 'pending'
+      const live = liveAgentOf(sessionId)
+      let delayed = false
+      if (mode === 'now') {
+        // v4 旧行为：立即唤醒目标会话
+        if (!canFollowup(live)) return { ok: false, code: 'agent-not-ready', error: '目标会话未打开（agent 未就绪）' }
+        live.followup(pluginUserMessage(handoffText(workItemId, wi, true)))
+      } else if (!canInject(live)) {
+        // v4.1：agent 未就绪 → 登记挂起意图，agent/created 事件兜底投递
+        pendingHandoffs.set(sessionId, { workItemId, messageId: '', at: nowIso(), deadline: Date.now() + 10 * 60 * 1000 })
+        return { ok: true, injected: false, waitingAgent: true, sessionId: sessionId }
+      } else {
+        // v4.1：静默挂起（next-step，不唤醒）——用户下一条消息打开 turn 时，上下文与其同 step 且在前
+        const r = deliverHandoff(sessionId, workItemId, wi, false)
+        if (r.delayed) {
+          // 目标 agent 忙：登记挂起意图，待 agent/status 回到 idle 再投递（避免被队列泵提前带出）
+          pendingHandoffs.set(sessionId, { workItemId, messageId: '', at: nowIso(), deadline: Date.now() + 10 * 60 * 1000 })
+          delayed = true
+        } else if (!r.delivered) {
+          return { ok: false, code: 'agent-not-ready', error: '目标会话未打开（agent 未就绪）' }
+        }
+      }
+      // 登记「目标会话」（注意：exec 是点击方会话，必须显式指向目标）
+      recordConversation({ agent: { id: sessionId } }, workItemId)
+      commit()
+      return { ok: true, injected: true, queued: mode !== 'now', delayed: delayed, sessionId: sessionId }
+    }
+
+    // v4.1 助手：交接上下文文本（立即模式带行动指令，挂起模式注明随下一条用户消息一起处理）
+    function handoffText(workItemId, wi, immediate) {
+      return buildHandoffText(workItemId, undefined)
+        + (immediate
+          ? '\n\n以上是 AIKanBan 看板交接上下文（项目记忆 + 工作项信息 + 任务记忆）。'
+            + '请基于它继续工作项「' + wi.title + '」；如需更新版本可用 kanban_get_handoff_context 重新读取。'
+          : '\n\n以上是 AIKanBan 看板交接上下文（项目记忆 + 工作项信息 + 任务记忆）。'
+            + '请结合紧随其后的用户消息一起处理，继续工作项「' + wi.title + '」。')
+    }
+
+    // v4.1：静默投递（幂等：同会话新挂起替换旧挂起）。返回 { delivered, waitingAgent, delayed }
+    function deliverHandoff(sessionId, workItemId, wi, immediate) {
+      const live = liveAgentOf(sessionId)
+      if (!live) return { delivered: false, waitingAgent: true, delayed: false }
+      // 目标 agent 忙（running）：先不投递——队列泵会在当前 turn 结束后把挂起消息提前带出（无用户消息相伴）；
+      // 登记为挂起意图，待 agent/status 回到 idle 再投递。
+      if (!immediate && live.status && live.status !== 'idle') return { delivered: false, waitingAgent: false, delayed: true }
+      const prev = pendingEntryOf(sessionId)
+      if (prev && prev.messageId && live.inbox && typeof live.inbox.remove === 'function') {
+        try { live.inbox.remove(prev.messageId) } catch (err) {}
+      }
+      const msg = pluginUserMessage(handoffText(workItemId, wi, immediate))
+      if (immediate) {
+        if (typeof live.followup !== 'function') return { delivered: false, waitingAgent: false, delayed: false }
+        live.followup(msg)
+      } else {
+        if (typeof live.inject === 'function') live.inject(msg)
+        else if (typeof live.send === 'function') live.send(msg, 'next-step', false)
+        else return { delivered: false, waitingAgent: false, delayed: false }
+      }
+      pendingHandoffs.set(sessionId, { workItemId, messageId: immediate ? '' : msg.id, at: nowIso(), deadline: 0 })
+      return { delivered: true, waitingAgent: false, delayed: false }
+    }
+
+    // v4.1：兑现挂起意图（agent 创建就绪 / 状态回到 idle 时投递静默挂起）
+    function flushPendingHandoff(a) {
+      const e = pendingEntryOf(a.id)
+      if (!e || e.messageId) return
+      const conv = state.conversations.find((c) => c.id === a.id)
+      if (!conv || conv.workItemId !== e.workItemId) { pendingHandoffs.delete(a.id); return }
+      const wi = findWorkItem(e.workItemId)
+      if (!wi) { pendingHandoffs.delete(a.id); return }
+      const msg = pluginUserMessage(handoffText(e.workItemId, wi, false))
+      try {
+        if (typeof a.inject === 'function') a.inject(msg)
+        else if (typeof a.send === 'function') a.send(msg, 'next-step', false)
+        else { pendingHandoffs.delete(a.id); return }
+      } catch (err) { pendingHandoffs.delete(a.id); return }
+      pendingHandoffs.set(a.id, { workItemId: e.workItemId, messageId: msg.id, at: nowIso(), deadline: 0 })
+      recordConversation({ agent: { id: a.id } }, e.workItemId)
+      commit()
+    }
+
+    // v4.1 RPC：取消挂起的注入（幂等；未消费的消息从 inbox 摘除）
+    async function opCancelPendingHandoff(args, exec) {
+      await ensureReady()
+      await refine(exec)
+      const sessionId = strOr(args && args.sessionId) || currentSessionId(exec)
+      if (!sessionId || sessionId === 'unknown') return { ok: false, error: '无法确定会话' }
+      const workItemId = strOr(args && args.workItemId)
+      const e = pendingEntryOf(sessionId)
+      if (!e || (workItemId && e.workItemId !== workItemId)) return { ok: true, canceled: false }
+      if (e.messageId) {
+        const live = liveAgentOf(sessionId)
+        if (live && live.inbox && typeof live.inbox.remove === 'function') {
+          try { live.inbox.remove(e.messageId) } catch (err) {}
+        }
+      }
+      pendingHandoffs.delete(sessionId)
+      return { ok: true, canceled: true }
+    }
+
+    // v4.1：新会话 agent 就绪 / 状态回到 idle 时兑现挂起意图
+    ctx.on('agent/created', (payload) => {
+      try {
+        const a = payload && payload.agent
+        if (a && typeof a.id === 'string') flushPendingHandoff(a)
+      } catch (err) {}
+    })
+    ctx.on('agent/status', (payload) => {
+      try {
+        const a = payload && payload.agent
+        if (a && typeof a.id === 'string' && payload.status === 'idle') flushPendingHandoff(a)
+      } catch (err) {}
+    })
+
+    // v4.1：挂起消息被消费（进入 turn）后清除登记，UI 挂起态随之消失
+    ctx.on('agent/inbox/claimed', (payload) => {
+      try {
+        const a = payload && payload.agent
+        const m = payload && payload.message
+        if (!a || !m || typeof a.id !== 'string' || typeof m.id !== 'string') return
+        const e = pendingHandoffs.get(a.id)
+        if (e && e.messageId === m.id) pendingHandoffs.delete(a.id)
+      } catch (err) {}
+    })
+
     rpc('getState', async () => { await ensureReady(); await refine(undefined); return { ok: true, state, diag: { storage: storageDiag, persistError: lastPersistError } } })
     rpc('createWorkItem', opCreateWorkItem)
     rpc('updateWorkItem', opUpdateWorkItem)
@@ -825,6 +1043,11 @@ const plugin = {
     rpc('unbindConversation', opUnbindConversation)
     rpc('renameConversation', opRenameConversation)
     rpc('listSessions', opListSessions)
+    // ---- v4 RPC ----
+    rpc('dispatchMemoryGeneration', opDispatchMemoryGeneration)
+    rpc('injectHandoff', opInjectHandoff)
+    // ---- v4.1 RPC ----
+    rpc('cancelPendingHandoff', opCancelPendingHandoff)
 
     function compact(r) {
       if (!r || typeof r !== 'object') return r

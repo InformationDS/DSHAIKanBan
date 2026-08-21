@@ -1,9 +1,10 @@
-# AIKanBan for DSH（DSH 看板插件）需求契约 v3
+# AIKanBan for DSH（DSH 看板插件）需求契约 v4
 
 > 本文档是 AIKanBan（Codex 版，见 `PRD.md`）在 DSH 环境下的需求契约。
 > v1：浮层挂件形态（已废弃，保留数据层与记忆闭环内核）。
 > v2：经用户重新对齐确认的最终形态——Trello 式项目看板，任务分配给「对话」完成。
-> v3（本次迭代）：对话与工作项的显式绑定/解绑、对话显示 DSH 会话真实标题、工作项内一键新建对话。
+> v3：对话与工作项的显式绑定/解绑、对话显示 DSH 会话真实标题、工作项内一键新建对话。
+> v4（本次迭代）：看板内一键生成记忆建议；工作项内新建对话自动注入交接上下文。
 
 ## 1. 产品定位（一句话）
 
@@ -57,21 +58,23 @@ Conversation {
 - 看板内重命名仅对已打开的活会话提供入口（DSH 只允许对活会话改名），重命名同步写入 DSH 会话标题；未打开的对话只读显示真实标题。
 - kanban_view 工具输出的 conversations 带 title 字段，供 agent 引用。
 
-### 3.3 在工作项内新建对话（v3 新增）
+### 3.3 在工作项内新建对话（v3 新增 → v4 自动注入交接上下文）
 
 - **入口**：工作项详情页对话区「＋ 新建对话」。
-- **流程**：走 DSH 标准新会话流程（workspaces.startSession）→ 看板记录「待绑定工作项 X」意图 → 新会话出现后自动绑定到该工作项 → 当前窗口跳转到新对话。
-- **不自动注入上下文**：新对话从空开始，agent 按需调用 kanban_get_handoff_context 获取交接上下文继续任务。
-- **失败处理**：新会话创建失败则不建立绑定；待绑定意图约 10 分钟未兑现自动作废，避免误绑后续打开的会话。
+- **流程**：走 DSH 标准新会话流程（workspaces.startSession）→ 看板记录「待绑定工作项 X」意图 → 新会话出现后自动绑定到该工作项 → **自动注入交接上下文**（injectHandoff：完整交接上下文文本作为新会话首条用户消息）→ 当前窗口跳转到新对话。
+- **注入内容**：已确认的最新项目记忆 + 工作项信息 + 最新任务记忆的完整交接上下文文本（与 `kanban_get_handoff_context` 同源组装）；未确认内容仍不进上下文。
+- **注入方式**：`agents.get(新会话id).followup(UserMessage)`，消息 source `{kind:'plugin', plugin:'dsh-aikanban', form:'instructions'}`；agent 因 followup 被唤醒，直接带记忆开跑第一个 turn。
+- **失败处理**：新会话创建失败则不建立绑定；待绑定意图约 10 分钟未兑现自动作废，避免误绑后续打开的会话；注入时新会话 agent 未就绪 → Client 5×2s 重试，仍失败 → 看板降级提示条（localStorage 持久化）+ 对话行手动「注入上下文」按钮兜底。
+- **手动注入**：工作项「已绑定对话」行（仅活会话 live）提供「注入上下文」按钮，随时把最新交接上下文补投给该对话（2 次重试）。
 
 ## 4. UI 结构（全宽看板视图）
 
 - **入口**：会话视图 Tab「📋 看板」（conversation.view 槽位，id: aikanban-board，与聊天/轨迹并列）。
 - **看板页**：顶栏（项目名=工作区、项目记忆入口、待审核数徽标、交接上下文入口、＋新建工作项）；5 列状态列（列头计数），卡片拖拽流转。
-- **工作项详情**：字段编辑、状态按钮、参与对话列表（显示真实标题，点击进对话详情；支持绑定已有对话、解绑、重命名、＋新建对话）、任务记忆（最新版 + 版本历史 + 手动编辑）、本工作项建议审核、交接上下文生成、归档/删除。
+- **工作项详情**：字段编辑、状态按钮、参与对话列表（显示真实标题，点击进对话详情；支持绑定已有对话、解绑、重命名、注入上下文、＋新建对话）、任务记忆（最新版 + 版本历史 + 手动编辑 + **✨ 生成任务记忆建议**）、本工作项建议审核、交接上下文生成、归档/删除。
 - **对话详情**：如上第 3 节（真实标题、活会话重命名、当前绑定工作项、解绑入口）。
 - **审核队列**：全部待审核建议（diff / 编辑 / 确认 / 放弃），过期建议处理。
-- **项目记忆页**：最新版 + 历史 + 手动编辑。
+- **项目记忆页**：最新版 + 历史 + 手动编辑 + **✨ 生成项目记忆建议**。
 - **交接页**：工作项选择 + 一次性说明 + 生成 + 复制。
 
 ## 5. 保留的 PRD 内核（不变）
@@ -88,6 +91,8 @@ Conversation {
 
 - 模型工具：kanban_view / kanban_create_work_item / kanban_update_work_item / kanban_start_memory_proposal / kanban_submit_memory_proposal / kanban_manual_edit_memory / kanban_get_handoff_context / kanban_bind_conversation（把当前会话绑定到工作项，已归属其他工作项时需用户明确同意改绑）/ kanban_unbind_conversation（解绑当前会话）。
 - 会话能力来源：标题读取用 DSH sessionTitle / sessionQuery.readTitleSnapshots；重命名用 sessionTitle.rename（仅活会话）；新建对话复用客户端 workspaces.startSession；绑定候选列表只含当前工作区会话。
+- v4 RPC：`dispatchMemoryGeneration`（看板按钮 → 把起草指令消息派发给当前会话 agent）/ `injectHandoff`（把交接上下文作为一条用户消息注入目标会话，仅限已绑定该工作项的活会话；不绑定则返回 `not-bound`，目标未打开返回 `agent-not-ready`）。
+- v4 消息投递：`agents.get(sessionId).followup(UserMessage)`，消息形状 `{ id, role:'user', content:[{type:'text',text}], source:{kind:'plugin', plugin:'dsh-aikanban', form:'instructions'} }`。生成与注入都只是把建议/上下文送到位，确认优先原则不变；未确认内容不进注入文本。
 - 工具定义必须用 harness.defineTool({parameters, output:{schema,render}}) + registerTool。
 - 文件写入必须传 sandboxPolicy.resolve({session}) 解析的策略。
 - 工作区解析：live 会话唯一 cwd → sessionPersistence header.cwd → workspaceRegistry 单例 → policy root → 文件推导。
@@ -97,5 +102,6 @@ Conversation {
 - 用本插件管理本插件自身开发（dsh-plugin 仓库）。
 - 至少 1 个工作项跨越 2 个 DSH 会话完成交接（对话时间线可见）。
 - 至少 1 次「agent 起草 → 看板审核 → 确认成版本」闭环；至少 1 次过期建议处理；至少 1 次拖拽流转。
-- 至少 1 次在工作项内「新建对话 → 自动绑定 → agent 取交接上下文继续」闭环。
+- 至少 1 次看板内点「✨ 生成记忆建议」→ 当前会话 agent 起草 → 审核确认成版本的闭环（任务与项目各至少 1 次）。
+- 至少 1 次在工作项内「新建对话 → 自动绑定 → 自动注入交接上下文 → agent 带记忆继续」闭环；至少 1 次注入失败降级后手动「注入上下文」补救。
 - 对话列表显示 DSH 真实标题；至少完成 1 次活会话重命名与 1 次改绑确认。

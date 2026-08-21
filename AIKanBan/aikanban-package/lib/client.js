@@ -153,6 +153,41 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // v4：注入失败降级提示（模块变量 + localStorage，防刷新丢失）
+    const INJ_KEY = 'aikanban:injectNote'
+    let injectNote = ''
+    try { injectNote = window.localStorage.getItem(INJ_KEY) || '' } catch (e) {}
+    function setInjectNote(s) {
+      injectNote = s
+      try { if (s) window.localStorage.setItem(INJ_KEY, s); else window.localStorage.removeItem(INJ_KEY) } catch (e) {}
+    }
+
+    // v4.1：自动注入改为单次调用——Host 侧 agent 未就绪时登记挂起并由 agent/created 事件兜底投递；
+    // 挂起语义：上下文在用户下一条消息同 step 处理且在前，不发消息不唤醒。
+    async function injectWithRetry(sessionId, workItemId, maxAttempts) {
+      const max = 1 // v4.1：单次即可（Host 挂起登记 + agent/created 事件兜底；重试参数保留兼容）
+      for (let i = 0; i < max; i++) {
+        const r = await call('injectHandoff', { sessionId: sessionId, workItemId: workItemId })
+        if (r && r.ok) { setInjectNote(''); return true } // waitingAgent:true 也算成功（Host 事件兜底）
+        if (r && r.code === 'not-bound') return false // 绑定没成，不注入、不提示重试
+        if (i < max - 1 && timer) await timer.timeout(2000)
+      }
+      setInjectNote('上下文注入未完成：可在工作项对话区对该对话点「注入上下文」重试')
+      return false
+    }
+
+    // v4：生成派发（agent-not-ready 时客户端重试，与注入同理）
+    async function dispatchWithRetry(kind, workItemId, note) {
+      const max = 5
+      for (let i = 0; i < max; i++) {
+        const r = await call('dispatchMemoryGeneration', { kind: kind, workItemId: workItemId, note: note })
+        if (r && r.ok) return { ok: true }
+        if (r && r.code === 'active-proposal') return { ok: false, msg: r.error || '该范围已有活动建议' }
+        if (i < max - 1 && timer) await timer.timeout(2000)
+      }
+      return { ok: false, msg: '派发失败：当前会话 agent 未就绪' }
+    }
+
     async function rpc(method, args) {
       // 显式传 sessionId（重命名/解绑其他会话）时保留；否则默认当前会话
       const payload = Object.assign({}, args || {})
@@ -498,6 +533,7 @@ window.__ModuleLoader__.load({
       const [renamingId, setRenamingId] = React.useState('')
       const [renameVal, setRenameVal] = React.useState('')
       const [showHistory, setShowHistory] = React.useState(false)
+      const [genMsg, setGenMsg] = React.useState('')
       if (!wi) {
         return h('div', { className: 'kb-root' },
           h('div', { className: 'kb-muted' }, '工作项不存在'),
@@ -607,8 +643,11 @@ window.__ModuleLoader__.load({
         boundConvs.slice().reverse().map((c) => {
           const ctx = convCtxStatus(st, c, wi.id)
           const live = !!c.live
+          // v4.1：该对话对当前工作项是否已有挂起注入（Host getState 提供）
+          const pendingInj = (st.pendingHandoffs || []).some((p) => p.sessionId === c.id && p.workItemId === wi.id)
           return h('div', { key: c.id, className: 'kb-conv', onClick: () => props.setNav({ kind: 'conv', id: c.id }) },
             h('div', { className: 'kb-conv-title' }, c.title || c.id, live ? h('span', { className: 'kb-live' }, '已打开') : null),
+            pendingInj ? h('div', { className: 'kb-muted' }, '上下文已挂起：下次你发消息时随该消息一起发给 agent（上下文在前）') : null,
             h('div', { className: 'kb-row' },
               h('span', { className: 'kb-muted' }, (c.lastActiveAt || '').slice(0, 16).replace('T', ' ')),
               h('span', { className: 'kb-chip ' + ctxClass(ctx) }, '上下文 ' + ctx),
@@ -616,6 +655,22 @@ window.__ModuleLoader__.load({
                 : live ? h(Btn, { onClick: (e) => { e.stopPropagation(); startRename(c) } }, '重命名')
                 : h('span', { className: 'kb-muted' }, '打开会话后可重命名'),
               renamingId === c.id ? h(Btn, { className: 'primary', onClick: (e) => { e.stopPropagation(); doRename(c) } }, '保存') : null,
+              live ? (pendingInj
+                ? h(Btn, {
+                  title: '已挂起：下次发消息时随消息一起注入（上下文在前）。点击取消挂起',
+                  onClick: (e) => { e.stopPropagation(); call('cancelPendingHandoff', { sessionId: c.id, workItemId: wi.id }).then(() => refresh()) },
+                }, '取消注入')
+                : h('span', { className: 'kb-row', style: { gap: 4 } },
+                  h(Btn, {
+                    title: '挂起：把最新项目记忆 + 任务记忆挂到该对话，下次你发消息时随消息一起发给 agent（上下文在前），不发消息不打扰',
+                    onClick: (e) => { e.stopPropagation(); injectWithRetry(c.id, wi.id, 1) },
+                  }, '注入上下文'),
+                  h(Btn, {
+                    className: 'ghost',
+                    title: '立即：现在就把交接上下文发给该对话并唤醒',
+                    onClick: (e) => { e.stopPropagation(); call('injectHandoff', { sessionId: c.id, workItemId: wi.id, mode: 'now' }).then(() => refresh()) },
+                  }, '立即')))
+              : null,
               h(Btn, { className: 'danger', onClick: (e) => { e.stopPropagation(); doUnbind(c.id) } }, '解绑'),
               h('span', { className: 'kb-muted' }, '▸ 对话详情')))
         }),
@@ -633,14 +688,27 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'kb-muted' }, '▸ 对话详情')))
           }) : null)
         : null)
+      // v4：生成任务记忆建议（范围有活动建议时禁用；派发带客户端重试）
+      const activeTaskProp = myProps.find((p) => p.status === 'drafting' || p.status === 'pending')
+      async function genTask() {
+        setGenMsg('已派发，起草过程见聊天…')
+        const r = await dispatchWithRetry('task', wi.id, undefined)
+        setGenMsg(r.ok ? '已派发给当前对话，起草完成后将出现在审核队列' : (r.msg || ''))
+      }
       const leftColumn = h('div', null, fieldsPanel, convsPanel)
       const memPanel = h('div', { className: 'kb-panel' },
         h('h4', null, '任务记忆（V' + memList.length + '）'),
         h(MemoryView, { labels: TASK_LABELS, memory: latest }),
         h('div', { className: 'kb-row', style: { marginTop: 8 } },
+          h(Btn, {
+            className: 'primary',
+            disabled: !!activeTaskProp || snap.busy,
+            title: activeTaskProp ? (activeTaskProp.status === 'pending' ? '已有待审核建议，请先审核或放弃' : '已有起草中建议，先处理再生成') : '',
+            onClick: genTask,
+          }, '✨ 生成任务记忆建议'),
           h(Btn, { onClick: () => setEditMem(!editMem) }, editMem ? '收起手动编辑' : '手动编辑任务记忆'),
-          h(Btn, { className: 'ghost', onClick: () => setShowHandoff(!showHandoff) }, showHandoff ? '收起交接' : '生成交接上下文'),
-          h('span', { className: 'kb-muted' }, '让 agent 起草：在聊天中要求基于本会话起草任务记忆建议')),
+          h(Btn, { className: 'ghost', onClick: () => setShowHandoff(!showHandoff) }, showHandoff ? '收起交接' : '生成交接上下文')),
+        genMsg ? h('div', { className: 'kb-muted', style: { marginTop: 6 } }, genMsg) : null,
         editMem ? h(MemoryEditForm, {
           labels: TASK_LABELS,
           base: latest,
@@ -764,6 +832,14 @@ window.__ModuleLoader__.load({
       const [editing, setEditing] = React.useState(false)
       const list = st.projectMemories || []
       const latest = list.length ? list[list.length - 1] : null
+      // v4：生成项目记忆建议（与任务面板同构；范围有活动建议时禁用）
+      const activeProjectProp = st.proposals.find((p) => p.kind === 'project' && (p.status === 'drafting' || p.status === 'pending'))
+      const [genMsg, setGenMsg] = React.useState('')
+      async function genProject() {
+        setGenMsg('已派发，起草过程见聊天…')
+        const r = await dispatchWithRetry('project', undefined, undefined)
+        setGenMsg(r.ok ? '已派发给当前对话，起草完成后将出现在审核队列' : (r.msg || ''))
+      }
       return h('div', { className: 'kb-root' },
         h('div', { className: 'kb-row' },
           h(Btn, { className: 'ghost', onClick: () => props.setNav({ kind: 'board' }) }, '← 看板'),
@@ -771,8 +847,14 @@ window.__ModuleLoader__.load({
         h('div', { className: 'kb-panel' },
           h(MemoryView, { labels: PROJECT_LABELS, memory: latest }),
           h('div', { className: 'kb-row', style: { marginTop: 8 } },
-            h(Btn, { onClick: () => setEditing(!editing) }, editing ? '收起手动编辑' : '手动编辑项目记忆'),
-            h('span', { className: 'kb-muted' }, '让 agent 起草项目记忆建议：在聊天中要求基于最新确认记忆生成建议')),
+            h(Btn, {
+              className: 'primary',
+              disabled: !!activeProjectProp || snap.busy,
+              title: activeProjectProp ? '已有活动建议，请先处理' : '',
+              onClick: genProject,
+            }, '✨ 生成项目记忆建议'),
+            h(Btn, { onClick: () => setEditing(!editing) }, editing ? '收起手动编辑' : '手动编辑项目记忆')),
+          genMsg ? h('div', { className: 'kb-muted', style: { marginTop: 6 } }, genMsg) : null,
           editing ? h(MemoryEditForm, {
             labels: PROJECT_LABELS,
             base: latest,
@@ -816,7 +898,11 @@ window.__ModuleLoader__.load({
               pendingBind = null
               savePendingBind()
               call('bindConversation', { workItemId: pb.workItemId, sessionId: sid }).then((r) => {
-                if (r && r.ok) refresh()
+                if (r && r.ok) {
+                  refresh()
+                  // v4：绑定成功后自动注入交接上下文（内部 5×2s 重试；失败降级提示 + 手动按钮兜底）
+                  injectWithRetry(sid, pb.workItemId, 5)
+                }
               })
             }
           } else {
@@ -829,13 +915,17 @@ window.__ModuleLoader__.load({
       }, [sid])
       if (!snap.state) return h('div', { className: 'kb-root' }, h('div', { className: 'kb-muted' }, '加载看板数据…'))
       const errorBar = snap.lastError ? h('div', { className: 'kb-root', style: { paddingBottom: 0 } }, h('div', { className: 'kb-error' }, snap.lastError)) : null
+      // v4：注入失败降级提示条（localStorage 持久化，防刷新丢失）
+      const injectBar = injectNote ? h('div', { className: 'kb-root', style: { paddingBottom: 0 } },
+        h('div', { className: 'kb-confirm' }, injectNote,
+          h(Btn, { onClick: () => setInjectNote('') }, '知道了'))) : null
       const view = nav.kind === 'board' ? h(Board, { setNav: setNav })
         : nav.kind === 'item' ? h(ItemDetail, { id: nav.id, setNav: setNav })
         : nav.kind === 'conv' ? h(ConvDetail, { id: nav.id, setNav: setNav })
         : nav.kind === 'review' ? h(ReviewQueue, { setNav: setNav })
         : nav.kind === 'memory' ? h(ProjectMemoryView, { setNav: setNav })
         : h(HandoffView, { setNav: setNav })
-      return h('div', null, errorBar, view)
+      return h('div', null, errorBar, injectBar, view)
     }
 
     slots.inject('conversation.view', () => slots.register(

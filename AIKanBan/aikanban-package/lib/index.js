@@ -307,9 +307,12 @@ const plugin = {
       for (const c of state.conversations) {
         if (!Array.isArray(c.workItems)) c.workItems = []
         if (!c.contextVersions || typeof c.contextVersions !== 'object' || Array.isArray(c.contextVersions)) c.contextVersions = {}
-        if (typeof c.workItemId !== 'string' || !c.workItemId) {
+        // 解绑修复：只有 workItemId 字段缺失（v3 之前的旧数据，JSON 反序列化后为 undefined）才从
+        // workItems[0] 补最早归属；显式解绑落盘的是空字符串 ''，必须原样保留——否则 DSH 重启后
+        // 「迁移」逻辑会把已解绑对话重新绑回其历史工作项。
+        if (c.workItemId === undefined || c.workItemId === null) {
           c.workItemId = c.workItems.length ? c.workItems[0] : ''
-        } else if (c.workItems.indexOf(c.workItemId) === -1) {
+        } else if (typeof c.workItemId === 'string' && c.workItemId && c.workItems.indexOf(c.workItemId) === -1) {
           c.workItems.unshift(c.workItemId)
         }
         if (Object.prototype.hasOwnProperty.call(c, 'title')) delete c.title
@@ -387,7 +390,9 @@ const plugin = {
       }
       if (workItemId) {
         if (conv.workItems.indexOf(workItemId) === -1) conv.workItems.push(workItemId)
-        if (!conv.workItemId) conv.workItemId = workItemId
+        // 解绑修复：不再对已有对话自动补绑。新对话在创建时已带 workItemId（首次参与即绑定不变）；
+        // 显式解绑后（workItemId === ''）再参与其他工作项只记历史与 contextVersions，不复活绑定。
+        // 重新绑定只能走显式 kanban_bind_conversation / bindConversation。
         const pm = latestMemory('project', undefined)
         const tm = latestMemory('task', workItemId)
         conv.contextVersions[workItemId] = { projectMemory: pm ? pm.id : null, taskMemory: tm ? tm.id : null }
@@ -896,6 +901,8 @@ const plugin = {
     async function opInjectHandoff(args, exec) {
       await ensureReady()
       await refine(exec)
+      // v4.2：注入入口顺带兑现其他挂起意图（轮询驱动，事件不可达）
+      await flushPendingIntents()
       const sessionId = strOr(args && args.sessionId) || currentSessionId(exec)
       if (!sessionId || sessionId === 'unknown') return { ok: false, error: '无法确定会话' }
       const workItemId = strOr(args && args.workItemId)
@@ -911,14 +918,14 @@ const plugin = {
         if (!canFollowup(live)) return { ok: false, code: 'agent-not-ready', error: '目标会话未打开（agent 未就绪）' }
         live.followup(pluginUserMessage(handoffText(workItemId, wi, true)))
       } else if (!canInject(live)) {
-        // v4.1：agent 未就绪 → 登记挂起意图，agent/created 事件兜底投递
+        // v4.2：agent 未就绪 → 登记挂起意图，由 RPC 轮询（getState / 注入重试）兑现
         pendingHandoffs.set(sessionId, { workItemId, messageId: '', at: nowIso(), deadline: Date.now() + 10 * 60 * 1000 })
         return { ok: true, injected: false, waitingAgent: true, sessionId: sessionId }
       } else {
-        // v4.1：静默挂起（next-step，不唤醒）——用户下一条消息打开 turn 时，上下文与其同 step 且在前
+        // v4.2：静默挂起（next-step，不唤醒）——用户下一条消息打开 turn 时，上下文与其同 step 且在前
         const r = deliverHandoff(sessionId, workItemId, wi, false)
         if (r.delayed) {
-          // 目标 agent 忙：登记挂起意图，待 agent/status 回到 idle 再投递（避免被队列泵提前带出）
+          // 目标 agent 忙：登记挂起意图，待其 idle 后由 RPC 轮询兑现（避免被队列泵提前带出）
           pendingHandoffs.set(sessionId, { workItemId, messageId: '', at: nowIso(), deadline: Date.now() + 10 * 60 * 1000 })
           delayed = true
         } else if (!r.delivered) {
@@ -965,25 +972,6 @@ const plugin = {
       return { delivered: true, waitingAgent: false, delayed: false }
     }
 
-    // v4.1：兑现挂起意图（agent 创建就绪 / 状态回到 idle 时投递静默挂起）
-    function flushPendingHandoff(a) {
-      const e = pendingEntryOf(a.id)
-      if (!e || e.messageId) return
-      const conv = state.conversations.find((c) => c.id === a.id)
-      if (!conv || conv.workItemId !== e.workItemId) { pendingHandoffs.delete(a.id); return }
-      const wi = findWorkItem(e.workItemId)
-      if (!wi) { pendingHandoffs.delete(a.id); return }
-      const msg = pluginUserMessage(handoffText(e.workItemId, wi, false))
-      try {
-        if (typeof a.inject === 'function') a.inject(msg)
-        else if (typeof a.send === 'function') a.send(msg, 'next-step', false)
-        else { pendingHandoffs.delete(a.id); return }
-      } catch (err) { pendingHandoffs.delete(a.id); return }
-      pendingHandoffs.set(a.id, { workItemId: e.workItemId, messageId: msg.id, at: nowIso(), deadline: 0 })
-      recordConversation({ agent: { id: a.id } }, e.workItemId)
-      commit()
-    }
-
     // v4.1 RPC：取消挂起的注入（幂等；未消费的消息从 inbox 摘除）
     async function opCancelPendingHandoff(args, exec) {
       await ensureReady()
@@ -1003,32 +991,46 @@ const plugin = {
       return { ok: true, canceled: true }
     }
 
-    // v4.1：新会话 agent 就绪 / 状态回到 idle 时兑现挂起意图
-    ctx.on('agent/created', (payload) => {
-      try {
-        const a = payload && payload.agent
-        if (a && typeof a.id === 'string') flushPendingHandoff(a)
-      } catch (err) {}
-    })
-    ctx.on('agent/status', (payload) => {
-      try {
-        const a = payload && payload.agent
-        if (a && typeof a.id === 'string' && payload.status === 'idle') flushPendingHandoff(a)
-      } catch (err) {}
-    })
+    // v4.2：scope-filtered agent 事件（agent/created、agent/status、inbox/*）经实证不会投递给宿主监听器——
+    // 兑现与清理改为「RPC 入口轮询驱动」（客户端每 4s 的 getState 轮询 + 注入重试都会触发）。
+    // 兑现挂起意图（无 messageId 的登记）：agent 已就绪且 idle 且绑定匹配 → 静默投递。
+    async function flushPendingIntents() {
+      for (const [sessionId, e] of Array.from(pendingHandoffs.entries())) {
+        if (e.deadline && Date.now() > e.deadline) { pendingHandoffs.delete(sessionId); continue }
+        if (e.messageId) continue
+        const live = liveAgentOf(sessionId)
+        if (!live) continue
+        if (live.status && live.status !== 'idle') continue
+        const conv = state.conversations.find((c) => c.id === sessionId)
+        if (!conv || conv.workItemId !== e.workItemId) { pendingHandoffs.delete(sessionId); continue }
+        const wi = findWorkItem(e.workItemId)
+        if (!wi) { pendingHandoffs.delete(sessionId); continue }
+        const msg = pluginUserMessage(handoffText(e.workItemId, wi, false))
+        try {
+          if (typeof live.inject === 'function') live.inject(msg)
+          else if (typeof live.send === 'function') live.send(msg, 'next-step', false)
+          else { pendingHandoffs.delete(sessionId); continue }
+        } catch (err) { pendingHandoffs.delete(sessionId); continue }
+        pendingHandoffs.set(sessionId, { workItemId: e.workItemId, messageId: msg.id, at: nowIso(), deadline: 0 })
+        recordConversation({ agent: { id: sessionId } }, e.workItemId)
+        commit()
+      }
+    }
 
-    // v4.1：挂起消息被消费（进入 turn）后清除登记，UI 挂起态随之消失
-    ctx.on('agent/inbox/claimed', (payload) => {
-      try {
-        const a = payload && payload.agent
-        const m = payload && payload.message
-        if (!a || !m || typeof a.id !== 'string' || typeof m.id !== 'string') return
-        const e = pendingHandoffs.get(a.id)
-        if (e && e.messageId === m.id) pendingHandoffs.delete(a.id)
-      } catch (err) {}
-    })
+    // v4.2：清扫已消费的挂起（消息已离开 inbox pending 队列 → 清除登记，UI 挂起态消失）
+    function sweepConsumedHandoffs() {
+      for (const [sessionId, e] of Array.from(pendingHandoffs.entries())) {
+        if (!e.messageId) continue
+        const live = liveAgentOf(sessionId)
+        if (!live || !live.inbox) continue
+        const ns = live.inbox.nextStep || []
+        const nt = live.inbox.nextTurn || []
+        const still = ns.some((m) => m.id === e.messageId) || nt.some((m) => m.id === e.messageId)
+        if (!still) pendingHandoffs.delete(sessionId)
+      }
+    }
 
-    rpc('getState', async () => { await ensureReady(); await refine(undefined); return { ok: true, state, diag: { storage: storageDiag, persistError: lastPersistError } } })
+    rpc('getState', async () => { await ensureReady(); await refine(undefined); await flushPendingIntents(); sweepConsumedHandoffs(); return { ok: true, state, diag: { storage: storageDiag, persistError: lastPersistError } } })
     rpc('createWorkItem', opCreateWorkItem)
     rpc('updateWorkItem', opUpdateWorkItem)
     rpc('deleteWorkItem', opDeleteWorkItem)

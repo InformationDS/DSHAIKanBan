@@ -162,17 +162,17 @@ window.__ModuleLoader__.load({
       try { if (s) window.localStorage.setItem(INJ_KEY, s); else window.localStorage.removeItem(INJ_KEY) } catch (e) {}
     }
 
-    // v4.1：自动注入改为单次调用——Host 侧 agent 未就绪时登记挂起并由 agent/created 事件兜底投递；
-    // 挂起语义：上下文在用户下一条消息同 step 处理且在前，不发消息不唤醒。
+    // v4.2：注入重试（4×1.5s，覆盖新会话 agent 就绪窗口；waitingAgent 未完成时继续重试；
+    // Host 侧挂起意图由 RPC 轮询兑现，最终兜底是重试耗尽后 injectNote 提示 + 手动按钮）。
     async function injectWithRetry(sessionId, workItemId, maxAttempts) {
-      const max = 1 // v4.1：单次即可（Host 挂起登记 + agent/created 事件兜底；重试参数保留兼容）
+      const max = maxAttempts || 4
       for (let i = 0; i < max; i++) {
         const r = await call('injectHandoff', { sessionId: sessionId, workItemId: workItemId })
-        if (r && r.ok) { setInjectNote(''); return true } // waitingAgent:true 也算成功（Host 事件兜底）
+        if (r && r.ok && r.injected !== false) { setInjectNote(''); return true }
         if (r && r.code === 'not-bound') return false // 绑定没成，不注入、不提示重试
-        if (i < max - 1 && timer) await timer.timeout(2000)
+        if (i < max - 1 && timer) await timer.timeout(1500)
       }
-      setInjectNote('上下文注入未完成：可在工作项对话区对该对话点「注入上下文」重试')
+      setInjectNote('上下文自动注入未完成：可在工作项对话区对该对话点「注入上下文」重试')
       return false
     }
 
@@ -931,6 +931,64 @@ window.__ModuleLoader__.load({
     slots.inject('conversation.view', () => slots.register(
       { name: 'conversation.view', id: 'aikanban-board', order: 20, label: '📋 看板' },
       (props) => h(App, props)
+    ))
+
+    // v4.3：会话级必然渲染的轻量组件——新会话页面加载即消费「待绑定意图」（绑定 + 注入），
+    // 不依赖用户点开看板 Tab（conversation.view 按 only:active 惰性渲染，App 曾因此不挂载、pendingBind 无人消费）。
+    // 绑定成功后启动「注入守护」：每 3s 调一次 injectHandoff（幂等）直到真投递（injected 且非 delayed），
+    // 覆盖新会话 agent 慢就绪窗口，确保上下文在你发消息前已在队列最前。
+    function AutoBind(props) {
+      const sid = props && props.sessionId ? props.sessionId : ''
+      const [guardWorkItemId, setGuardWorkItemId] = React.useState('')
+      React.useEffect(() => {
+        if (!sid) return undefined
+        if (pendingBind && pendingBind.workItemId) {
+          if (Date.now() < pendingBind.deadline) {
+            if (sid !== pendingBind.clickedSessionId) {
+              const pb = pendingBind
+              pendingBind = null
+              savePendingBind()
+              call('bindConversation', { workItemId: pb.workItemId, sessionId: sid }).then((r) => {
+                if (r && r.ok) {
+                  refresh()
+                  setGuardWorkItemId(pb.workItemId)
+                }
+              })
+            }
+          } else {
+            pendingBind = null
+            savePendingBind()
+          }
+        }
+        return undefined
+      }, [sid])
+      React.useEffect(() => {
+        if (!sid || !guardWorkItemId) return undefined
+        let stop = false
+        let attempts = 0
+        const workItemId = guardWorkItemId
+        const tick = async () => {
+          if (stop) return
+          attempts++
+          const r = await call('injectHandoff', { sessionId: sid, workItemId: workItemId })
+          if (r && r.ok && r.injected !== false && r.delayed !== true) { stop = true; setInjectNote(''); return }
+          if (r && r.code === 'not-bound') { stop = true; return }
+          if (attempts >= 20) {
+            stop = true
+            setInjectNote('上下文自动注入未完成：可在工作项对话区对该对话点「注入上下文」重试')
+            return
+          }
+        }
+        tick()
+        if (!timer) return undefined
+        const iv = timer.interval(() => { if (!stop) tick() }, 3000)
+        return () => { stop = true; iv() }
+      }, [sid, guardWorkItemId])
+      return null
+    }
+    slots.inject('conversation.composer.dock', () => slots.register(
+      { name: 'conversation.composer.dock', id: 'aikanban-autobind', order: 99 },
+      (props) => h(AutoBind, props)
     ))
 			}
 		};

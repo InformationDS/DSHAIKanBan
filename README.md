@@ -19,6 +19,12 @@ Trello 式项目看板插件：任务不分配给「人」，而分配给「对�
 DSH 会话头部与「聊天」并列的**「📋 看板」全宽视图 Tab**（`conversation.view` 槽位）：5 列状态看板、卡片拖拽流转、工作项详情（对话时间线）、对话详情页、建议审核队列、项目记忆页、交接上下文生成。
 
 v4 起：看板内可直接点「✨ 生成任务/项目记忆建议」，由当前会话 agent 起草并提交审核；工作项内「＋ 新建对话」会自动把最新交接上下文注入新会话作为首条消息（失败有降级提示 + 对话行手动「注入上下文」按钮兜底）。
+<img width="2560" height="1213" alt="image" src="https://github.com/user-attachments/assets/a7c0eb7a-b725-4203-a48d-65ed085cb352" />
+<img width="2560" height="1213" alt="image" src="https://github.com/user-attachments/assets/7b17a1ca-76ef-44d2-93f9-e3af60e228ff" />
+<img width="2560" height="1213" alt="image" src="https://github.com/user-attachments/assets/7fc0ec05-4b85-4dbb-9613-2d7a2e3635f2" />
+
+
+
 
 ## 核心原则（用户确认优先）
 

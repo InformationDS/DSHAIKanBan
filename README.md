@@ -1,8 +1,10 @@
 # AIKanBan for DSH
 
+**中文** | [English](README.en.md)
+
 Trello 式项目看板插件：任务不分配给「人」，而分配给「对话」（DSH 会话）来完成。一个任务可由多条对话串行接力或并行探索，跨会话交接由用户确认过的版本化记忆承载。
 
-所有 AIKanBan 相关文档、源码与产物已整理至 [`AikanBan/`](AikanBan/)。
+所有 AIKanBan 相关文档、源码与产物已整理至 [`AIKanBan/`](AIKanBan/)。
 
 ## 核心概念
 
@@ -36,7 +38,7 @@ v4 起：看板内可直接点「✨ 生成任务/项目记忆建议」，由当
 ## 目录结构
 
 ```
-AikanBan/
+AIKanBan/
 ├── PRD.md                Codex 原版需求（AIKanBan MVP）
 ├── DSH-PRD.md            DSH 需求契约（v4：一键生成记忆建议、新建对话自动注入交接上下文）
 ├── PLAN.md               v3 执行方案（实现路径与验收清单）
@@ -54,6 +56,6 @@ AikanBan/
 
 ## 使用方式
 
-1. 在任意 DSH 会话（工作区 = 本仓库目录）中让 agent 按 [`AikanBan/REBUILD.md`](AikanBan/REBUILD.md) 重建插件并批准运行。
+1. 在任意 DSH 会话（工作区 = 本仓库目录）中让 agent 按 [`AIKanBan/REBUILD.md`](AIKanBan/REBUILD.md) 重建插件并批准运行。
 2. 会话头部出现「📋 看板」Tab；在聊天中让 agent 起草记忆建议，在看板审核确认。
-3. 新会话继续同一工作项：让 agent 读 [`AikanBan/HANDOFF.md`](AikanBan/HANDOFF.md) 或直接调用 `kanban_get_handoff_context`，对话时间线自动出现新对话；v4 起在工作项内点「＋ 新建对话」会自动绑定并注入交接上下文，无需手动取数。
+3. 新会话继续同一工作项：让 agent 读 [`AIKanBan/HANDOFF.md`](AIKanBan/HANDOFF.md) 或直接调用 `kanban_get_handoff_context`，对话时间线自动出现新对话；v4 起在工作项内点「＋ 新建对话」会自动绑定并注入交接上下文，无需手动取数。

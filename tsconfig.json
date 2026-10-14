@@ -1,0 +1,9 @@
+{
+  "//": "Solution file. `tsc -b` walks these references in dependency order. All three S0 packages now exist (S0-W1 skeleton, S0-W2 core data model), so every one is referenced.",
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/plugin-client" },
+    { "path": "./packages/plugin" }
+  ]
+}

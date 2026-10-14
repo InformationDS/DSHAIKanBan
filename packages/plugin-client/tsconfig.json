@@ -1,0 +1,13 @@
+{
+  "//": "Browser-half UI library. `jsx: react-jsx` (automatic runtime) + DOM libs; declarations go to ./dist and the code is bundled later into packages/plugin's client bundle.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": []
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

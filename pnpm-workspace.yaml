@@ -1,0 +1,31 @@
+# AIKanBan source root. `packages/core` is owned by workstream S0-W2 and is
+# only reserved here so root tooling already knows about it.
+packages:
+  - packages/core
+  - packages/plugin
+  - packages/plugin-client
+
+# The DSH plugin loader resolves plugin packages by their real directory, and
+# the client half is a `window.__ModuleLoader__.load` bundle served from the
+# package's own `lib/`. A hoisted layout keeps the workspace resolvable by an
+# arbitrary host (including an isolated `DSH_HOME` probe host).
+nodeLinker: hoisted
+autoInstallPeers: false
+
+# esbuild / rollup / rolldown each publish ~30 optional per-platform binary
+# packages. Without this filter a plain `pnpm install` fetches all of them —
+# hundreds of MB of tarballs this win32-x64 workspace can never load. Pin the
+# toolchain to the platform we actually build on.
+supportedArchitectures:
+  os:
+    - win32
+  cpu:
+    - x64
+  libc:
+    - current
+
+# Build scripts are denied by default. esbuild is the only dependency that needs
+# one: its postinstall links the platform binary, and Vite/Vitest fail with a
+# confusing "not installed" error without it.
+allowBuilds:
+  esbuild: true

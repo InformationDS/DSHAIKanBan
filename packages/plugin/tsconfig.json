@@ -1,0 +1,14 @@
+{
+  "//": "Host half + browser-half loader entry. Declarations go to ./dist; tsdown writes ./lib (lib/index.js host + lib/client.js bundle).",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "lib": ["ES2024", "DOM"],
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "references": [{ "path": "../plugin-client" }]
+}

@@ -1,0 +1,17 @@
+﻿ux_id,baseline_line,primary_owner,owner_path,original_rule,implementation_note
+UX-01,180,F01,features/F01-project-and-tasks/prd.md,标题即可创建任务，目标说明选填,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-02,181,F04,features/F04-conversation-entry/prd.md,任务详情固定提供“新建对话”，已有对话提供“继续对话”,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-03,182,F06,features/F06-task-record-workflow/prd.md,对话内点击“形成任务记录”，在原工作对话发送整理要求，同时生成记录与概况草稿，用户无需手动输入指令,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-04,183,F06,features/F06-task-record-workflow/prd.md,记录和概况在同一预览中确认，不要求分别确认两次,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-05,184,F13,features/F13-project-record-workflow/prd.md,已完成任务点击“生成项目记录”，系统自动创建整理对话，同时预览项目总览变化，可查看整理过程,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-06,185,F02,features/F02-task-status-and-cards/prd.md,看板默认四列，已取消收起；支持拖拽与菜单等效操作,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-07,186,F02,features/F02-task-status-and-cards/prd.md,卡片进展来自任务概况，不来自最后一条对话记录或草稿,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-08,187,F10,features/F10-record-history/prd.md,详情按需展开记录全文、来源及历史，不把所有版本铺满页面,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-09,188,F03,features/F03-manual-summaries/prd.md,概况、总览可直接手动编辑；不另设相同进展的第二份表单,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-10,189,F08,features/F08-concurrent-confirmation/prd.md,多条对话可以各自整理，不因另一条对话有草稿而禁用全部入口,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-11,190,F04,features/F04-conversation-entry/prd.md,缺少记录、存在未确认内容时给出范围提示，不强制先整理完才新建对话,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-12,191,F13,features/F13-project-record-workflow/prd.md,完成任务前不强制所有对话停止；生成项目记录前显示遗漏与仍在运行的工作,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-13,192,F11,features/F11-context-preparation-and-sync/prd.md,新对话不复制此前聊天，不默认加入历史版本；详细记录仅按需读当前版本,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-14,193,F06,features/F06-task-record-workflow/prd.md,普通保存一次确认；永久删除明确展示影响,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-15,194,F04,features/F04-conversation-entry/prd.md,项目内可直接新建未关联对话；任务详情提供“关联已有对话”，无需重建聊天,行为在对应组件首次实现时有效；主责不豁免其他引用功能
+UX-16,195,F05,features/F05-conversation-binding/prd.md,未关联对话点击“形成任务记录”时先选择/创建任务，再审核记录草稿；取消不产生虚构记录,行为在对应组件首次实现时有效；主责不豁免其他引用功能

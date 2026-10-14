@@ -1,0 +1,23 @@
+{
+  "name": "@aikanban/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AIKanBan core data model: paired confirmation as one atomic write, version chains, drafts, baseline checks and conclusion applicability.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "evidence": "node experiments/storage-domain-atomicity.mjs"
+  }
+}

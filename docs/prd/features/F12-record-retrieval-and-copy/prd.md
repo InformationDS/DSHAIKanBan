@@ -130,4 +130,4 @@
 允许调整索引和展开呈现，不得以权限可读为由自动扩大实际上下文。
 不提供备份导出或外部自动同步；可读交接输出与项目数据备份必须区分。
 交付检索与复制范围合同，供 F13/F20 共用，记录实际使用去重依据。
-实现前创建 implementation.md；验收时创建 verification.md；进度只更新 docs/delivery/status.md。
+实现前创建 implementation.md；验收时创建 verification.md；进度不在本 PRD 内维护。

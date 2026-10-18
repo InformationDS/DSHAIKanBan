@@ -128,4 +128,4 @@ AI 不可用、对话不能打开、工作范围缺失、保存失败和未知�
 只补齐跨流程不一致和恢复缺口，不能移除前置功能已有的可靠保存规则。
 FR-27 完全不在首版；历史内容恢复与日常中断恢复不等于项目备份恢复。
 OQ-01 的运行中整理入口仍按未决边界处理，不扩展队列或调度功能。
-实现前创建 implementation.md；验收时创建 verification.md；进度只更新 docs/delivery/status.md。
+实现前创建 implementation.md；验收时创建 verification.md；进度不在本 PRD 内维护。

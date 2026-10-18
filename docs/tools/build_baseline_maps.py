@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 PRD = ROOT / 'docs/prd'
 CAT = json.loads((PRD / 'feature-catalog.json').read_text(encoding='utf-8'))
 FEATURES = {f['id']: f for f in CAT['features']}
@@ -176,7 +176,7 @@ trace = '''# 原始需求追溯与覆盖
 
 | 基线章节 | 有效归属 |
 | --- | --- |
-| 1—3 产品、问题、用户、边界 | [overview](overview.md)、[宿主能力](../engineering/host-capabilities.md) |
+| 1—3 产品、问题、用户、边界 | [overview](overview.md)、宿主能力（实施阶段确定） |
 | 4 原则、UX-01—16、动作 | [对象状态](common/objects-and-states.md)、[确认版本](common/confirmation-and-versions.md)、相关功能 PRD |
 | 5 页面职责 | overview 及 F02/F04/F05/F13/F15 |
 | 6 对象、状态、来源 | 全部 common，尤其 OBJ 与 CTX |
@@ -184,9 +184,9 @@ trace = '''# 原始需求追溯与覆盖
 | 8—12 FR-01—32 | 下表及逐条 CSV；FR-27 排除 |
 | 13 异常与文案 | 各功能异常节、REC、SAVE、CTX |
 | 14 范围及约束 | overview、roadmap、common、open-questions |
-| 15.1 AT-01—106 | acceptance.csv、[联合验收](../delivery/acceptance.md)、各主要功能验收节 |
-| 15.2—15.3 自用与阻断 | delivery/acceptance、overview |
-| 16 指标与验证 | overview、delivery/acceptance；无已达成指标 |
+| 15.1 AT-01—106 | acceptance.csv、[验收映射](mapping/acceptance.csv)、各主要功能验收节 |
+| 15.2—15.3 自用与阻断 | acceptance.csv、overview |
+| 16 指标与验证 | overview、acceptance.csv；无已达成指标 |
 | 17 确定决定与评审 | common、相关功能、[未决](open-questions.md) |
 | 附录 A 动作边界 | OBJ-10、CTX、SAVE、各功能规则 |
 
@@ -204,7 +204,7 @@ trace += '''
 
 保留基线和 C 编号原始来源不变。新业务规则在有效 PRD 中分配 Fxx-Rnn，新增验收可使用新增编号并写明来源日期；不要伪装成原 106 个 AT。更新映射中的实现归属和协同记录时保留原行号与场景文本。
 
-`build_baseline_maps.py` 只用于从冻结基线重建初始映射；默认拒绝覆盖已有文件，并校验基线哈希。需要重建时先保存人工修订，再显式使用 `--overwrite-initial-maps` 并重新合并差异。日常维护不要重建，校验使用 `check_docs.py`。
+`docs/tools/build_baseline_maps.py` 只用于从冻结基线重建初始映射；默认拒绝覆盖已有文件，并校验基线哈希。需要重建时先保存人工修订，再显式使用 `--overwrite-initial-maps` 并重新合并差异。日常维护不要重建，校验使用 `docs/tools/check_docs.py`。
 '''
 (PRD / 'traceability.md').write_text(trace, encoding='utf-8')
 

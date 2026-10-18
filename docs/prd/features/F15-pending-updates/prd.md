@@ -129,4 +129,4 @@
 允许调整分类、提示密度和列表布局；不能把行动提示混入确认数量。
 批量放弃为 P1，不在本次实现；不得添加全部确认代替逐项具体预览。
 交付统一候选身份、计数来源和一次事件通知合同，供卡片与筛选接入。
-实现前创建 implementation.md；验收时创建 verification.md；进度只更新 docs/delivery/status.md。
+实现前创建 implementation.md；验收时创建 verification.md；进度不在本 PRD 内维护。

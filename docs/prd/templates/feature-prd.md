@@ -34,4 +34,4 @@
 
 ## 7. 实施边界与交接
 
-说明可调整呈现、禁止改变的语义、未决事项、允许改动范围。实现前创建 implementation.md，验收时创建 verification.md；全局进度只更新 docs/delivery/status.md，勿在多处维护不同状态。
+说明可调整呈现、禁止改变的语义、未决事项、允许改动范围。实现前创建 implementation.md，验收时创建 verification.md；进度与验收状态单独维护，勿在多处维护不同状态。

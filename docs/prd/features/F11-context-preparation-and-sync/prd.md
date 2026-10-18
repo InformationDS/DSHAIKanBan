@@ -127,4 +127,4 @@ F12 后续提供详细读取；本功能先提供可靠的背景使用合同。
 允许调整背景提示和展开布局；不能增加常规采用确认或手动更新上下文必经步骤。
 不实现运行中整理队列；OQ-01 仅约束相应整理入口，不能借此阻塞正常用户发送。
 实现时记录快照、请求和修正标识合同，供 F12 的详细读取共用。
-实现前创建 implementation.md；验收时创建 verification.md；进度只更新 docs/delivery/status.md。
+实现前创建 implementation.md；验收时创建 verification.md；进度不在本 PRD 内维护。

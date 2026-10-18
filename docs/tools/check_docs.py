@@ -8,7 +8,7 @@ import json
 import re
 import sys
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 PRD = ROOT / 'docs/prd'
 ERRORS = []
 
@@ -148,8 +148,8 @@ for r in interactions:
 acceptance = load_csv('acceptance.csv')
 expected_ats = {f'AT-{i:02d}' for i in range(1,107)}
 require(len(acceptance) == 106 and {r['at_id'] for r in acceptance} == expected_ats, 'Need exactly original 106 AT scenarios')
-delivery_text = (ROOT / 'docs/delivery/acceptance.md').read_text(encoding='utf-8')
-require(expected_ats <= at_ids(delivery_text), 'Delivery plan missing ATs')
+traceability_text = (PRD / 'traceability.md').read_text(encoding='utf-8')
+require(expected_ats <= at_ids(traceability_text), 'Traceability map missing ATs')
 for r in acceptance:
     owner = r['primary_owner']
     require(owner in texts, f'{r["at_id"]}: unknown primary owner')

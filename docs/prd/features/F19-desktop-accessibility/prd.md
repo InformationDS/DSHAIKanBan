@@ -128,4 +128,4 @@ Esc 不静默丢编辑；有修改时提供清楚的保留/放弃路径或保留
 允许调整具体局部快捷键、断点和说明呈现；必须记录并测试宿主快捷键冲突。
 不能为布局方便隐藏唯一核对原因，不能把用户正文翻译或主题设置单独复制一套。
 验证记录实际窗口、缩放、语言和输入方式，问题归属具体组件修复后再验收。
-实现前创建 implementation.md；验收时创建 verification.md；进度只更新 docs/delivery/status.md。
+实现前创建 implementation.md；验收时创建 verification.md；进度不在本 PRD 内维护。

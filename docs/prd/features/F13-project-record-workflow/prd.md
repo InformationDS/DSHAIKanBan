@@ -133,4 +133,4 @@
 允许调整缺失清单与预览布局；不能让用户手动创建/选择整理对话成为必经步骤。
 成果、总览与工作记录分别存在，不能合并成一份改名后的材料。
 交付成果固定标识、来源版本与截止合同，供 F14 的生命周期判断使用。
-实现前创建 implementation.md；验收时创建 verification.md；进度只更新 docs/delivery/status.md。
+实现前创建 implementation.md；验收时创建 verification.md；进度不在本 PRD 内维护。

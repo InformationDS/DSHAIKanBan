@@ -127,4 +127,4 @@ AI 后续更新遵守已有人工修正、验证范围和未决问题，不因�
 允许调整截止与待更新的呈现；不能把来源变化解释为旧成果必须删除。
 不新增“重新生成即自动确认”，不将任务重开作为抹除历史的操作。
 输出来源变更与成果范围提示合同，供 F11/F12/F15/F17 接入。
-实现前创建 implementation.md；验收时创建 verification.md；进度只更新 docs/delivery/status.md。
+实现前创建 implementation.md；验收时创建 verification.md；进度不在本 PRD 内维护。

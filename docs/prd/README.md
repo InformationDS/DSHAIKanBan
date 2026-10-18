@@ -4,7 +4,7 @@
 
 ## 当前有效需求
 
-[产品总览](overview.md) + [公共规则](common/objects-and-states.md)及其他 common 文件 + 本页 20 个功能 PRD 共同构成需求。原 v1.17 仅作为[历史基线](baseline/AIKanBan_桌面版功能PRD_v1.17.md)。当前实现/验收状态只看 [交付状态](../delivery/status.md)，不要把文档存在当功能实现。
+[产品总览](overview.md) + [公共规则](common/objects-and-states.md)及其他 common 文件 + 本页 20 个功能 PRD 共同构成需求。原 v1.17 仅作为[历史基线](baseline/AIKanBan_桌面版功能PRD_v1.17.md)。当前实现/验收状态不在 PRD 内维护，不要把文档存在当功能实现。
 
 ## 功能清单
 
@@ -48,6 +48,6 @@
 1. 核对 S0 宿主与工程能力、直接依赖的实际实现和验证，缺口记录，不自行假定。
 2. 明确本次功能范围与正常/失败闭环，参考 [单功能开发任务](templates/vibecoding-task.md)。
 3. OQ-01 仅影响运行中整理局部分支；其余已确定路径可先实现。FR-27 不开发。
-4. 实现开始才建 implementation.md，验收开始才建 verification.md；全局进度保持在 delivery/status。
+4. 实现开始才建 implementation.md，验收开始才建 verification.md；进度与验收状态单独维护，不在 PRD 内混写。
 
 需求追溯见 [traceability](traceability.md)，新功能写法见 [模板](templates/feature-prd.md)，未决见 [open-questions](open-questions.md)。

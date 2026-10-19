@@ -1,6 +1,6 @@
 # S0 资产复核记录（2026-10-19，DSH 44.7.0）
 
-> 本页是一次隔离复核的工程记录，**不是产品验收**，也不改变任何 ADR 的状态：五份 ADR 仍为「提议」（见[技术决策索引](decisions/README.md)）。
+> 本页是一次隔离复核的工程记录，**不是产品验收**；ADR 状态与依据见[技术决策索引](decisions/README.md)及第 8、9 节。
 > 复核对象是提交 `bd16535` 的 S0/S1 工程记录与代码；复核当时仓库只有工程文档与 `tools/`，`packages/` 代码于同日按第 7 节处置结果回收至分支 `s1-recover`。
 
 ## 1. 环境与隔离方式
@@ -71,7 +71,7 @@
 | 状态工具与系统提示词注册（旧记录未涉及该项） | 激活载荷 `tools=false`、`systemPrompt=false` | **未观察到 → 未验证/待查**（不得当作已注册） |
 | 装到真实 profile 并生效（旧记录：未执行） | 未执行 | 未复核（需写盘并重启 `desktop` profile） |
 | 客户端半实际渲染（旧记录：未验证） | 未观察 | 未复核 |
-| 真实模型的 `assistant` 回复与真实多步（旧记录：未验证） | 未执行（隔离环境刻意不含凭据） | 未复核 |
+| 真实模型的 `assistant` 回复与真实多步（旧记录：未验证） | 2026-10-20 已复验：20/20 `[ok]`；`turnEndReason={"kind":"completed"}`、`assistantTurns=[{seq:17,step:1},{seq:22,step:2}]`、`multiStepObserved=true`、`injectedCallCount=1` | **已复核**，见第 9 节 |
 | 存储原子性 25/25、宿主集成 20/20 | 已于 2026-10-20 重跑，均通过 | **已复核**，见第 8 节 |
 | `check_docs.py` PASS | 本次复原后重跑 PASS | 成立（仅文档结构层） |
 
@@ -83,11 +83,12 @@
 
 ## 6. 仍未复核的部分
 
-- **20 步宿主集成 spike**：HOST-01/03/04/05/06/07/08 的完整语义（2026-10-20 已重跑，见第 8 节；但真实模型路径仍在下方未关闭）。
+- **20 步宿主集成 spike**：HOST-01/03/04/05/06/07/08 的完整语义（2026-10-20 已重跑，见第 8、9 节）。
 - **装到真实 profile**：`desktop` profile 由 Electron 应用独占管理，安装需要写盘并重启进程，未执行。
 - **客户端半实际渲染与交互**：未打开界面观察（见[宿主能力合同](host-capabilities.md)）。
-- **真实模型路径**：真实 `assistant` 回复与真实多步（含工具调用）未执行，原因是隔离 home 刻意不含真实凭据。
 - `tools=false` / `systemPrompt=false` 的工具与提示词注册（第 5 节 (c)）。
+
+原列于此的「真实模型路径」一项（真实 `assistant` 回复与真实多步）已于 2026-10-20 复验关闭，见第 9 节；它不再属于未复核项。
 
 ## 7. 代码去留建议
 
@@ -116,8 +117,28 @@
 
 - 集成探针的 20 个步骤覆盖 workspace 映射（6）、会话创建与解析（4）、派发与子代理拒绝（3）、三条读回通道（3）、注入与 `turnOutline`（3）。原始证据已刷新为本次运行（`startedAt` 2026-10-19T14:17Z，`packages/plugin/src/probe/evidence/probe-report.json`）；上一版可从 Git 历史取回。
 - 两次运行都在 `DSH_HOME=<隔离目录>`、`--profile web --port 0 --no-open` 下完成，未触碰用户 GUI，未读写 `~/.dsh`。
-- **仍未关闭**：`readback.turnEnd` 以 `MISSING_CREDENTIAL` 结束（`assistantReplyCount=0`、`multiStepObserved=false`），真实模型的 `assistant` 回复与真实多步仍未验证；客户端实际渲染、装到真实 profile、`tools`/`systemPrompt` 注册、HOST-07 的区分表达设计仍按第 6 节视为未完成。
+- **仍未关闭**（指 14:17Z 那次运行）：客户端实际渲染、装到真实 profile、`tools`/`systemPrompt` 注册、HOST-07 的区分表达设计仍按第 6 节视为未完成。该次运行的 `readback.turnEnd` 以 `MISSING_CREDENTIAL` 结束（`assistantReplyCount=0`、`multiStepObserved=false`），真实模型两项**当时**未验证——已于 2026-10-20 复验关闭，见第 9 节。
 
 据此，[ADR-001](../engineering/decisions/ADR-001-session-dispatch-and-consolidation-carrier.md)、[ADR-002](../engineering/decisions/ADR-002-paired-confirmation-single-write.md)、[ADR-003](../engineering/decisions/ADR-003-project-mapping-and-context-injection.md) 的状态由「提议」改为「采用」；[ADR-004](../engineering/decisions/ADR-004-界面挂载点与看板形态.md)（缺客户端渲染证据）与 [ADR-005](../engineering/decisions/ADR-005-浏览器半与宿主半的数据通道.md)（缺真实 Connection RPC 路由证据）保持「提议」。
 
-本页记录 2026-10-19 的隔离复核与 2026-10-20 的补充复核，不替代[交付状态](../delivery/status.md)与[功能验收](../prd/mapping/acceptance.csv)。
+## 9. 真实模型复验（2026-10-20）：两项未验证已关闭
+
+第 4、6、8 节把「真实模型的 `assistant` 回复」与「真实多步（含工具调用）」列为未验证。现已在隔离探针进程上完成真实 provider 轮次。
+
+**方法**：把 `DEEPSEEK_API_KEY` 作为**启动环境变量**注入**那一个隔离探针进程**（`DSH_HOME=<隔离目录>`、`--profile web --port 0 --no-open`、DSH 44.7.0），**未写任何凭据文件**；事后全工作区扫描该 key 字符串 **0 命中**。未触碰用户 GUI，未读写 `~/.dsh`。
+
+| 观测 | 结果 |
+| --- | --- |
+| 20 步宿主集成探针 | **20/20 `[ok]`**（exit 0） |
+| `readback.turnEnd` | `turnEnded=true`；`turnEndReason={"kind":"completed"}`；`totalEvents=25`；`assistantTurns=[{seq:17,turn:1,step:1},{seq:22,turn:1,step:2}]`；`lastAssistantText` 是模型经 **pwsh 工具调用**得到的实际输出 |
+| `inject.multiStepOnlyOnce` | `preStepCallCount=2`；`injectedCallCount=1`；`distinctStepsSeen=["1/1","1/2"]`；`multiStepObserved=true`；`projectionInjectionCount=1` |
+| `dispatch.prompt.queue` | `accepted={accepted:true}`，带真实 `requestId` |
+
+结论：
+
+1. **由真实模型产生的 `assistant/message`：已实测成立**（成功轮次、两条 assistant 消息、内容为工具调用的实际输出）。
+2. **真实多步（含工具调用）：已实测成立**；两次 step 只注入 1 次，即 step 2 未再注入，符合 ADR-003 的闸门设计。
+
+边界：本次是**宿主能力复验，不是产品验收**——F01—F20 的 AT 仍全部「待执行」。仍未关闭的其他项见第 6 节；`tools=false` / `systemPrompt=false` 的注册（第 5 节 (c)）、ADR-006 的工程证据等不因本次复验而改变。
+
+本页记录 2026-10-19 的隔离复核、2026-10-20 的补充复核（第 8 节）与真实模型复验（第 9 节），不替代[交付状态](../delivery/status.md)与[功能验收](../prd/mapping/acceptance.csv)。

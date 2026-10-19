@@ -1,10 +1,10 @@
-> 复原说明：本页为 2026-10-14 S0 记录的原文复原（来源提交 bd16535）。2026-10-20 已在 DSH 44.7.0 上复核并据此把状态由「提议」改为「采用」，依据见 [S0 复核记录](../s0-reverification-20261019.md) 第 8 节；正文中标注「尚未验证」的子项仍按原样保留，不得当作已验证。
+> 复原说明：本页为 2026-10-14 S0 记录的原文复原（来源提交 bd16535）。2026-10-20 已在 DSH 44.7.0 上复核（含真实模型轮次）并据此把状态由「提议」改为「采用」，依据见 [S0 复核记录](../s0-reverification-20261019.md) 第 8、9 节；正文中其余标注「尚未验证」的子项仍按原样保留，不得当作已验证。
 
 # ADR-001：会话派发与整理执行载体（sessionController 派发边界）
 
 - 日期：2026-10-14
 - 状态：采用（Accepted，2026-10-20 复核）
-- 状态依据：2026-10-20 在 DSH 44.7.0 上重跑宿主集成探针，`dispatch.prompt.queue`（可见消息落库）、`dispatch.requestIdIdempotent`（同 requestId 不重复投递）、`dispatch.subagentGuard`、`readback.turnEnd/followSnapshot/page` 三条读回通道全部 `[ok]`（20/20，见 [复核记录第 8 节](../s0-reverification-20261019.md)）。仍**未验证**：真实模型产生的 `assistant` 回复与真实多步。
+- 状态依据：2026-10-20 在 DSH 44.7.0 上重跑宿主集成探针，`dispatch.prompt.queue`（可见消息落库）、`dispatch.requestIdIdempotent`（同 requestId 不重复投递）、`dispatch.subagentGuard`、`readback.turnEnd/followSnapshot/page` 三条读回通道全部 `[ok]`（20/20，见 [复核记录第 8 节](../s0-reverification-20261019.md)）。2026-10-20 已实测：真实模型产生的 `assistant` 回复（`turnEndReason={"kind":"completed"}`、`assistantTurns=[{seq:17,turn:1,step:1},{seq:22,turn:1,step:2}]`）与真实多步（`multiStepObserved=true`，见[复核记录第 9 节](../s0-reverification-20261019.md)）。
 - 决策范围：宿主半（`packages/plugin`），影响全部「向工作对话发送可见整理要求」的路径
 - 来源规则：F05（运行中关联不打断本轮）、F06（不停止其他对话、在正确来源对话发送可见整理要求、返回可编辑候选）、F13（系统整理对话）
 - 关联决策：[ADR-003 项目映射与默认背景注入](./ADR-003-project-mapping-and-context-injection.md)、[ADR-002 成对确认的单写原子性](./ADR-002-paired-confirmation-single-write.md)
@@ -93,7 +93,7 @@ seq=18 turn/end                     turn=1
   即：宿主侧读回、客户端流式快照与冷安全分页三者对同一日志一致。
 - 幂等：同 `requestId` 二次派发 → `{accepted:true}`；`user/message` 计数 4→4；第二段载荷 `secondPayloadLeaked=false`。
 - 子会话边界：`Refused=true`，`code='session/agent-busy'`，`message='session "session-2" is owned by subagent routing'`（断言了确切码与文案，不以「抛错即通过」）。
-- 未验证：**assistant 回复本身**。本轮 `turn/end` 的 `reason` 为 `{kind:'error', error:{code:'MISSING_CREDENTIAL', …'no API key for provider route "deepseek-official"'}}`，隔离宿主无凭据，因此「取回 assistant 回复并与投递内容对上」只完成了读回通道验证（三条通道、事件序列、`seq`、逐字节匹配），**回复内容未验证**。
+- **assistant 回复内容**：S0 那次运行以 `MISSING_CREDENTIAL` 结束（`reason` 为 `{kind:'error', error:{code:'MISSING_CREDENTIAL', …}}`），当时只完成读回通道验证（三条通道、事件序列、`seq`、逐字节匹配）。该项已于 **2026-10-20** 复验关闭：补上启动环境变量注入的凭据后，`turn/end` 以 `{"kind":"completed"}` 结束，真实模型产出两条 `assistant/message`（step 1 `seq=17`、step 2 `seq=22`），见[复核记录第 9 节](../s0-reverification-20261019.md)。
 
 ### 7.1 证据分级（按物种分别标注，不合并）
 
@@ -104,16 +104,12 @@ seq=18 turn/end                     turn=1
 | `requestId` 幂等（重试不重复投递） | **已验证（真实 seq 证据）** | 同 id 二次投递 `{accepted:true}`；`user/message` 计数 4→4；第二段载荷不在日志中 |
 | 子会话边界（`origin:'subagent'` 被拒） | **已验证（真实 seq 证据）** | 断言确切 `code='session/agent-busy'` 与 `owned by subagent routing` 文案 |
 | 注入恰好一次、只在 `step 1`、不入 `turnOutline` | **已验证（真实 seq 证据）** | `seq=11`；原始日志扫描与投影计数各自为 1；`turnOutline` 含派发文本不含注入标记 |
-| **assistant 回复由真实模型产生** | **未验证 —— 未执行真实 provider 轮次** | 见下 |
-| **真实多步轮次（工具调用驱动的 step 2）** | **未验证 —— 未执行真实 provider 轮次** | 见下 |
+| **assistant 回复由真实模型产生** | **已验证（2026-10-20 真实模型轮次）** | `turn/end` → `{"kind":"completed"}`；`assistantTurns=[{seq:17,turn:1,step:1},{seq:22,turn:1,step:2}]`；`lastAssistantText` 经 pwsh 工具调用得到 |
+| **真实多步轮次（工具调用驱动的 step 2）** | **已验证（2026-10-20 真实模型轮次）** | `distinctStepsSeen=["1/1","1/2"]`、`multiStepObserved=true`、`injectedCallCount=1`（见[复核记录第 9 节](../s0-reverification-20261019.md)） |
 
-**必须分清的一点**：未验证的只是「一条由**真实模型**产生的 `assistant/message`」以及「由真实工具调用驱动的第二个 step」。
-**「读不到 assistant/message」不是问题**——读取路径已由三条独立通道证明能完整读回一轮（含闭合的 `turn/end`）。
-本轮实际落库的是 `assistant/attempt` + `turn/end{reason:{kind:'error'}}`，因此「读取器遇到失败轮次」这一路径**是被真实执行过的**，
-而「读取器遇到成功轮次」只差一个由真实 provider 产出的 `assistant/message` 事件。
+**必须分清的一点**：S0 运行未取得成功的 `assistant/message`，**不是读取器的问题**——读取路径已由三条独立通道证明能完整读回一轮（含闭合的 `turn/end`），该次运行实际落库的是 `assistant/attempt` + `turn/end{reason:{kind:'error'}}`，即「读取器遇到失败轮次」这条路径是被真实执行过的。2026-10-20 补上真实 provider 轮次后，「读取器遇到成功轮次」也已实测：成功轮次、两条 `assistant/message`、多步与注入计数一并取回。
 
-未验证的原因是一条**产品/安全决定，不是技术障碍**：隔离 home 刻意不放入真实凭据（真实凭据不得被物化到同步工作区目录内）。
-补齐方式只有两种，且都需用户本人执行：用户自己把 key 写进 `.probe-home/.credentials.yaml`，或在启动探针宿主时导出 `DEEPSEEK_API_KEY`。
+该项当时的阻塞原因是一条**产品/安全决定，不是技术障碍**：真实凭据不得被物化到同步工作区目录内。最终采用的补齐方式是**启动环境变量注入**（见[复核记录第 9 节](../s0-reverification-20261019.md)）：凭据只存在于那一个隔离探针进程的环境里，未写任何凭据文件，事后全工作区扫描 key 字符串 0 命中。
 
 ### 7.2 停止与清理证据（探针不留下任何东西）
 
@@ -137,10 +133,11 @@ seq=18 turn/end                     turn=1
 
 ## 8. 尚未验证
 
-1. **真实 `assistant/message` 的读回与内容比对（live 轮次）** —— **延期到 S0 之后**。表现：`turn/end` 的 `reason` 为 `{kind:'error', error:{code:'MISSING_CREDENTIAL', message:'…no API key for provider route "deepseek-official"…'}}`，因此本会话中不存在成功的 `assistant/message`。已尝试的办法：由 Lead 在隔离 home 内写入凭据文件 / 由我复制凭据文件——**两者都被拒绝**，前者被用户本人拒绝，后者被本会话的自动审查拒绝两次。最终决定：**真实凭据不得物化到同步工作区目录内**，故此项在 S0 阶段永久延期，并以「机制已验证、live 未验证」记录。
-2. 目标对话**正在运行**时 `queue` 的实际排队行为（不打断本轮）——本轮为单轮，未构造「运行中」场景。
-3. `mode:'steer'` 会取消当前轮这一条：仅由源码（F3）与文档确认，**未实测**。
-4. 冷会话自动 resume 与 `session/writer-held` 分支：未构造冷会话/双写者场景。
+1. 目标对话**正在运行**时 `queue` 的实际排队行为（不打断本轮）——本轮为单轮，未构造「运行中」场景。
+2. `mode:'steer'` 会取消当前轮这一条：仅由源码（F3）与文档确认，**未实测**。
+3. 冷会话自动 resume 与 `session/writer-held` 分支：未构造冷会话/双写者场景。
+
+（原第 1 项「真实 `assistant/message` 的读回与内容比对（live 轮次）」已于 2026-10-20 用启动环境变量注入凭据的方式复验关闭，见第 7.1 节与[复核记录第 9 节](../s0-reverification-20261019.md)。）
 
 ## 9. 被替代关系
 

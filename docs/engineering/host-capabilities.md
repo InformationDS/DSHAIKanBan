@@ -1,4 +1,4 @@
-> 复原说明：本页为 2026-10-14 S0 记录的原文复原（来源提交 bd16535）。2026-10-19 已在 DSH 44.7.0 上做部分复核，结论见 [S0 复核记录](s0-reverification-20261019.md)；未复核部分仍是「提议」，不得当作已验证。
+> 复原说明：本页为 2026-10-14 S0 记录的原文复原（来源提交 bd16535）。2026-10-19 已在 DSH 44.7.0 上做部分复核、2026-10-20 补做真实模型路径复验，结论见 [S0 复核记录](s0-reverification-20261019.md)（第 8、9 节）；未复核部分仍按原样标注，不得当作已验证。
 
 # AIKanBan 所需宿主能力合同
 
@@ -18,7 +18,7 @@
 | HOST-05 | 在正确来源工作对话发送可见整理要求，返回结构可编辑的记录/概况候选；仅整理不开发 | F06/F07 | **接入**：`prompt(mode:'queue')` 在指定会话发送**可见**消息（已验证：落库 `user/message`，文本逐字节匹配）。「返回可编辑候选」属本插件自有逻辑，非宿主缺口。**产品语义约束（必须遵守）**：派发消息落库为 `source.kind='user'`，因此客户端把它渲染为人工提问并计入 `turnOutline`；见 [ADR-001](decisions/ADR-001-session-dispatch-and-consolidation-carrier.md) 第 6 节。 |
 | HOST-06 | 同项目正式记录的简短索引和按范围读出，附适用状态、修正及实际读取证据 | F06最低必要读取/F12完整检索 | **接入**：按范围读出 = `workspace.sessionIds`（按规范化 `cwd` 过滤的派生视图）。正式记录的索引与版本属本插件（见 [ADR-002](decisions/ADR-002-paired-confirmation-single-write.md)）。**约束**：`sessionIds` 是派生视图而非历史，不能用来断言「曾属于本项目的全部对话」；历史隔离需另建显式归属。 |
 | HOST-07 | 系统创建整理对话、保留本次过程、草稿与结果核对，区别工作来源和生成过程 | F13 | **部分接入**：`create({workspaceId})` 可创建独立会话（已验证）。**未验证**：「保留本次过程」的读取路径，以及工作来源与生成过程的区分表达。 |
-| HOST-08 | 账号/模型可用状态与真实设置入口；执行权限审批与内容确认分开 | F04及全部AI入口 | **部分接入**：AI 不可用有稳定信号——实测本轮 `turn/end` 的 `reason.error.code='MISSING_CREDENTIAL'`，可据此表达「AI 不可用」而不误报为任务失败；权限/审批与内容确认是**各自独立**的事件（实测 `seq=0 permission/preset`、`seq=1 sandbox/mode`、`seq=2 approval/policy`，与内容消息分离）。**未验证**：真实设置入口（模型/账号页）与其可写性。 |
+| HOST-08 | 账号/模型可用状态与真实设置入口；执行权限审批与内容确认分开 | F04及全部AI入口 | **部分接入**：AI 不可用有稳定信号——早期实测 `turn/end` 的 `reason.error.code='MISSING_CREDENTIAL'`，可据此表达「AI 不可用」而不误报为任务失败；2026-10-20 补上凭据后真实一轮正常 `completed`（`turnEndReason={"kind":"completed"}`），`MISSING_CREDENTIAL` 仍保留为「AI 不可用」的稳定信号。权限/审批与内容确认是**各自独立**的事件（实测 `seq=0 permission/preset`、`seq=1 sandbox/mode`、`seq=2 approval/policy`，与内容消息分离）。**未验证**：真实设置入口（模型/账号页）与其可写性。 |
 | HOST-09 | 本地可靠保存、版本和草稿、竞争修改核对、失败结果及重启恢复 | F01起各功能 | **接入**：`ctx.storageDomain`（见 [ADR-002](decisions/ADR-002-paired-confirmation-single-write.md)，由 S0-W2 以故障注入/并发/重启测试验证）。本次宿主集成 spike **未覆盖，未验证**。 |
 | HOST-10 | 应用主题/字体/语言、可预测焦点导航、键盘与本地剪贴板结果 | 各组件/F19 | 客户端半（`packages/plugin-client`），本次宿主集成 spike **未覆盖，未验证**。 |
 
@@ -31,17 +31,19 @@ S0 对每项写明自行实现或接入的路径、负责人/模块及验证办�
 复现命令见 `packages/plugin/src/probe/harness/run-probe.ps1`，原始证据见
 `packages/plugin/src/probe/evidence/probe-report.json`。
 
-**已知限制（S0 阶段永久延期）**：隔离 home **刻意不放入真实模型凭据**——真实凭据不得被物化到同步工作区目录内
-（该写入被用户本人拒绝，本会话的自动审查亦拒绝）。因此本轮在 step 1 即以 `MISSING_CREDENTIAL` 结束，
-「由真实模型产生的 assistant 回复内容」与「真实多步（含工具调用）」两项**未验证**，两份 ADR 的「证据分级」与「尚未验证」两节逐条列出。
+**2026-10-20 已复验（真实模型路径）**：把 `DEEPSEEK_API_KEY` 作为**启动环境变量**注入**那一个隔离探针进程**（`DSH_HOME=<隔离目录>`、`--profile web --port 0 --no-open`、DSH 44.7.0），未写任何凭据文件；事后全工作区扫描该 key 字符串 **0 命中**。20 步宿主集成探针 **20/20 `[ok]`**：
 
-需要区分的两点：**读取路径本身已验证**（`inspect` / `follow` / `page` 三条独立通道对同一份 19 事件日志一致，
-含闭合的 `turn/end`）；缺的只是「一条由真实模型产生的 `assistant/message`」。
-而**注入机制本身已验证**（`seq=11` 恰好一条、两个独立计数一致、只发生在 step 1）；缺的只是真实工具调用驱动出的 step 2。
+- **由真实模型产生的 `assistant/message`：已实测成立**。`readback.turnEnd`：`turnEnded=true`、`turnEndReason={"kind":"completed"}`、`totalEvents=25`、`assistantTurns=[{seq:17,turn:1,step:1},{seq:22,turn:1,step:2}]`，`lastAssistantText` 是模型经 **pwsh 工具调用**得到的实际输出。
+- **真实多步（含工具调用）：已实测成立**。`inject.multiStepOnlyOnce`：`preStepCallCount=2`、`injectedCallCount=1`、`distinctStepsSeen=["1/1","1/2"]`、`multiStepObserved=true`、`projectionInjectionCount=1`。
+- `dispatch.prompt.queue`：`accepted={accepted:true}`，带真实 `requestId`。
+
+2026-10-14 的 S0 运行受「真实凭据不得物化到同步工作区目录内」限制，当时以 `MISSING_CREDENTIAL` 结束；本次改用启动环境变量注入（凭据未落盘），两项因此关闭，两份 ADR 的「证据分级」与「尚未验证」两节已按本次实测收紧。
+
+需要区分的两点保持不变：**读取路径本身已验证**（`inspect` / `follow` / `page` 三条独立通道对同一份日志一致，含闭合的 `turn/end`；S0 运行以 19 事件日志验证，本次运行 `totalEvents=25`）；**注入机制本身已验证**（恰好一条、两个独立计数一致），本次进一步观察到真实工具调用驱动出的 step 2。这是**宿主能力复验，不是产品验收**：F01—F20 的 AT 仍全部「待执行」。
 
 ## 安装目标的一处事实更正（工程决定，不是产品决定）
 
-用户当前 GUI（`http://127.0.0.1:19387`）运行的是 **`desktop` profile**，不是 `web` profile。证据：
+用户当前 GUI（`http://127.0.0.1:19387`；**注：2026-10-20 当前 GUI 已改为 `http://127.0.0.1:7420`，仍为 `desktop` profile，下列判断不变**）运行的是 **`desktop` profile**，不是 `web` profile。证据：
 (1) 该端口的监听进程 argv 为 `… dsh-desktop-host/lib/index.js … C:\Users\InformationDS\.dsh\profiles\desktop …`；
 (2) 会话环境变量 `DSH_PROFILE=desktop`、`DSH_PROFILE_DIR=C:\Users\InformationDS\.dsh\profiles\desktop`；
 (3) 该进程的实时插件树含 `@deepseek-ai/dsh-host-product-telemetry-otel`、`office-to-pdf`、`workspace-changes` 等 desktop 专属行，

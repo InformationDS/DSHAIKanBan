@@ -55,7 +55,7 @@ S0 在 `bd16535` **曾经实施**：插件双半包形态、`packages/core` 数�
 
 2026-10-19 在 **DSH 44.7.0** 上完成一次部分复核（见 [S0 复核记录](../engineering/s0-reverification-20261019.md)）：加载链与测试成立（probe 4/4、verify-host-import 11/11、149 个用例全绿），但 **`typecheck` 在原始提交上失败**——`packages/plugin-client/src/channel-source.ts:186` 一处 TS2322（`parseBoardWriteValue` 的 `snapshot` 合法可为 `null`，却被当作非空返回）；补一处 3 行空值守卫后 typecheck／build／测试／探针全绿。结论：**代码可低成本回收**；2026-10-19 已按此回收（提交 `ed6b151`），仍未复核项见复核记录。
 
-仍未复核：装到真实 profile 并生效、客户端实际渲染、真实模型的 assistant 回复与真实多步、20 步宿主集成 spike 的完整语义、存储原子性 25/25（沿用旧记录，本次未重跑）、`tools=false` / `systemPrompt=false`（激活时刻未观察到）。工程未决仍见 [OQ-03](../prd/open-questions.md)；OQ-01 的运行中整理最小反馈已确定并落为 F06-R09 + AT-129，不再是缺口。HOST-07 的区分表达已由 [ADR-006](../engineering/decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（**采用**，2026-10-20 用户确认）确定；工程证据待取证，取证前不得写成已验证。
+仍未复核：装到真实 profile 并生效、客户端实际渲染、`tools=false` / `systemPrompt=false`（激活时刻未观察到）。2026-10-20 已补做的复验：20 步宿主集成 spike（20/20）与存储原子性 25/25 重跑通过，真实模型路径（真实 `assistant` 回复与真实多步）关闭——均见 [S0 复核记录](../engineering/s0-reverification-20261019.md) 第 8、9 节。工程未决仍见 [OQ-03](../prd/open-questions.md)；OQ-01 的运行中整理最小反馈已确定并落为 F06-R09 + AT-129，不再是缺口。HOST-07 的区分表达已由 [ADR-006](../engineering/decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（**采用**，2026-10-20 用户确认）确定；工程证据待取证，取证前不得写成已验证。
 
 ## 维护约定
 

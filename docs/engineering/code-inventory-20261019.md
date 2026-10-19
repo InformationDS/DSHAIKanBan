@@ -107,7 +107,7 @@
 1. **core 与 host 半未接线**：`packages/plugin/src/index.ts:396-404` 明确说明 board channel 未在 `apply()` 注册，因为没有 core 适配层；仓库内也不存在 `HostBoardPort` 的实现（`board-channel.ts:109` 只有接口）。
 2. **协议与 core 的字段差**：wire 要求读快照带 `capabilities`（`wire.ts:396-397`），core 的 `BoardReadResult` 没有该字段（`types.ts:441-463`）；F02-R06 的 `hints` 在 core 也没有数据源。
 3. **UI 只覆盖看板展示与 F02 交互**：没有任务创建/编辑、项目切换、活动历史、行动提示数据等入口（见 §4）。
-4. **宿主侧未验证**：真实 profile 安装与生效、浏览器实际渲染、真实 Connection RPC 路由（Host/Origin/token）、真实模型回复与多步轮次，均无本仓库内证据（[S0 复核记录](s0-reverification-20261019.md) 的「仍未复核」清单）。
+4. **宿主侧未验证**：真实 profile 安装与生效、浏览器实际渲染、真实 Connection RPC 路由（Host/Origin/token），均无本仓库内证据（[S0 复核记录](s0-reverification-20261019.md) 的「仍未复核」清单）。真实模型回复与多步轮次已于 2026-10-20 在隔离宿主复验（见同页第 9 节），不再属于未验证项。
 5. **原始提交类型错误**：`bd16535` 的 `channel-source.ts:186` 有一处 TS2322；回收时补了 3 行空值守卫（`ed6b151`），因此**当前分支可构建**，但该守卫是本次回收唯一的代码改动。
 
 ## 7. 与交付状态的关系

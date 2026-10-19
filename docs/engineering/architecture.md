@@ -21,14 +21,13 @@
 
 ## 尚未决定的工程项
 
-1. **插件安装目标 profile**。用户当前 GUI（`http://127.0.0.1:19387`）运行的是 **`desktop` profile**，不是
+1. **插件安装目标 profile**。用户当前 GUI（`http://127.0.0.1:19387`；**注：2026-10-20 当前 GUI 已改为 `http://127.0.0.1:7420`，仍为 `desktop` profile，下列判断不变**）运行的是 **`desktop` profile**，不是
    `profiles/web`：监听进程 argv 指向 `profiles\desktop`，会话环境为 `DSH_PROFILE=desktop` /
    `DSH_PROFILE_DIR=C:\Users\InformationDS\.dsh\profiles\desktop`，且其实时插件树含 desktop 专属行而**不含**
    `profiles/web` 里的 `insert: aikanban` 与 `file:` 依赖。`desktop` profile 由 Electron 应用独占管理
    （`dsh --profile desktop` 被启动器拒绝），安装进当前 GUI 必须写该 profile 并重启进程。
    因此：**装到哪个 profile、何时重启，需用户确认后执行**；`tools/sync-to-profile.mjs` 按 profile 参数化，默认 `web`。
-2. **模型凭据下的端到端验证**。隔离集成环境没有模型凭据，`assistant` 回复内容与真实多步（工具调用）两项
-   未验证；补齐后应收紧 ADR-001/ADR-003 的「尚未验证」一节。
+2. **模型凭据下的端到端验证**：**2026-10-20 已复验**。方法：把 `DEEPSEEK_API_KEY` 作为**启动环境变量**注入**那一个隔离探针进程**（`DSH_HOME=<隔离目录>`、`--profile web --port 0 --no-open`、DSH 44.7.0），未写任何凭据文件，事后全工作区扫描该 key 字符串 **0 命中**。结果：20 步宿主集成探针 **20/20 `[ok]`**；`readback.turnEnd` 以 `completed` 结束并含两条 `assistant/message`（`assistantTurns=[{seq:17,turn:1,step:1},{seq:22,turn:1,step:2}]`，`lastAssistantText` 经 pwsh 工具调用得到）；`multiStepObserved=true`、`injectedCallCount=1`。因此「真实模型 `assistant` 回复」与「真实多步（含工具调用）」两项成立，[ADR-001](decisions/ADR-001-session-dispatch-and-consolidation-carrier.md)/[ADR-003](decisions/ADR-003-project-mapping-and-context-injection.md) 的「证据分级」与「尚未验证」两节已按此收紧（其余未验证项保留，见[复核记录](s0-reverification-20261019.md)第 9 节）。
 3. **系统整理对话与工作来源的区分表达**（HOST-07）：已由 [ADR-006](decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（**采用**，2026-10-20 用户确认）确定；工程证据待取证，取证前不得写成已验证。
 
 ## 建议职责边界

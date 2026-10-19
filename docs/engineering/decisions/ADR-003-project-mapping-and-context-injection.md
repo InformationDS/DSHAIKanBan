@@ -1,10 +1,10 @@
-> 复原说明：本页为 2026-10-14 S0 记录的原文复原（来源提交 bd16535）。2026-10-20 已在 DSH 44.7.0 上复核并据此把状态由「提议」改为「采用」，依据见 [S0 复核记录](../s0-reverification-20261019.md) 第 8 节；正文中标注「尚未验证」的子项仍按原样保留，不得当作已验证。
+> 复原说明：本页为 2026-10-14 S0 记录的原文复原（来源提交 bd16535）。2026-10-20 已在 DSH 44.7.0 上复核（含真实模型轮次）并据此把状态由「提议」改为「采用」，依据见 [S0 复核记录](../s0-reverification-20261019.md) 第 8、9 节；正文中其余标注「尚未验证」的子项仍按原样保留，不得当作已验证。
 
 # ADR-003：项目映射与默认背景注入（workspace 归属 + 每轮上下文）
 
 - 日期：2026-10-14
 - 状态：采用（Accepted，2026-10-20 复核）
-- 状态依据：2026-10-20 在 DSH 44.7.0 上重跑宿主集成探针，workspace 映射 6 步（含 `missing-dir` 保留记录、同名不同路径）、会话创建与解析 4 步、`inject.projectionExactlyOnce`/`inject.multiStepOnlyOnce`/`inject.turnOutline` 全部 `[ok]`（20/20，见 [复核记录第 8 节](../s0-reverification-20261019.md)）。仍**未验证**：真实模型多步（本次 `multiStepObserved=false`）。
+- 状态依据：2026-10-20 在 DSH 44.7.0 上重跑宿主集成探针，workspace 映射 6 步（含 `missing-dir` 保留记录、同名不同路径）、会话创建与解析 4 步、`inject.projectionExactlyOnce`/`inject.multiStepOnlyOnce`/`inject.turnOutline` 全部 `[ok]`（20/20，见 [复核记录第 8 节](../s0-reverification-20261019.md)）。2026-10-20 已实测：真实模型多步（`preStepCallCount=2`、`injectedCallCount=1`、`distinctStepsSeen=["1/1","1/2"]`、`multiStepObserved=true`，见[复核记录第 9 节](../s0-reverification-20261019.md)）。
 - 决策范围：宿主半（`packages/plugin`），影响项目标识、工作范围、默认背景快照
 - 来源规则：OBJ 系列（项目/对象标识）、CTX 系列（背景与读取）、F01、F04、F11、HOST-01、HOST-04、HOST-06
 - 关联决策：[ADR-001 会话派发与整理执行载体](./ADR-001-session-dispatch-and-consolidation-carrier.md)
@@ -146,12 +146,9 @@ HOST-01 要求「明确项目标识、项目名称及工作范围；范围失效
 | 注入**只发生在 `step 1`** | **已验证（真实 handler 调用记录 + 代码闸门）** | `agent/pre-step` 实际调用记录为 `{turn:1, step:1, injected:true}`；本轮只产生了 step 1 |
 | 注入**不被 `turnOutline` 当人工提问** | **已验证（真实 seq 证据）** | `turnOutline` 含派发文本、不含注入标记 |
 | 注入块可被**冷安全分页**读到 | **已验证（真实 seq 证据）** | `page` 的 `includesInjectedBlock=true` |
-| **真实多步轮次下 step 2 不再注入** | **未验证 —— 未执行真实 provider 轮次** | 见下 |
+| **真实多步轮次下 step 2 不再注入** | **已验证（2026-10-20 真实模型轮次）** | `preStepCallCount=2`（两次 step）、`injectedCallCount=1`、`distinctStepsSeen=["1/1","1/2"]`、`multiStepObserved=true`、`projectionInjectionCount=1`（见[复核记录第 9 节](../s0-reverification-20261019.md)） |
 
-**必须分清的一点**：未验证的是「由真实工具调用驱动出 step 2，并在 step 2 观察 handler 不注入」。
-缺失的只是一个真实 provider 轮次，**不是注入机制本身**：`step 1` 的注入是真实执行的（handler 调用记录 + 落库事件 + 两个独立计数），
-闸门 `step !== 1 → return decision` 也已由源码与 step 1 实测共同确认。此项在 S0 阶段**永久延期**，
-原因是一条**产品/安全决定，不是技术障碍**：真实凭据不得被物化到同步工作区目录内（写入凭据的尝试被用户本人拒绝）。
+**必须分清的一点**：S0 运行未观察到 step 2，缺的是一个真实 provider 轮次，**不是注入机制本身**——`step 1` 的注入是真实执行的（handler 调用记录 + 落库事件 + 两个独立计数），闸门 `step !== 1 → return decision` 也已由源码与 step 1 实测共同确认。该阻塞原因是一条**产品/安全决定，不是技术障碍**：真实凭据不得被物化到同步工作区目录内。2026-10-20 采用**启动环境变量注入**后已实测真实多步：两次 step、只注入 1 次，即 step 2 未再注入。
 
 ### 7.2 工程事实：隔离 home 是一次性的，探针证据必须落在仓库里
 
@@ -174,14 +171,11 @@ HOST-01 要求「明确项目标识、项目名称及工作范围；范围失效
 
 ## 8. 尚未验证
 
-1. **真实多步轮次下 step 2 不再注入**：`multiStepObserved=false`。原因见 7.1——未执行真实 provider 轮次（凭据被刻意排除），
-   因此「step 2 不再注入」只在代码闸门与 step 1 的实测上成立，**没有真实多步事件序列**。此项在 S0 阶段永久延期。
-2. **模型侧效果**：注入内容是否真的被模型读到并影响回答，未验证（同上，无真实 provider 轮次）。
-   注意区分：**注入事件确实进入了模型请求的历史**（它是 `seq=11` 的持久 `user/message`，位于 `request/header`@`seq=12` 之前），
-   但「模型实际读到了它」没有 live 证据。
-3. **跨项目读取隔离**：只验证了归属键与读取面的行为，未构造「两个项目各有对话、读取不串数据」的端到端场景。
-4. **`SessionHeader.cwd` 指向一个已消失目录的会话**：只验证了 `attachSession` 的两条拒绝路径与 `workspace.status()`；未验证该会话在 `sessionIds` 中的实际显示结果。
-5. **重启后的持久性**：注入事件与项目归属在重启后的读回未验证。
+1. **跨项目读取隔离**：只验证了归属键与读取面的行为，未构造「两个项目各有对话、读取不串数据」的端到端场景。
+2. **`SessionHeader.cwd` 指向一个已消失目录的会话**：只验证了 `attachSession` 的两条拒绝路径与 `workspace.status()`；未验证该会话在 `sessionIds` 中的实际显示结果。
+3. **重启后的持久性**：注入事件与项目归属在重启后的读回未验证。
+
+（原第 1 项「真实多步轮次下 step 2 不再注入」已于 2026-10-20 用启动环境变量注入凭据的方式复验关闭，见第 7.1 节与[复核记录第 9 节](../s0-reverification-20261019.md)。原第 2 项「模型侧效果」不在本次探针的断言范围内：本次只实测到真实轮次成功与多步注入计数（`injectedCallCount=1`），未对「模型确实读取注入内容并据此改变回答」做针对性断言，不得据此写成已验证。）
 
 ## 9. 被替代关系
 

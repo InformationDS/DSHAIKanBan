@@ -1,6 +1,6 @@
 # 文档入口
 
-这里统一保存 AIKanBan 的产品需求文档与工程记录。本仓库当前只保留需求、治理约定与 **S0 工程记录的文档层**，不保存实施代码：技术决策见[技术决策记录](engineering/decisions/README.md)，S0 资产复核结论见[S0 复核记录](engineering/s0-reverification-20261019.md)，实现与验收进度只在[交付状态](delivery/status.md)维护。项目入口见[项目 README](../README.md)。
+这里统一保存 AIKanBan 的产品需求文档与工程记录。本仓库当前含需求、治理约定、S0 工程记录与**回收的 S0/S1 实施代码**（`packages/`，见[项目 README](../README.md)）：技术决策见[技术决策记录](engineering/decisions/README.md)，S0 资产复核结论见[S0 复核记录](engineering/s0-reverification-20261019.md)，实现与验收进度只在[交付状态](delivery/status.md)维护——代码在仓库不等于功能已实现或已验收。
 
 ## 按任务阅读
 
@@ -14,7 +14,7 @@
 | 核对验收场景 | 当前功能验收条件 → [验收映射](prd/mapping/acceptance.csv) |
 | 记录技术决策 | [技术决策记录](engineering/decisions/README.md)（ADR-001…005 索引，均为提议） |
 | 查看 S0 复核结论 | [S0 复核记录](engineering/s0-reverification-20261019.md) → [架构准备](engineering/architecture.md)、[宿主能力合同](engineering/host-capabilities.md) |
-| 运行 S0 工具 | [tools/COMMANDS.md](../tools/COMMANDS.md)（脚本已复原；依赖与 `packages/` 未安装） |
+| 运行与构建 | [tools/COMMANDS.md](../tools/COMMANDS.md) → 先 `pnpm install`（`node_modules` 与 `.pnpm-store` 未随仓库提供） |
 | 查看实现与验收进度 | [交付状态](delivery/status.md)（唯一状态入口） |
 
 ## 文档职责与有效性
@@ -25,8 +25,8 @@
 - `prd/mapping/` 是定位、归属和验收责任索引，不是另一份可独立修改的业务规则正文。
 - `engineering/decisions/` 保存技术决策（约定与索引见其 [README](engineering/decisions/README.md)）；`delivery/status.md` 是[实现与验收进度的唯一入口](delivery/status.md)。实现开始时在该功能目录创建 implementation.md，验收开始时创建 verification.md，记录内容与有效 PRD 分离，状态变化只登记到交付状态页。
 - `engineering/` 保存 S0 工程记录（架构准备、宿主能力合同、ADR、[复核记录](engineering/s0-reverification-20261019.md)）；这些是从 `bd16535` 复原的先前研究，未复核部分仍是「提议」，不得当作已验证。
-- 本仓库不保存实施代码：产品需求、工程记录与状态入口都在 `docs/` 下，根目录只有 [项目 README](../README.md)；`tools/` 下为复原的 S0 探针与同步脚本，依赖与 `packages/` 未随文档复原安装，运行前先读 [tools/COMMANDS.md](../tools/COMMANDS.md)。
-- `docs/tools/` 下的脚本只校验文档结构，不代表产品已实现或已验收。
+- `packages/` 是 2026-10-19 从 `bd16535` 回收的 S0/S1 实施代码（63 个文件，逐字节复原 + 一处 3 行空值守卫），根目录另有 8 个构建配置文件；`node_modules` 与 `.pnpm-store` 不在仓库内，新克隆先读 [tools/COMMANDS.md](../tools/COMMANDS.md) 再执行 `pnpm install`。**代码在仓库不代表 F01—F20 已实现或已验收**，状态只以[交付状态](delivery/status.md)为准。
+- `tools/` 是 S0 的隔离探针、profile 同步与清理脚本；`docs/tools/` 下的脚本只校验文档结构，不代表产品已实现或已验收。
 
 ## 维护与变更
 

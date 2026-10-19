@@ -4,7 +4,7 @@ AIKanBan 是面向 Deepseek Harness 桌面版的项目看板与跨对话交接�
 
 ## 当前仓库内容
 
-本仓库**只保留产品需求（PRD）、治理载体与 S0 工程记录的文档层**：实施代码与构建配置未取回；S0 的架构准备、宿主能力合同、五份 ADR（均为「提议」）与 [2026-10-19 复核记录](docs/engineering/s0-reverification-20261019.md)已从 `bd16535` 复原。需要重新实施时从需求开始。
+本分支（`s1-recover`）包含产品需求（PRD）、治理载体、S0 工程记录与**回收的 S0/S1 实施代码**：`packages/core`、`packages/plugin`、`packages/plugin-client` 共 63 个文件，加上根构建配置 8 个，均自 `bd16535` 逐字节复原，仅追加一处 3 行空值守卫。**代码回收不等于功能实现**：F01—F20 的实现与产品验收状态一律以[交付状态](docs/delivery/status.md)为准。
 
 - 需求入口：[文档入口](docs/README.md) → [产品总览](docs/prd/overview.md)
 - 功能清单：[小 PRD 索引](docs/prd/README.md)（F01—F20）
@@ -14,12 +14,15 @@ AIKanBan 是面向 Deepseek Harness 桌面版的项目看板与跨对话交接�
 - 工程准备：[架构准备](docs/engineering/architecture.md)、[宿主能力合同](docs/engineering/host-capabilities.md)
 - 技术决策：[技术决策记录](docs/engineering/decisions/README.md)（ADR-001…005，均为提议）
 - S0 复核：[S0 复核记录](docs/engineering/s0-reverification-20261019.md)（2026-10-19，DSH 44.7.0；含旧声称更正）
-- 还原命令：[tools/COMMANDS.md](tools/COMMANDS.md)（脚本已复原；`packages/` 与依赖未安装）
+- 实施代码：`packages/`（回收的 S0/S1 实现）与根构建配置 8 个（`package.json`、`pnpm-workspace.yaml`、`pnpm-lock.yaml`、`tsconfig.json`、`tsconfig.base.json`、`vitest.config.ts`、`.npmrc`、`.gitignore`）
+- 运行与构建：[tools/COMMANDS.md](tools/COMMANDS.md)（`node_modules` 与 `.pnpm-store` 未随仓库提供，先读该页再 `pnpm install`）
 - 交付进度：[交付状态](docs/delivery/status.md)（实现与验收的唯一状态入口）
 
-## 为什么只保留需求与 S0 工程记录的文档层
+## 从只保留需求到回收 S0/S1 代码
 
-上一轮实施在额度受限的情况下中断，代码与文档状态互相矛盾（交付状态写着功能尚未实现，仓库里却已有核心实现和对应的实现记录）。为避免把不完整的实施当作基线继续演进，本次整体删除实施执行内容，只保留仍完整、可独立校验的需求文档，并恢复两个只写约定的治理落点：[技术决策记录](docs/engineering/decisions/README.md)与[交付状态](docs/delivery/status.md)。2026-10-19 按「回收 S0 资产」路线补回 S0 工程记录的**文档层**（架构准备、宿主能力合同、五份 ADR 与[复核记录](docs/engineering/s0-reverification-20261019.md)）与 `tools/` 脚本；`packages/` 实施代码**不取回**，仍可从 Git 历史中的基线提交 `bd16535` 找回。
+上一轮实施在额度受限的情况下中断，代码与文档状态互相矛盾（交付状态写着功能尚未实现，仓库里却已有核心实现和对应的实现记录）。为避免把不完整的实施当作基线继续演进，2026-10-18 曾整体删除实施执行内容，只保留仍完整、可独立校验的需求文档，并恢复两个只写约定的治理落点：[技术决策记录](docs/engineering/decisions/README.md)与[交付状态](docs/delivery/status.md)；2026-10-19 先补回 S0 工程记录的**文档层**（架构准备、宿主能力合同、五份 ADR 与[复核记录](docs/engineering/s0-reverification-20261019.md)）与 `tools/` 脚本。
+
+**2026-10-19 已按复核结论回收代码**：`packages/`（63 文件）与根构建配置（8 个）自 `bd16535` 逐字节复原，仅追加 `packages/plugin-client/src/channel-source.ts` 的一处 3 行空值守卫，提交为 `ed6b151`（分支 `s1-recover`）。被删除过的内容仍可从 Git 历史中的基线提交 `bd16535` 找回。
 
 ## 计划中的核心使用方式
 
@@ -45,8 +48,11 @@ python docs/tools/check_docs.py
 
 ```text
 AIKanBan/
-├─ README.md            # 项目简介、当前仓库范围与文档校验入口
-├─ tools/               # 复原的 S0 探针/同步/清理脚本与 COMMANDS.md（代码与依赖未取回）
+├─ README.md            # 项目简介、仓库范围与文档校验入口
+├─ package.json         # 根构建配置（另有 pnpm-workspace.yaml / pnpm-lock.yaml / tsconfig.json /
+│                       #   tsconfig.base.json / vitest.config.ts / .npmrc / .gitignore，共 8 个）
+├─ packages/            # 回收的 S0/S1 实施代码：core（数据模型）、plugin（host 半）、plugin-client（浏览器半）
+├─ tools/               # S0 探针/同步/清理脚本与 COMMANDS.md
 └─ docs/
    ├─ README.md         # 文档入口、职责与维护规则
    ├─ prd/              # 有效需求、公共规则、20 份小 PRD、历史基线、映射与模板

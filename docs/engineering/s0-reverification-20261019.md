@@ -1,7 +1,7 @@
 # S0 资产复核记录（2026-10-19，DSH 44.7.0）
 
 > 本页是一次隔离复核的工程记录，**不是产品验收**，也不改变任何 ADR 的状态：五份 ADR 仍为「提议」（见[技术决策索引](decisions/README.md)）。
-> 复核对象是提交 `bd16535` 的 S0/S1 工程记录与代码；本次只把工程文档与 `tools/` 落回本仓库，`packages/` 代码**未取回**。
+> 复核对象是提交 `bd16535` 的 S0/S1 工程记录与代码；复核当时仓库只有工程文档与 `tools/`，`packages/` 代码于同日按第 7 节处置结果回收至分支 `s1-recover`。
 
 ## 1. 环境与隔离方式
 
@@ -12,7 +12,7 @@
 | 工作副本 | `C:\Users\InformationDS\aikanban-s0`，detached at `bd16535`，位于**同步盘之外** |
 | 依赖安装 | `pnpm install --frozen-lockfile` 成功：89 包，3.2s |
 | 隔离边界 | 未触碰正在运行的用户 GUI；未读写 `~/.dsh` |
-| 补丁文件 | `C:\Users\InformationDS\aikanban-s0-s1-baseline.patch`（753 字节，untracked，**不在本仓库内**） |
+| 补丁文件 | `C:\Users\InformationDS\aikanban-s0-s1-baseline.patch`（753 字节；复核时 untracked、不在本仓库内，现已按第 7 节回收入库，该文件不再需要） |
 
 复核分两个状态：**状态 A** = `bd16535` 原样未修改；**状态 B** = 只补一处 3 行空值守卫（见第 3 节）。
 
@@ -93,12 +93,14 @@
 
 **回收代码成本极低（仅 3 行空值守卫），建议回收并采用该补丁作为 S1 基线起点。**
 
+**处置结果（2026-10-19）**：已按本建议回收至分支 `s1-recover`（提交 `ed6b151`）：`packages/`（63 个文件）与根构建配置 8 个自 `bd16535` 逐字节复原，并采用该 3 行空值守卫；原先写在仓库外的补丁文件不再需要，改动已入库。
+
 理由：状态 B 下 `typecheck` / `build` / 149 用例 / `verify-host-import` / `probe-host` 全部门禁在同一台机、同一 DSH 44.7.0 上转绿；修复点是单点空值收窄，不涉及产品语义。
 
 配套约束：
 
-1. 回收起点为 `bd16535` + `C:\Users\InformationDS\aikanban-s0-s1-baseline.patch`（753 字节，当前 untracked，**尚未入库**）；`packages/` 代码本次未随文档复原取回。
-2. 回收时**先跑完整门禁**再进基线；不得沿用本次部分复核的结论替代功能验收。
+1. 回收起点为 `bd16535` + 上述 3 行守卫；回收已完成（分支 `s1-recover`，提交 `ed6b151`），仓库外的补丁文件 `C:\Users\InformationDS\aikanban-s0-s1-baseline.patch` 不再需要。
+2. 回收后仍**先跑完整门禁**再进基线；不得沿用本次部分复核的结论替代功能验收。
 3. 第 6 节列出的未复核项不得写成已验证；五份 ADR 的「提议」状态在各自复核完成前不变。
 
 本页只记录 2026-10-19 这一次隔离复核的观察，不替代[交付状态](../delivery/status.md)与[功能验收](../prd/mapping/acceptance.csv)。

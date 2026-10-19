@@ -34,12 +34,13 @@
   - 存储与并发：`ctx.storageDomain` ＋ 成对确认单写，见 [ADR-002](../engineering/decisions/ADR-002-paired-confirmation-single-write.md)（**采用**）。
   - 项目映射与背景注入：`workspace.id` ＋ `agent/pre-step` 注入，见 [ADR-003](../engineering/decisions/ADR-003-project-mapping-and-context-injection.md)（**采用**）。
   - 会话派发与整理载体：见 [ADR-001](../engineering/decisions/ADR-001-session-dispatch-and-consolidation-carrier.md)（**采用**）。
+  - 系统整理对话与工作来源的区分表达：见 [ADR-006](../engineering/decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（**采用**；2026-10-20 用户确认，工程证据待取证）。
   - 宿主能力：HOST-01—10 逐条有核对结论，见[宿主能力合同](../engineering/host-capabilities.md)；2026-10-20 已重跑存储原子性 25/25 与 20 步宿主集成探针 20/20。
 - 仍未决（只剩四项，均已分别落点）：
   1. **插件装进哪个 profile、何时重启 GUI**——需用户确认；`desktop` 由 Electron 独占管理。
   2. **真实模型凭据是否允许进入隔离环境**——未定，因而真实 `assistant` 回复与真实多步仍未验证。
   3. **界面挂载点与看板形态**（[ADR-004](../engineering/decisions/ADR-004-界面挂载点与看板形态.md)，提议）——缺客户端实际渲染证据。
-  4. **浏览器半 ↔ 宿主半数据通道**（[ADR-005](../engineering/decisions/ADR-005-浏览器半与宿主半的数据通道.md)，提议）——缺真实 Connection RPC 路由证据；其中「系统整理对话与工作来源的区分表达」见 [ADR-006](../engineering/decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（提议）。
+  4. **浏览器半 ↔ 宿主半数据通道**（[ADR-005](../engineering/decisions/ADR-005-浏览器半与宿主半的数据通道.md)，提议）——缺真实 Connection RPC 路由证据。
 - 处理入口：技术选择记入[技术决策记录](../engineering/decisions/README.md)，实施与验证进展登记到[交付状态](../delivery/status.md)；复核过程见 [S0 复核记录](../engineering/s0-reverification-20261019.md)。
 - 限制：不要默认 DSH 的项目/聊天/模型入口已存在，不借本次拆分定义所有终端/文件权限功能。仅确定满足 AIKanBan 必需边界的最小工程方案。
 

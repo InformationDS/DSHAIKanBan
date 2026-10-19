@@ -4,7 +4,7 @@ AIKanBan 是面向 Deepseek Harness 桌面版的项目看板与跨对话交接�
 
 ## 当前仓库内容
 
-本分支（`s1-recover`）包含产品需求（PRD）、治理载体、S0 工程记录与**回收的 S0/S1 实施代码**：`packages/core`、`packages/plugin`、`packages/plugin-client` 共 63 个文件，加上根构建配置 8 个，均自 `bd16535` 逐字节复原，仅追加一处 3 行空值守卫。**代码回收不等于功能实现**：F01—F20 的实现与产品验收状态一律以[交付状态](docs/delivery/status.md)为准。
+本仓库包含产品需求（PRD）、治理载体、S0 工程记录与**回收的 S0/S1 实施代码**：`packages/core`、`packages/plugin`、`packages/plugin-client` 共 63 个文件，加上根构建配置 8 个，均自 `bd16535` 逐字节复原，仅追加一处 3 行空值守卫。**代码回收不等于功能实现**：F01—F20 的实现与产品验收状态一律以[交付状态](docs/delivery/status.md)为准。
 
 - 需求入口：[文档入口](docs/README.md) → [产品总览](docs/prd/overview.md)
 - 功能清单：[小 PRD 索引](docs/prd/README.md)（F01—F20）
@@ -12,7 +12,7 @@ AIKanBan 是面向 Deepseek Harness 桌面版的项目看板与跨对话交接�
 - 未决事项：[未决事项与首版边界](docs/prd/open-questions.md)
 - 需求追溯：[追溯说明](docs/prd/traceability.md)
 - 工程准备：[架构准备](docs/engineering/architecture.md)、[宿主能力合同](docs/engineering/host-capabilities.md)
-- 技术决策：[技术决策记录](docs/engineering/decisions/README.md)（ADR-001…005，均为提议）
+- 技术决策：[技术决策记录](docs/engineering/decisions/README.md)（ADR-001—006，状态见索引）
 - S0 复核：[S0 复核记录](docs/engineering/s0-reverification-20261019.md)（2026-10-19，DSH 44.7.0；含旧声称更正）
 - 实施代码：`packages/`（回收的 S0/S1 实现）与根构建配置 8 个（`package.json`、`pnpm-workspace.yaml`、`pnpm-lock.yaml`、`tsconfig.json`、`tsconfig.base.json`、`vitest.config.ts`、`.npmrc`、`.gitignore`）
 - 运行与构建：[tools/COMMANDS.md](tools/COMMANDS.md)（`node_modules` 与 `.pnpm-store` 未随仓库提供，先读该页再 `pnpm install`）
@@ -22,7 +22,7 @@ AIKanBan 是面向 Deepseek Harness 桌面版的项目看板与跨对话交接�
 
 上一轮实施在额度受限的情况下中断，代码与文档状态互相矛盾（交付状态写着功能尚未实现，仓库里却已有核心实现和对应的实现记录）。为避免把不完整的实施当作基线继续演进，2026-10-18 曾整体删除实施执行内容，只保留仍完整、可独立校验的需求文档，并恢复两个只写约定的治理落点：[技术决策记录](docs/engineering/decisions/README.md)与[交付状态](docs/delivery/status.md)；2026-10-19 先补回 S0 工程记录的**文档层**（架构准备、宿主能力合同、五份 ADR 与[复核记录](docs/engineering/s0-reverification-20261019.md)）与 `tools/` 脚本。
 
-**2026-10-19 已按复核结论回收代码**：`packages/`（63 文件）与根构建配置（8 个）自 `bd16535` 逐字节复原，仅追加 `packages/plugin-client/src/channel-source.ts` 的一处 3 行空值守卫，提交为 `ed6b151`（分支 `s1-recover`）。被删除过的内容仍可从 Git 历史中的基线提交 `bd16535` 找回。
+**2026-10-19 已按复核结论回收代码**：`packages/`（63 文件）与根构建配置（8 个）自 `bd16535` 逐字节复原，仅追加 `packages/plugin-client/src/channel-source.ts` 的一处 3 行空值守卫，提交为 `ed6b151`。被删除过的内容仍可从 Git 历史中的基线提交 `bd16535` 找回。
 
 ## 计划中的核心使用方式
 

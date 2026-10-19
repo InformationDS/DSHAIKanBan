@@ -58,7 +58,8 @@ def table_rows(text):
     return rows[1:] if rows else []
 
 def section_body(text, number):
-    return re.split(rf'^## {number}[.．]', text, flags=re.M)[-1]
+    body = re.split(rf'^## {number}[.．]', text, flags=re.M)[-1]
+    return re.split(r'^## ', body, flags=re.M)[0]
 
 cat = json.loads((PRD / 'feature-catalog.json').read_text(encoding='utf-8'))
 features = cat['features']

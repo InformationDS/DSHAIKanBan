@@ -4,11 +4,12 @@
 
 ## 当前范围
 
-本仓库当前含有产品需求、治理载体、S0 工程记录与**回收的 S0/S1 实施代码**（`packages/`，分支 `s1-recover`；2026-10-19 自 `bd16535` 逐字节复原，仅追加一处 3 行空值守卫）。**F01—F20 的实现仍为「未开始」、产品验收一条都未执行**——回收代码是 S0/S1 工程资产与起点，功能级实现与验收只以本页状态表为准；需求文档齐全、代码在仓库，都不等于功能已实现或已验收。
+本仓库当前含有产品需求、治理载体、S0 工程记录与**回收的 S0/S1 实施代码**（`packages/`，分支 `s1-recover`；2026-10-19 自 `bd16535` 逐字节复原，仅追加一处 3 行空值守卫）。**F01/F02 的 domain 层与看板 UI 已有回收实现（实现＝进行中），其余 F03—F20 的实现仍未开始；产品验收一条都未执行**——回收代码是 S0/S1 工程资产与起点，功能级实现与验收只以本页状态表为准；需求文档齐全、代码在仓库，都不等于功能已实现或已验收。逐模块资产盘点见[回收代码盘点](../engineering/code-inventory-20261019.md)。
 
 - 需求入口：[文档入口](../README.md) → [产品总览](../prd/overview.md)
 - 实施顺序：[分阶段实施路线](../prd/roadmap.md)
 - 技术决策落点：[技术决策记录](../engineering/decisions/README.md)
+- 代码资产盘点：[回收代码盘点 2026-10-19](../engineering/code-inventory-20261019.md)
 - 未决边界：[未决事项](../prd/open-questions.md)（OQ-01 已于 2026-10-19 确定并落为 F06-R09 + AT-129，不再是缺口；S0 工程准备缺口仍见 OQ-03）
 
 ## 状态词表
@@ -27,8 +28,8 @@
 
 | 功能 | 阶段 | 实现 | 验收 | 记录 |
 | --- | --- | --- | --- | --- |
-| [F01 项目隔离与任务创建编辑](../prd/features/F01-project-and-tasks/prd.md) | S1 | 未开始 | 待执行 | 尚无 implementation/verification |
-| [F02 任务状态、卡片与详情](../prd/features/F02-task-status-and-cards/prd.md) | S1 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F01 项目隔离与任务创建编辑](../prd/features/F01-project-and-tasks/prd.md) | S1 | 进行中 | 待执行 | [implementation.md](../prd/features/F01-project-and-tasks/implementation.md)（现状盘点；verification 尚无） |
+| [F02 任务状态、卡片与详情](../prd/features/F02-task-status-and-cards/prd.md) | S1 | 进行中 | 待执行 | [implementation.md](../prd/features/F02-task-status-and-cards/implementation.md)（现状盘点；verification 尚无） |
 | [F03 手动维护任务概况与项目总览](../prd/features/F03-manual-summaries/prd.md) | S1 | 未开始 | 待执行 | 尚无 implementation/verification |
 | [F04 新建、继续与查看工作对话](../prd/features/F04-conversation-entry/prd.md) | S2 | 未开始 | 待执行 | 尚无 implementation/verification |
 | [F05 关联已有对话与固定归属](../prd/features/F05-conversation-binding/prd.md) | S2 | 未开始 | 待执行 | 尚无 implementation/verification |

@@ -177,3 +177,60 @@ dsh --profile desktop --dump-config | Select-String aikanban
 & $NODE tools\clean.mjs                    # 删 lib/ dist/ coverage/ .probe-home/ .probe-out/
 & $NODE tools\clean.mjs --keep-probe-home  # 保留隔离 home
 ```
+
+## 10. 本机约定（2026-10-20 追加，不属于 `bd16535` 原文）
+
+> 本节是在回收后重新实测的事实，供后续实现直接用。§0—§9 保持复原原样；与现在不一致的地方由本节指出。
+
+### 10.1 运行时与版本
+
+| 项 | 实际值 | 说明 |
+| --- | --- | --- |
+| node | `C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe`，**v24.21.0** | 满足 `engines.node: ^22.19.0 \|\| >=24.0.0`；PATH 上也有同名 node |
+| pnpm（**推荐这套**） | 同一 runtime 下的 `pnpm\bin\pnpm.mjs`，**11.7.0** | 与 `packageManager: pnpm@11.7.0` 一致 |
+| pnpm（另一处并存） | `D:\dsh\resources\runtime\versions.json` 记 **11.28.5** | 两套都在 11.x，都满足 `>=11.7.0 <12`；**统一用 11.7.0**，避免 lockfile 抖动 |
+| dsh CLI（隔离探针需要） | `C:\Users\InformationDS\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh\lib\bin.js` | `tools/probe-host.mjs` 按 `DSH_CLI` → `%APPDATA%\npm\…` → PATH 查找；找不到会 exit 2 |
+| 当前 GUI | `http://127.0.0.1:7420` | §5.2 与 §8 写的 `19387` 是 2026-10-14 的记录，**已过期** |
+| 当前 DSH 版本 | **44.7.0**（nightly 通道） | S0 复核即在此版本完成，见 [S0 复核记录](../docs/engineering/s0-reverification-20261019.md) |
+
+### 10.2 构建位置：不要在同步盘里装依赖
+
+仓库位于 `D:\BaiduSyncdisk\…`（百度同步盘）。`.npmrc` 把 `store-dir`/`cache-dir`/`state-dir` 都重定向到工作区内，所以**在仓库根直接 `pnpm install` 会把 `node_modules` 与 `.pnpm-store` 写进同步目录**，同步客户端会把这几百 MB 上传；此外这台机器上已知 `pnpm --filter` 在同步盘上会无限挂起。
+
+推荐做法：**在盘外建一个 worktree 当构建沙盒**，仓库自身保持干净。
+
+```powershell
+$NODE = "C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
+$PNPM = "C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.mjs"
+$BOX  = "C:\Users\InformationDS\aikanban-build"     # 放在非同步目录即可
+
+# 首次：从要验证的分支建 worktree 并装依赖
+git -C "D:\BaiduSyncdisk\dsh-plugin\AIKanBan" worktree add --detach $BOX s1-recover
+Set-Location $BOX
+& $NODE $PNPM install --frozen-lockfile
+
+# 之后换提交/分支：只更新工作树，依赖不用重装
+git -C $BOX checkout --detach <commit-or-branch>
+```
+
+判据：只要 `git status` 里不出现 `node_modules` / `.pnpm-store`，位置就是对的（`.gitignore` 虽然忽略了它们，但同步盘不在乎 gitignore）。
+
+### 10.3 最短上手序列（在沙盒目录里跑）
+
+```powershell
+& $NODE $PNPM install --frozen-lockfile
+& $NODE $PNPM run typecheck              # 期望 EXIT 0
+& $NODE $PNPM run build                  # 期望 EXIT 0；产出 packages/plugin/lib/index.js 与 lib/client.js
+& $NODE $PNPM -r --if-present run test   # 期望 149 通过
+& $NODE tools\verify-host-import.mjs     # 期望 11/11 PASS
+& $NODE tools\probe-host.mjs             # 期望 PROBE OK 4/4（约 30–90 秒）
+```
+
+**实测基线（2026-10-20，DSH 44.7.0，提交 `d7d73a6`）**：以上六条全部 `EXIT 0`。用例分布为 `packages/core` **66**（11 个测试文件）、`packages/plugin` **38**（3 个）、`packages/plugin-client` **45**（3 个），合计 **149**；§4 记的 35/26/7 是 2026-10-14 的更早快照，不要再用旧数字。
+
+### 10.4 仍然禁止 / 仍然需要人
+
+- **仍然禁止** `pnpm --filter <包名>`（同步盘挂起）；一律用 `pnpm -r` 或 `pnpm -C`。
+- **仍然不要**自行重启用户的 GUI 进程。装进真实 profile 属于要用户确认的动作（见 §7/§8 与 `docs/engineering/architecture.md` 的未决项）；`desktop` profile 由 Electron 独占，CLI 的 `--dump-config` 会被拒绝。
+- 隔离探针**刻意不含模型凭据**，因此「真实模型产生的 assistant 回复」与「真实多步（工具调用）」仍未验证；不要用探针通过来替代这两项。
+- `probe-host` 第 4 项若报 `SKIP … NODE_OPTIONS restricted`，属于**未观察**，不得当作通过。

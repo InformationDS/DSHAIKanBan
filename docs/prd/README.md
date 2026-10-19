@@ -49,7 +49,7 @@
 
 1. 核对 S0 宿主与工程能力、直接依赖的实际实现和验证，缺口记录，不自行假定。
 2. 明确本次功能范围与正常/失败闭环，参考 [单功能开发任务](templates/vibecoding-task.md)。
-3. OQ-01 未决/待定，仅影响运行中整理局部分支；其余已确定路径可先实现。FR-27 排除首版，不开发。
+3. OQ-01 已于 2026-10-19 确定并落为 [F06-R09](features/F06-task-record-workflow/prd.md) 与 AT-129（运行中整理采用最小提示、不阻断）；其余已确定路径可先实现。FR-27 排除首版，不开发。
 4. 实现开始才建 implementation.md，验收开始才建 verification.md；进度与验收状态只在[交付状态](../delivery/status.md)维护，不在 PRD 内混写。
 
 需求追溯见 [traceability](traceability.md)，新功能写法见 [模板](templates/feature-prd.md)，未决见 [open-questions](open-questions.md)。

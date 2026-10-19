@@ -1,6 +1,6 @@
 # 文档入口
 
-这里统一保存 AIKanBan 的产品需求文档。本仓库当前只保留需求与治理约定，不保存实施代码：技术决策按[技术决策记录](engineering/decisions/README.md)的约定落点，实现与验收进度只在[交付状态](delivery/status.md)维护。项目入口见[项目 README](../README.md)。
+这里统一保存 AIKanBan 的产品需求文档与工程记录。本仓库当前只保留需求、治理约定与 **S0 工程记录的文档层**，不保存实施代码：技术决策见[技术决策记录](engineering/decisions/README.md)，S0 资产复核结论见[S0 复核记录](engineering/s0-reverification-20261019.md)，实现与验收进度只在[交付状态](delivery/status.md)维护。项目入口见[项目 README](../README.md)。
 
 ## 按任务阅读
 
@@ -12,7 +12,9 @@
 | 核对需求来源 | [追溯说明](prd/traceability.md) → 条款映射/验收映射 → 原始基线 |
 | 处理尚未定义的行为 | [未决事项](prd/open-questions.md) |
 | 核对验收场景 | 当前功能验收条件 → [验收映射](prd/mapping/acceptance.csv) |
-| 记录技术决策 | [技术决策记录](engineering/decisions/README.md)（约定与索引，当前暂无记录） |
+| 记录技术决策 | [技术决策记录](engineering/decisions/README.md)（ADR-001…005 索引，均为提议） |
+| 查看 S0 复核结论 | [S0 复核记录](engineering/s0-reverification-20261019.md) → [架构准备](engineering/architecture.md)、[宿主能力合同](engineering/host-capabilities.md) |
+| 运行 S0 工具 | [tools/COMMANDS.md](../tools/COMMANDS.md)（脚本已复原；依赖与 `packages/` 未安装） |
 | 查看实现与验收进度 | [交付状态](delivery/status.md)（唯一状态入口） |
 
 ## 文档职责与有效性
@@ -22,8 +24,9 @@
 - `prd/baseline/` 仅保存 v1.17 历史基线；不在日常需求修改时同步改基线，不能要求编码 AI 每次加载整份。
 - `prd/mapping/` 是定位、归属和验收责任索引，不是另一份可独立修改的业务规则正文。
 - `engineering/decisions/` 保存技术决策（约定与索引见其 [README](engineering/decisions/README.md)）；`delivery/status.md` 是[实现与验收进度的唯一入口](delivery/status.md)。实现开始时在该功能目录创建 implementation.md，验收开始时创建 verification.md，记录内容与有效 PRD 分离，状态变化只登记到交付状态页。
-- 本仓库不保存实施代码：产品需求、技术决策约定与状态入口都在 `docs/` 下，根目录只有 [项目 README](../README.md)。
-- `tools/` 下的脚本只校验文档结构，不代表产品已实现或已验收。
+- `engineering/` 保存 S0 工程记录（架构准备、宿主能力合同、ADR、[复核记录](engineering/s0-reverification-20261019.md)）；这些是从 `bd16535` 复原的先前研究，未复核部分仍是「提议」，不得当作已验证。
+- 本仓库不保存实施代码：产品需求、工程记录与状态入口都在 `docs/` 下，根目录只有 [项目 README](../README.md)；`tools/` 下为复原的 S0 探针与同步脚本，依赖与 `packages/` 未随文档复原安装，运行前先读 [tools/COMMANDS.md](../tools/COMMANDS.md)。
+- `docs/tools/` 下的脚本只校验文档结构，不代表产品已实现或已验收。
 
 ## 维护与变更
 

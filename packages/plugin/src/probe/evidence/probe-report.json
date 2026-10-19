@@ -1,0 +1,667 @@
+{
+  "probe": "aikanban-probe",
+  "startedAt": "2026-10-14T02:20:24.701Z",
+  "host": {
+    "pid": 20280,
+    "dshHome": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan\\.probe-home",
+    "cwd": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan"
+  },
+  "steps": [
+    {
+      "id": "workspace.list",
+      "title": "List durable workspaces",
+      "startedAt": "2026-10-14T02:20:24.701Z",
+      "ok": true,
+      "detail": "ok",
+      "data": [
+        {
+          "id": "03696d17-12c2-4d78-9b3e-ff3bdf9e6f10",
+          "path": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan",
+          "title": "AIKanBan",
+          "sessionCount": 0
+        },
+        {
+          "id": "455306c1-4d0a-42ad-ba21-d63b41d753d8",
+          "path": "D:\\BaiduSyncdisk\\dsh-plugin",
+          "title": "dsh-plugin（旧）",
+          "sessionCount": 0
+        }
+      ],
+      "finishedAt": "2026-10-14T02:20:24.702Z"
+    },
+    {
+      "id": "workspace.resolveByPath.primary",
+      "title": "Resolve the real AIKanBan workspace by canonical path",
+      "startedAt": "2026-10-14T02:20:24.702Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "id": "03696d17-12c2-4d78-9b3e-ff3bdf9e6f10",
+        "path": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan",
+        "title": "AIKanBan",
+        "status": "ok"
+      },
+      "finishedAt": "2026-10-14T02:20:24.756Z"
+    },
+    {
+      "id": "workspace.resolveByPath.secondary",
+      "title": "Resolve the second real workspace by canonical path",
+      "startedAt": "2026-10-14T02:20:24.756Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "id": "455306c1-4d0a-42ad-ba21-d63b41d753d8",
+        "path": "D:\\BaiduSyncdisk\\dsh-plugin",
+        "title": "dsh-plugin（旧）",
+        "status": "ok"
+      },
+      "finishedAt": "2026-10-14T02:20:24.757Z"
+    },
+    {
+      "id": "workspace.create.idempotent",
+      "title": "Re-creating a workspace for an owned path reuses the entity",
+      "startedAt": "2026-10-14T02:20:24.757Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "beforeId": "03696d17-12c2-4d78-9b3e-ff3bdf9e6f10",
+        "afterId": "03696d17-12c2-4d78-9b3e-ff3bdf9e6f10",
+        "sameId": true,
+        "titleAfterCreate": "AIKanBan",
+        "workspaceCount": 2
+      },
+      "finishedAt": "2026-10-14T02:20:24.759Z"
+    },
+    {
+      "id": "workspace.create.duplicateTitle",
+      "title": "Two distinct paths may share one display title",
+      "startedAt": "2026-10-14T02:20:24.759Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "fixtureId": "217a59b6-57da-41f1-907a-92eedb9e9268",
+        "fixturePath": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan\\.probe-home\\ws-fixture",
+        "workspacesTitledAIKanBan": [
+          {
+            "id": "217a59b6-57da-41f1-907a-92eedb9e9268",
+            "path": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan\\.probe-home\\ws-fixture"
+          },
+          {
+            "id": "03696d17-12c2-4d78-9b3e-ff3bdf9e6f10",
+            "path": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan"
+          }
+        ],
+        "distinctIds": 2
+      },
+      "finishedAt": "2026-10-14T02:20:24.817Z"
+    },
+    {
+      "id": "workspace.resolveByPath.missing",
+      "title": "A nonexistent path rejects instead of resolving",
+      "startedAt": "2026-10-14T02:20:24.817Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "rejected": true,
+        "error": {
+          "name": "Error",
+          "message": "ENOENT: no such file or directory, realpath 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan\\.probe-home\\does-not-exist'",
+          "code": "ENOENT",
+          "details": null,
+          "stack": "Error: ENOENT: no such file or directory, realpath 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan\\.probe-home\\does-not-exist'\n    at async realpath (node:internal/fs/promises:1889:10)\n    at async realpathNormalize (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:50:9)\n    at async Proxy.resolveByPath (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:477:21)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:286:5\n    at async step (file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:17)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:284:3"
+        }
+      },
+      "finishedAt": "2026-10-14T02:20:24.818Z"
+    },
+    {
+      "id": "workspace.pathUnavailable",
+      "title": "A workspace whose directory vanished reports missing-dir but keeps its record",
+      "startedAt": "2026-10-14T02:20:24.818Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "id": "217a59b6-57da-41f1-907a-92eedb9e9268",
+        "status": "missing-dir",
+        "stillListed": true,
+        "resolveRejected": true
+      },
+      "finishedAt": "2026-10-14T02:20:24.822Z"
+    },
+    {
+      "id": "session.create.byWorkspaceId",
+      "title": "create({workspaceId}) sets cwd from the workspace and attaches",
+      "startedAt": "2026-10-14T02:20:24.824Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "sessionId": "session-859c7ea9-f026-48e1-83a8-4f20742a7f1a",
+        "agentPreset": "standard",
+        "headerCwd": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan",
+        "headerOrigin": null,
+        "attachedToWorkspace": true
+      },
+      "finishedAt": "2026-10-14T02:20:25.441Z"
+    },
+    {
+      "id": "session.resolveAgent",
+      "title": "resolveAgent() yields the live Agent for the probe session",
+      "startedAt": "2026-10-14T02:20:25.442Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "agentId": "undefined",
+        "hasSession": false
+      },
+      "finishedAt": "2026-10-14T02:20:25.442Z"
+    },
+    {
+      "id": "workspace.attachSession.cwdMismatch",
+      "title": "attachSession rejects a session whose cwd is another workspace",
+      "startedAt": "2026-10-14T02:20:25.442Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "rejected": true,
+        "error": {
+          "name": "Error",
+          "message": "cannot attach session 'session-859c7ea9-f026-48e1-83a8-4f20742a7f1a' to workspace 'D:\\BaiduSyncdisk\\dsh-plugin': its cwd resolves to 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan'",
+          "code": null,
+          "details": null,
+          "stack": "Error: cannot attach session 'session-859c7ea9-f026-48e1-83a8-4f20742a7f1a' to workspace 'D:\\BaiduSyncdisk\\dsh-plugin': its cwd resolves to 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan'\n    at WorkspaceEntity.attachSession (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:122:40)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:346:5\n    at async step (file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:17)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:342:3"
+        }
+      },
+      "finishedAt": "2026-10-14T02:20:25.445Z"
+    },
+    {
+      "id": "workspace.attachSession.noCwd",
+      "title": "attachSession rejects a session whose header carries no cwd",
+      "startedAt": "2026-10-14T02:20:25.445Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "bareSessionId": "session-1",
+        "headerCwd": null,
+        "rejected": true,
+        "error": {
+          "name": "Error",
+          "message": "cannot attach session 'session-1' to workspace 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan': its stored header carries no cwd to validate against",
+          "code": null,
+          "details": null,
+          "stack": "Error: cannot attach session 'session-1' to workspace 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan': its stored header carries no cwd to validate against\n    at WorkspaceEntity.attachSession (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:114:37)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:357:5\n    at async step (file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:17)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:353:3"
+        }
+      },
+      "finishedAt": "2026-10-14T02:20:25.448Z"
+    },
+    {
+      "id": "dispatch.subagentGuard",
+      "title": "prompt() refuses an origin:subagent session",
+      "startedAt": "2026-10-14T02:20:25.448Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "childSessionId": "session-2",
+        "childOrigin": "subagent",
+        "refused": true,
+        "error": {
+          "name": "RemoteError",
+          "message": "session \"session-2\" is owned by subagent routing",
+          "code": "session/agent-busy",
+          "details": {
+            "reason": "use subagent delivery for this child session"
+          },
+          "stack": "RemoteError: session \"session-2\" is owned by subagent routing\n    at apiSessionSubagentOwnershipError (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:137:9)\n    at ApiSessionAgentController.resolve (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:221:102)\n    at ApiSessionAgentController.resolveAgent (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:207:15)\n    at SessionCommandController.resolveAgent (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:880:35)\n    at SessionCommandController.prompt (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:740:28)\n    at Proxy.prompt (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:2922:25)\n    at Object.apply (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:120:36)\n    at file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:369:33\n    at step (file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:23)\n    at file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:365:9"
+        }
+      },
+      "finishedAt": "2026-10-14T02:20:25.451Z"
+    },
+    {
+      "id": "dispatch.prompt.queue",
+      "title": "sessionController.prompt(queue) accepts a marked visible message",
+      "startedAt": "2026-10-14T02:20:25.451Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "accepted": {
+          "accepted": true
+        },
+        "requestId": "aikanban-probe-1791944425451-909185",
+        "promptText": "Reply with the single word ACK, then use the pwsh tool to run the command `Write-Output aikanban-probe-step-2` and report its output. Do not do anything else.\n\n[probe-request-id aikanban-probe-1791944425451-909185]"
+      },
+      "finishedAt": "2026-10-14T02:20:25.460Z"
+    },
+    {
+      "id": "readback.turnEnd",
+      "title": "Wait for the dispatched turn to reach turn/end, then read events back",
+      "startedAt": "2026-10-14T02:20:25.460Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "totalEvents": 19,
+        "lastSeq": 18,
+        "inheritedEventCount": 0,
+        "turnEnded": true,
+        "turnEndReason": {
+          "kind": "error",
+          "error": {
+            "message": "llm-deepseek: no API key for provider route \"deepseek-official\"; store DEEPSEEK_API_KEY through the credentials service (the web Models page writes it), or export DEEPSEEK_API_KEY in the launching environment",
+            "code": "MISSING_CREDENTIAL"
+          }
+        },
+        "dispatchedSeq": 8,
+        "dispatchedTextMatches": true,
+        "assistantTurns": [],
+        "lastAssistantText": null,
+        "eventDigest": [
+          {
+            "seq": 0,
+            "type": "permission/preset",
+            "turn": null,
+            "step": null,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 1,
+            "type": "sandbox/mode",
+            "turn": null,
+            "step": null,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 2,
+            "type": "approval/policy",
+            "turn": null,
+            "step": null,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 3,
+            "type": "agent/inbox/spliced",
+            "turn": null,
+            "step": null,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 4,
+            "type": "turn/start",
+            "turn": 1,
+            "step": null,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 5,
+            "type": "agent/inbox/spliced",
+            "turn": null,
+            "step": null,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 6,
+            "type": "step/start",
+            "turn": 1,
+            "step": 1,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 7,
+            "type": "system/message",
+            "turn": 1,
+            "step": 1,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 8,
+            "type": "user/message",
+            "turn": null,
+            "step": null,
+            "sourceKind": "user",
+            "sourcePlugin": null
+          },
+          {
+            "seq": 9,
+            "type": "user/message",
+            "turn": null,
+            "step": null,
+            "sourceKind": "plugin",
+            "sourcePlugin": "@deepseek-ai/dsh-system-prompt"
+          },
+          {
+            "seq": 10,
+            "type": "user/message",
+            "turn": null,
+            "step": null,
+            "sourceKind": "skill-catalog",
+            "sourcePlugin": null
+          },
+          {
+            "seq": 11,
+            "type": "user/message",
+            "turn": null,
+            "step": null,
+            "sourceKind": "plugin",
+            "sourcePlugin": "aikanban-probe"
+          },
+          {
+            "seq": 12,
+            "type": "request/header",
+            "turn": null,
+            "step": null,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 13,
+            "type": "request/context",
+            "turn": null,
+            "step": null,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 14,
+            "type": "session/title",
+            "turn": null,
+            "step": null,
+            "sourceKind": "fallback",
+            "sourcePlugin": null
+          },
+          {
+            "seq": 15,
+            "type": "session/title-llm-request",
+            "turn": null,
+            "step": null,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 16,
+            "type": "assistant/attempt",
+            "turn": 1,
+            "step": 1,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 17,
+            "type": "step/end",
+            "turn": 1,
+            "step": 1,
+            "sourceKind": null,
+            "sourcePlugin": null
+          },
+          {
+            "seq": 18,
+            "type": "turn/end",
+            "turn": 1,
+            "step": null,
+            "sourceKind": null,
+            "sourcePlugin": null
+          }
+        ]
+      },
+      "finishedAt": "2026-10-14T02:20:25.961Z"
+    },
+    {
+      "id": "dispatch.requestIdIdempotent",
+      "title": "Re-using the same requestId is acknowledged but delivers nothing",
+      "startedAt": "2026-10-14T02:20:25.961Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "secondAccepted": {
+          "accepted": true
+        },
+        "userMessagesBefore": 4,
+        "userMessagesAfter": 4,
+        "duplicateCreated": false,
+        "secondPayloadLeaked": false
+      },
+      "finishedAt": "2026-10-14T02:20:27.476Z"
+    },
+    {
+      "id": "readback.followSnapshot",
+      "title": "follow() streams an opening snapshot carrying the dispatched turn",
+      "startedAt": "2026-10-14T02:20:27.476Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "elapsedMs": 2,
+        "frameTypes": [
+          "snapshot"
+        ],
+        "cursor": 18,
+        "recordCount": 19,
+        "recordTypes": [
+          "permission/preset",
+          "sandbox/mode",
+          "approval/policy",
+          "agent/inbox/spliced",
+          "turn/start",
+          "agent/inbox/spliced",
+          "step/start",
+          "system/message",
+          "user/message",
+          "user/message",
+          "user/message",
+          "user/message",
+          "request/header",
+          "request/context",
+          "session/title",
+          "session/title-llm-request",
+          "assistant/attempt",
+          "step/end",
+          "turn/end"
+        ],
+        "hasDispatchedMessage": true,
+        "hasMore": false,
+        "projectionKeysAtSnapshot": [
+          "title",
+          "goal",
+          "tokenUsage",
+          "contextPressure",
+          "contextBreakdown",
+          "sessionStats",
+          "turnOutline",
+          "agentPreset",
+          "subagentCatalog",
+          "subagentTiming",
+          "subagent",
+          "permissions",
+          "modelSelection",
+          "sessionListMetadata",
+          "imageLimits",
+          "inbox",
+          "todos",
+          "plan"
+        ]
+      },
+      "finishedAt": "2026-10-14T02:20:27.479Z"
+    },
+    {
+      "id": "readback.page",
+      "title": "page() reads a cold-safe history page through the last event",
+      "startedAt": "2026-10-14T02:20:27.479Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "throughSeq": 18,
+        "recordCount": 19,
+        "hasMore": false,
+        "types": [
+          "permission/preset",
+          "sandbox/mode",
+          "approval/policy",
+          "agent/inbox/spliced",
+          "turn/start",
+          "agent/inbox/spliced",
+          "step/start",
+          "system/message",
+          "user/message",
+          "user/message",
+          "user/message",
+          "user/message",
+          "request/header",
+          "request/context",
+          "session/title",
+          "session/title-llm-request",
+          "assistant/attempt",
+          "step/end",
+          "turn/end"
+        ],
+        "includesTurnEnd": true,
+        "includesInjectedBlock": true
+      },
+      "finishedAt": "2026-10-14T02:20:27.479Z"
+    },
+    {
+      "id": "inject.projectionExactlyOnce",
+      "title": "Durable log carries the injected block exactly once",
+      "startedAt": "2026-10-14T02:20:27.479Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "injectedEventCount": 1,
+        "injectedSeqs": [
+          11
+        ],
+        "projectionInjectionCount": 1,
+        "projectionInjections": [
+          {
+            "seq": 11,
+            "time": 1791944425846,
+            "text": "AIKANBAN-PROBE-CONTEXT (turn 1, step 1)\nAIKanBan probe background block: this text is injected context, not a human instruction.\nnonce=2026-10-14T02:20:24.701Z"
+          }
+        ],
+        "dispatchedSeqs": [
+          8
+        ],
+        "projectionSteps": [
+          {
+            "turn": 1,
+            "step": 1
+          }
+        ],
+        "projectionTurns": [
+          1
+        ],
+        "markerPresentInLog": true,
+        "injectedSourceForm": "snapshot"
+      },
+      "finishedAt": "2026-10-14T02:20:27.479Z"
+    },
+    {
+      "id": "inject.multiStepOnlyOnce",
+      "title": "Pre-step fired per step; injection committed only at step 1",
+      "startedAt": "2026-10-14T02:20:27.479Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "preStepCallCount": 1,
+        "preStepCalls": [
+          {
+            "turn": 1,
+            "step": 1,
+            "injected": true,
+            "incomingMessages": 3
+          }
+        ],
+        "injectedCallCount": 1,
+        "distinctStepsSeen": [
+          "1/1"
+        ],
+        "multiStepObserved": false,
+        "projectionStepCount": 1,
+        "projectionInjectionCount": 1
+      },
+      "finishedAt": "2026-10-14T02:20:27.480Z"
+    },
+    {
+      "id": "inject.turnOutline",
+      "title": "turnOutline neither shows the injected block as a prompt nor merges it",
+      "startedAt": "2026-10-14T02:20:27.480Z",
+      "ok": true,
+      "detail": "ok",
+      "data": {
+        "asOfSeq": 18,
+        "availableKeys": [
+          "title",
+          "goal",
+          "tokenUsage",
+          "contextPressure",
+          "contextBreakdown",
+          "sessionStats",
+          "turnOutline",
+          "agentPreset",
+          "subagentCatalog",
+          "subagentTiming",
+          "subagent",
+          "permissions",
+          "modelSelection",
+          "sessionListMetadata",
+          "imageLimits",
+          "inbox",
+          "todos",
+          "plan"
+        ],
+        "outline": [
+          {
+            "turn": 1,
+            "seq": 4,
+            "prompt": "Reply with the single word ACK, then use the pwsh…",
+            "response": ""
+          }
+        ],
+        "outlinePromptLooksLikeDispatch": true,
+        "outlinePromptContainsInjectMark": false,
+        "dispatchedPreview": "Reply with the singl"
+      },
+      "finishedAt": "2026-10-14T02:20:27.481Z"
+    }
+  ],
+  "preStepCalls": [
+    {
+      "sessionId": "session-859c7ea9-f026-48e1-83a8-4f20742a7f1a",
+      "turn": 1,
+      "step": 1,
+      "decisionKind": "enter",
+      "incomingMessages": 3,
+      "aborted": false,
+      "injected": true,
+      "at": "2026-10-14T02:20:25.842Z",
+      "injectedText": "AIKANBAN-PROBE-CONTEXT (turn 1, step 1)\nAIKanBan probe background block: this text is injected context, not a human instruction.\nnonce=2026-10-14T02:20:24.701Z"
+    }
+  ],
+  "injectedContextText": "AIKANBAN-PROBE-CONTEXT (turn 1, step 1)\nAIKanBan probe background block: this text is injected context, not a human instruction.\nnonce=2026-10-14T02:20:24.701Z",
+  "verdict": {
+    "dispatchAccepted": true,
+    "readBackTurnEnded": true,
+    "readBackDispatchedSeq": 8,
+    "readBackTextMatches": true,
+    "assistantReplyCount": 0,
+    "turnEndReason": {
+      "kind": "error",
+      "error": {
+        "message": "llm-deepseek: no API key for provider route \"deepseek-official\"; store DEEPSEEK_API_KEY through the credentials service (the web Models page writes it), or export DEEPSEEK_API_KEY in the launching environment",
+        "code": "MISSING_CREDENTIAL"
+      }
+    },
+    "requestIdIdempotent": true,
+    "subagentRefused": true,
+    "injectedExactlyOnce": true,
+    "injectionOnlyAtStepOne": true,
+    "multiStepObserved": false,
+    "outlineClean": true,
+    "workspaceMappingAllOk": true,
+    "probeSessionId": "session-859c7ea9-f026-48e1-83a8-4f20742a7f1a",
+    "probeSessionCwd": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan",
+    "subagentFixtureSessionId": "session-2"
+  },
+  "finishedAt": "2026-10-14T02:20:27.481Z"
+}

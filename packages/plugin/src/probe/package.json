@@ -1,0 +1,13 @@
+{
+  "name": "@aikanban/probe",
+  "version": "0.0.0-probe",
+  "private": true,
+  "description": "AIKanBan S0 host-integration probe: real dispatch / read-back / per-turn injection / project mapping evidence collector. Throwaway harness, not shipped plugin code.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {}
+}

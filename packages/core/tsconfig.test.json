@@ -1,0 +1,15 @@
+{
+  "//": "Type-check configuration: adds the tests, runs noEmit, and pulls in Node's types (the library sources import nothing from Node). Kept separate from tsconfig.json, which is the buildable composite project the root solution file can reference.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "incremental": false,
+    "noEmit": true,
+    "rootDir": "../..",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+}

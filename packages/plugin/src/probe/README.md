@@ -19,17 +19,19 @@ pwsh -File packages\plugin\src\probe\harness\run-probe.ps1
 | --- | --- |
 | `DSH_HOME=<workspace>\.probe-home` | `profiles/`、`sessions/`、`storages/`、凭据库全部落在工作区内，不读写 `~/.dsh` |
 | `--profile web` | 宿主会话 API、workspace 注册表、`turnOutline` 投影都由 `dsh-web-app` 挂载；`headless` 模板没有这些行 |
-| `--port 0` | 由操作系统分配临时端口，绝不占用 19387 |
+| `--port 0` | 由操作系统分配临时端口，绝不占用固定端口（历史记录里的 19387；2026-10-20 起 GUI 为 7420） |
 | `--no-open` | 不启动浏览器 |
 | `--patch <overlay>` | 只挂载探针与一条遥测禁用项，不改任何 profile |
 | 启动器 flag 在前 | 启动器把第一个不认识的 token 交给 app，因此 `--patch` 必须写在 `--port` 之前 |
 
 ## 依赖与冲突
 
-**模型凭据（S0 阶段永久延期，不是待办技术债）**：派发出去的轮次需要真实模型才能产生 `assistant` 回复与工具调用。
+**模型凭据（2026-10-20 已复验，见下方补充）**：派发出去的轮次需要真实模型才能产生 `assistant` 回复与工具调用。
 隔离 home 需要自己的 `$DSH_HOME/.credentials.yaml`（`dsh-credentials-local` 首次启动时会创建一个**空**的 161 字节存储）。
 没有凭据时探针仍然 20/20 全部通过，但 `turn/end` 的 `reason` 是
-`{kind:'error', error:{code:'MISSING_CREDENTIAL'}}`，因此「由真实模型产生的 assistant 回复」与「真实多步轮次」两项未验证。
+`{kind:'error', error:{code:'MISSING_CREDENTIAL'}}`。
+
+**2026-10-20 补做复验**：把 `DEEPSEEK_API_KEY` 作为**启动环境变量**注入该隔离进程（不写任何凭据文件）后，`turn/end` 为 `{kind:'completed'}`、`assistantTurns` 两条（step 1 与 step 2）、`multiStepObserved=true` —— 「由真实模型产生的 assistant 回复」与「真实多步轮次」两项均已实测成立。详见 [S0 复核记录](../../../../docs/engineering/s0-reverification-20261019.md) 第 9 节。
 
 **决定：真实凭据不得被物化到本同步工作区目录内**（用户明确拒绝，且本会话的自动审查也会拒绝该读/写）。
 所以不要再去申请、复制或写入凭据。要补齐只能由用户本人做两件事之一：

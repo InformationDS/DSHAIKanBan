@@ -57,7 +57,7 @@ AIKanBan/
    ├─ README.md         # 文档入口、职责与维护规则
    ├─ prd/              # 有效需求、公共规则、20 份小 PRD、历史基线、映射与模板
    ├─ engineering/      # S0 工程记录：架构准备、宿主能力合同、ADR、复核记录
-   │  └─ decisions/     # 技术决策记录（ADR-001…005，均为提议）
+   │  └─ decisions/     # 技术决策记录（ADR-001—006，状态见索引）
    ├─ delivery/         # 交付状态唯一入口（status.md，实现与验收进度）
    └─ tools/            # 文档校验与基线映射工具
 ```

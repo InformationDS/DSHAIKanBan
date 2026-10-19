@@ -80,7 +80,7 @@ SAVE-02/F06-R07 要求 taskRecord+taskSummary、projectRecord+projectOverview「
 
 - 源码依据：第 3 节列出的行号（`dsh-storage-domain` / `dsh-storage-json` / `dsh-storage` 已安装副本）。
 - 实测（真实包，非 mock）：`node packages/core/experiments/storage-domain-atomicity.mjs` → **25/25 checks passed**（E1 布局与文档数、E2 两次 put 的半生效、E3 失败写入不污染、E4 写链/`update` 语义与 CAS、E5 损坏与非法记录）。
-- 单元/集成测试：`pnpm --filter @aikanban/core run test`（`vitest run`）→ **7 个文件、35 个测试全部通过**，覆盖：单写即成对（断言恰好 1 次 scope_state 写）、故障注入后半生效不存在且重启仍一致、**反向对照**（两次写的朴素方案确实半生效）、连点/超时重试 24 次并发只产生 1 个版本、两个不同更新竞争同一汇总（1 成一阻、双方草稿都在、只标记受影响汇总）、重启后链条/指针/草稿一致且未确认内容不成事实、清空 vs 无需更新、版本链只增不改（逐版本快照复比）、恢复为新版本与适用性不复活、修正按 scope 隔离、修正与文案同一次写、损坏记录被 domain 校验拒绝。
+- 单元/集成测试：`pnpm --filter @aikanban/core run test`（`vitest run`）→ **11 个测试文件、66 个测试全部通过**（2026-10-20 在 DSH 44.7.0 上实测；原文写「7 个文件、35 个测试」是 2026-10-14 的更早快照），覆盖：单写即成对（断言恰好 1 次 scope_state 写）、故障注入后半生效不存在且重启仍一致、**反向对照**（两次写的朴素方案确实半生效）、连点/超时重试 24 次并发只产生 1 个版本、两个不同更新竞争同一汇总（1 成一阻、双方草稿都在、只标记受影响汇总）、重启后链条/指针/草稿一致且未确认内容不成事实、清空 vs 无需更新、版本链只增不改（逐版本快照复比）、恢复为新版本与适用性不复活、修正按 scope 隔离、修正与文案同一次写、损坏记录被 domain 校验拒绝。
 - 类型检查：`pnpm --filter @aikanban/core run typecheck`（`tsc -p tsconfig.test.json`，继承根 `tsconfig.base.json` 的 strict/`noUncheckedIndexedAccess`/`exactOptionalPropertyTypes`）→ 退出码 0。
 - 构建：`tsc -p tsconfig.json`（composite，供根 `tsc -b`）→ 退出码 0。
 

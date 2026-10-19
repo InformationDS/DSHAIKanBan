@@ -71,7 +71,7 @@ F06/F07 要求「在正确来源工作对话发送**可见**整理要求」，�
 
 ## 7. 验证证据
 
-隔离宿主一次真实运行（`DSH_HOME` 在工作区内；`--port 0` 由系统分配临时端口；`--no-open` 不启动浏览器；探针经 `ctx.appExit(0)` 干净退出，退出码 0，无残留进程），18/18 探针步骤通过。真实事件序列（探针会话 `session-03b0327d-d4cb-4dea-abec-cb735a8ae0e1`，会话 `cwd` = `D:\BaiduSyncdisk\dsh-plugin\AIKanBan`）：
+隔离宿主一次真实运行（`DSH_HOME` 在工作区内；`--port 0` 由系统分配临时端口；`--no-open` 不启动浏览器；探针经 `ctx.appExit(0)` 干净退出，退出码 0，无残留进程），20/20 探针步骤通过。真实事件序列（探针会话 `session-03b0327d-d4cb-4dea-abec-cb735a8ae0e1`，会话 `cwd` = `D:\BaiduSyncdisk\dsh-plugin\AIKanBan`）：
 
 ```
 seq=4  turn/start                   turn=1

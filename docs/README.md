@@ -12,7 +12,7 @@
 | 核对需求来源 | [追溯说明](prd/traceability.md) → 条款映射/验收映射 → 原始基线 |
 | 处理尚未定义的行为 | [未决事项](prd/open-questions.md) |
 | 核对验收场景 | 当前功能验收条件 → [验收映射](prd/mapping/acceptance.csv) |
-| 记录技术决策 | [技术决策记录](engineering/decisions/README.md)（ADR-001…005 索引，均为提议） |
+| 记录技术决策 | [技术决策记录](engineering/decisions/README.md)（ADR-001—006 索引：001/002/003/006 采用，004/005 提议） |
 | 查看 S0 复核结论 | [S0 复核记录](engineering/s0-reverification-20261019.md) → [架构准备](engineering/architecture.md)、[宿主能力合同](engineering/host-capabilities.md) |
 | 运行与构建 | [tools/COMMANDS.md](../tools/COMMANDS.md) → 先 `pnpm install`（`node_modules` 与 `.pnpm-store` 未随仓库提供） |
 | 查看实现与验收进度 | [交付状态](delivery/status.md)（唯一状态入口） |

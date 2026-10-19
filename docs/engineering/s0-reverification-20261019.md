@@ -115,9 +115,9 @@
 
 补充说明：
 
-- 集成探针的 20 个步骤覆盖 workspace 映射（6）、会话创建与解析（4）、派发与子代理拒绝（3）、三条读回通道（3）、注入与 `turnOutline`（3）。原始证据已刷新为本次运行（`startedAt` 2026-10-19T14:17Z，`packages/plugin/src/probe/evidence/probe-report.json`）；上一版可从 Git 历史取回。
+- 集成探针的 20 个步骤覆盖 workspace 与 attach 相关（9）、会话创建与解析（2）、派发与幂等（3）、三条读回通道（3）、注入与 `turnOutline`（3），合计 20。本节这次运行的证据（`startedAt` 2026-10-19T14:17Z）已被第 9 节的真实模型复验再次刷新；两版都可从 Git 历史取回。
 - 两次运行都在 `DSH_HOME=<隔离目录>`、`--profile web --port 0 --no-open` 下完成，未触碰用户 GUI，未读写 `~/.dsh`。
-- **仍未关闭**（指 14:17Z 那次运行）：客户端实际渲染、装到真实 profile、`tools`/`systemPrompt` 注册、HOST-07 的区分表达设计仍按第 6 节视为未完成。该次运行的 `readback.turnEnd` 以 `MISSING_CREDENTIAL` 结束（`assistantReplyCount=0`、`multiStepObserved=false`），真实模型两项**当时**未验证——已于 2026-10-20 复验关闭，见第 9 节。
+- **仍未关闭**（本节 14:17Z 那次运行观察到、且在第 9 节那次运行中同样未关闭）：客户端实际渲染、装到真实 profile、`tools`/`systemPrompt` 注册、HOST-07 的区分表达设计仍按第 6 节视为未完成。该次运行的 `readback.turnEnd` 以 `MISSING_CREDENTIAL` 结束（`assistantReplyCount=0`、`multiStepObserved=false`），真实模型两项**当时**未验证——已于 2026-10-20 复验关闭，见第 9 节。
 
 据此，[ADR-001](../engineering/decisions/ADR-001-session-dispatch-and-consolidation-carrier.md)、[ADR-002](../engineering/decisions/ADR-002-paired-confirmation-single-write.md)、[ADR-003](../engineering/decisions/ADR-003-project-mapping-and-context-injection.md) 的状态由「提议」改为「采用」；[ADR-004](../engineering/decisions/ADR-004-界面挂载点与看板形态.md)（缺客户端渲染证据）与 [ADR-005](../engineering/decisions/ADR-005-浏览器半与宿主半的数据通道.md)（缺真实 Connection RPC 路由证据）保持「提议」。
 

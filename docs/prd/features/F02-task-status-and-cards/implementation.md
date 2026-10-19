@@ -44,7 +44,7 @@ F02 §6 共 **9 行验收（8 个 AT 编号，AT-03 出现两行）**。覆盖�
 
 ## 4. 依赖、接线与已知局限
 
-1. **端到端未接通**：`packages/plugin/src/index.ts:396-404` 说明 board channel 未在 `apply()` 注册（缺 core 适配层）；`packages/plugin/src/board-channel.ts:145` 的 handler 依赖 `HostBoardPort`（L109），仓库中没有 `@aikanban/core` → 该端口的实现。浏览器半在没有 connection 或适配失败时显示「数据通道未接通」，**不会渲染假数据**（`runtime.ts:38`、`source.ts:194` 起）。
+1. **端到端未接通**：`packages/plugin/src/index.ts:396-404` 说明 board channel 未在 `apply()` 注册（缺 core 适配层）；`packages/plugin/src/board-channel.ts:145` 的 handler 依赖 `HostBoardPort`（L109），仓库中没有 `@aikanban/core` → 该端口的实现。浏览器半**没有 connection 时**显示「数据通道未接通」；**有 connection 但路由未注册或适配失败时**表现为 `read-failed` 与数据格式无效提示（`channel-source.ts:136-155`、`board.tsx:433-439`）。两种情况都**不会渲染假数据**。
 2. **协议字段缺口**：wire 要求读快照携带 `capabilities`（`wire.ts:396-397`），core 的 `BoardReadResult` 没有该字段（`packages/core/src/types.ts:441-463`）；`hints`（F02-R06）在 core 也没有数据源。适配层须实现映射，否则读到的是「格式无效」。
 3. **构建产物与测试前置**：`channel-roundtrip.test.ts` 与 `client-bundle.test.ts` 读取 `packages/plugin/lib/index.js`、`lib/client.js`；仓库不含 `lib/` 与 `node_modules`，须按 [tools/COMMANDS.md](../../../../tools/COMMANDS.md) 先安装构建才能运行这两组测试（`controller.test.ts`/`model.test.ts`/`slots.test.ts`/core 测试无需构建产物）。
 4. **依赖功能未实现**：F03（正式概况）、F04（对话）、F06（记录）、F13/F14（成果）、F15（行动提示来源）、F17（归档/删除）、F19（键盘全面验收）——相关规则与 AT 只能等其就绪后联合验收。

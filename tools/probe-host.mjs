@@ -18,7 +18,7 @@
  * into the probe home except the throwaway `probe` profile — in particular no
  * credentials, so this probe stays hermetic and needs no live model.
  *
- * ## The three checks, and what each one proves
+ * ## The four checks, and what each one proves
  *
  * | # | Check | What a failure means |
  * | --- | --- | --- |

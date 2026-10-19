@@ -31,6 +31,8 @@
 | F19 | [语言、窗口与键盘体验](features/F19-desktop-accessibility/prd.md) | S5 | F02、F04、F07、F08、F13、F15、F17 | FR-30 |
 | F20 | [聊天中的明确任务管理](features/F20-chat-task-management/prd.md) | S5 | F02、F05、F06、F11、F12、F13、F17、F18 | FR-32 |
 
+本表「直接依赖」与功能 PRD 属性表的「前置依赖」同义，都指完整功能验收的最低前置；跨功能协同与联合验收关系见[验收映射](mapping/acceptance.csv)的协同列。
+
 ## 按需公共规则
 
 | 文件 | 规则编号 | 内容 |

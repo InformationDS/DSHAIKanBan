@@ -51,11 +51,11 @@
 
 ## S0 开发准备
 
-S0 在 `bd16535` **曾经实施**：插件双半包形态、`packages/core` 数据模型、五项 ADR、HOST-01—10 宿主能力核对，以及构建与探针工具链。该实现已在 `1890318` 从工作区移除；2026-10-19 已把**文档与工具层**复原（[架构准备](../engineering/architecture.md)、[宿主能力合同](../engineering/host-capabilities.md)、[技术决策记录](../engineering/decisions/README.md)〔五份仍为「提议」〕、[tools/](../../tools/COMMANDS.md)），**`packages/` 已于 2026-10-19 回收（分支 `s1-recover`，提交 `ed6b151`）并经 DSH 44.7.0 复核，补一处守卫后全门禁转绿**。
+S0 在 `bd16535` **曾经实施**：插件双半包形态、`packages/core` 数据模型、五项 ADR、HOST-01—10 宿主能力核对，以及构建与探针工具链。该实现已在 `1890318` 从工作区移除；2026-10-19 已把**文档与工具层**复原（[架构准备](../engineering/architecture.md)、[宿主能力合同](../engineering/host-capabilities.md)、[技术决策记录](../engineering/decisions/README.md)〔五份 S0 ADR 仍为「提议」，另见 2026-10-20 的 ADR-006 提案〕、[tools/](../../tools/COMMANDS.md)），**`packages/` 已于 2026-10-19 回收（分支 `s1-recover`，提交 `ed6b151`）并经 DSH 44.7.0 复核，补一处守卫后全门禁转绿**。
 
 2026-10-19 在 **DSH 44.7.0** 上完成一次部分复核（见 [S0 复核记录](../engineering/s0-reverification-20261019.md)）：加载链与测试成立（probe 4/4、verify-host-import 11/11、149 个用例全绿），但 **`typecheck` 在原始提交上失败**——`packages/plugin-client/src/channel-source.ts:186` 一处 TS2322（`parseBoardWriteValue` 的 `snapshot` 合法可为 `null`，却被当作非空返回）；补一处 3 行空值守卫后 typecheck／build／测试／探针全绿。结论：**代码可低成本回收**；2026-10-19 已按此回收至分支 `s1-recover`（提交 `ed6b151`），仍未复核项见复核记录。
 
-仍未复核：装到真实 profile 并生效、客户端实际渲染、真实模型的 assistant 回复与真实多步、20 步宿主集成 spike 的完整语义、存储原子性 25/25（沿用旧记录，本次未重跑）、`tools=false` / `systemPrompt=false`（激活时刻未观察到）。工程未决仍见 [OQ-03](../prd/open-questions.md)；OQ-01 的运行中整理最小反馈已确定并落为 F06-R09 + AT-129，不再是缺口。
+仍未复核：装到真实 profile 并生效、客户端实际渲染、真实模型的 assistant 回复与真实多步、20 步宿主集成 spike 的完整语义、存储原子性 25/25（沿用旧记录，本次未重跑）、`tools=false` / `systemPrompt=false`（激活时刻未观察到）。工程未决仍见 [OQ-03](../prd/open-questions.md)；OQ-01 的运行中整理最小反馈已确定并落为 F06-R09 + AT-129，不再是缺口。HOST-07 的区分表达已有提案 [ADR-006](../engineering/decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（提议），未获用户确认，未据此实施。
 
 ## 维护约定
 

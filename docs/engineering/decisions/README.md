@@ -20,13 +20,14 @@
 
 | 编号 | 主题 | 状态 | 影响功能 |
 | --- | --- | --- | --- |
-| [ADR-001](ADR-001-session-dispatch-and-consolidation-carrier.md) | 会话派发与整理执行载体 | 提议 | F05、F06、F07、F08、F11、F13 |
-| [ADR-002](ADR-002-paired-confirmation-single-write.md) | 成对确认的单写原子性 | 提议 | F06、F07、F08、F09、F10 |
-| [ADR-003](ADR-003-project-mapping-and-context-injection.md) | 项目映射与默认背景注入 | 提议 | F01、F04、F06、F11、F12 |
+| [ADR-001](ADR-001-session-dispatch-and-consolidation-carrier.md) | 会话派发与整理执行载体 | 采用 | F05、F06、F07、F08、F11、F13 |
+| [ADR-002](ADR-002-paired-confirmation-single-write.md) | 成对确认的单写原子性 | 采用 | F06、F07、F08、F09、F10 |
+| [ADR-003](ADR-003-project-mapping-and-context-injection.md) | 项目映射与默认背景注入 | 采用 | F01、F04、F06、F11、F12 |
 | [ADR-004](ADR-004-界面挂载点与看板形态.md) | 界面挂载点与看板形态 | 提议 | F01、F02、F04、F15、F16、F17、F19、F20 |
 | [ADR-005](ADR-005-浏览器半与宿主半的数据通道.md) | 浏览器半与宿主半的数据通道 | 提议 | F01、F02、F03、F04、F11、F15、F16、F17、F19、F20 |
+| [ADR-006](ADR-006-系统整理对话与工作来源的区分表达.md) | 系统整理对话与工作来源的区分表达 | 提议 | F13、F14、F15；边界：F06、F12 |
 
-五份均为从 `bd16535` 复原的先前研究，尚未按 DSH 44.7.0 复核完成，**不得标为采用**；本次部分复核的实际结论见 [S0 复核记录](../s0-reverification-20261019.md)。表内「影响功能」取自各 ADR 自身的「影响功能」节或属性行，不另行推断。
+ADR-001…005 五份为从 `bd16535` 复原的先前研究。2026-10-20 已按 DSH 44.7.0 复核：ADR-001、ADR-002、ADR-003 有实测证据，状态改为**采用**；ADR-004（缺客户端实际渲染证据）与 ADR-005（缺真实 Connection RPC 路由证据）仍为**提议**。依据见 [S0 复核记录](../s0-reverification-20261019.md) 第 8 节。表内「影响功能」取自各 ADR 自身的「影响功能」节或属性行，不另行推断。ADR-006 是 2026-10-20 新增的 HOST-07 设计提案，**未获用户确认**，同为「提议」。
 
 ## 应用时机
 

@@ -1,9 +1,10 @@
-> 复原说明：本页为 2026-10-14 S0 记录的原文复原（来源提交 bd16535）。2026-10-19 已在 DSH 44.7.0 上做部分复核，结论见 [S0 复核记录](../s0-reverification-20261019.md)；未复核部分仍是「提议」，不得当作已验证。
+> 复原说明：本页为 2026-10-14 S0 记录的原文复原（来源提交 bd16535）。2026-10-20 已在 DSH 44.7.0 上复核并据此把状态由「提议」改为「采用」，依据见 [S0 复核记录](../s0-reverification-20261019.md) 第 8 节；正文中标注「尚未验证」的子项仍按原样保留，不得当作已验证。
 
 # ADR-003：项目映射与默认背景注入（workspace 归属 + 每轮上下文）
 
 - 日期：2026-10-14
-- 状态：提议（Proposed）
+- 状态：采用（Accepted，2026-10-20 复核）
+- 状态依据：2026-10-20 在 DSH 44.7.0 上重跑宿主集成探针，workspace 映射 6 步（含 `missing-dir` 保留记录、同名不同路径）、会话创建与解析 4 步、`inject.projectionExactlyOnce`/`inject.multiStepOnlyOnce`/`inject.turnOutline` 全部 `[ok]`（20/20，见 [复核记录第 8 节](../s0-reverification-20261019.md)）。仍**未验证**：真实模型多步（本次 `multiStepObserved=false`）。
 - 决策范围：宿主半（`packages/plugin`），影响项目标识、工作范围、默认背景快照
 - 来源规则：OBJ 系列（项目/对象标识）、CTX 系列（背景与读取）、F01、F04、F11、HOST-01、HOST-04、HOST-06
 - 关联决策：[ADR-001 会话派发与整理执行载体](./ADR-001-session-dispatch-and-consolidation-carrier.md)

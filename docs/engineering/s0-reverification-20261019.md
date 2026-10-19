@@ -72,7 +72,7 @@
 | 装到真实 profile 并生效（旧记录：未执行） | 未执行 | 未复核（需写盘并重启 `desktop` profile） |
 | 客户端半实际渲染（旧记录：未验证） | 未观察 | 未复核 |
 | 真实模型的 `assistant` 回复与真实多步（旧记录：未验证） | 未执行（隔离环境刻意不含凭据） | 未复核 |
-| 存储原子性 25/25、宿主集成 20/20 | 本次未重跑 | 未复核（沿用旧结论须注明来源与日期） |
+| 存储原子性 25/25、宿主集成 20/20 | 已于 2026-10-20 重跑，均通过 | **已复核**，见第 8 节 |
 | `check_docs.py` PASS | 本次复原后重跑 PASS | 成立（仅文档结构层） |
 
 ## 5. 三项必须明确的结论
@@ -83,7 +83,7 @@
 
 ## 6. 仍未复核的部分
 
-- **20 步宿主集成 spike**：HOST-01/03/04/05/06/07/08 的完整语义（本次只复核加载链与门禁命令，未重跑该集成探针）。
+- **20 步宿主集成 spike**：HOST-01/03/04/05/06/07/08 的完整语义（2026-10-20 已重跑，见第 8 节；但真实模型路径仍在下方未关闭）。
 - **装到真实 profile**：`desktop` profile 由 Electron 应用独占管理，安装需要写盘并重启进程，未执行。
 - **客户端半实际渲染与交互**：未打开界面观察（见[宿主能力合同](host-capabilities.md)）。
 - **真实模型路径**：真实 `assistant` 回复与真实多步（含工具调用）未执行，原因是隔离 home 刻意不含真实凭据。
@@ -103,4 +103,21 @@
 2. 回收后仍**先跑完整门禁**再进基线；不得沿用本次部分复核的结论替代功能验收。
 3. 第 6 节列出的未复核项不得写成已验证；五份 ADR 的「提议」状态在各自复核完成前不变。
 
-本页只记录 2026-10-19 这一次隔离复核的观察，不替代[交付状态](../delivery/status.md)与[功能验收](../prd/mapping/acceptance.csv)。
+## 8. 补充复核（2026-10-20）：两项「未重跑」已关闭
+
+第 4、6 节把「存储原子性 25/25」与「20 步宿主集成 spike」列为未复核。现已在同一隔离 worktree（`C:\Users\InformationDS\aikanban-s1`，提交 `a021d4b`，位于同步盘之外）重跑：
+
+| 项 | 旧声称（2026-10-14） | 2026-10-20 实测 | 结论 |
+| --- | --- | --- | --- |
+| 存储原子性实验 `packages/core/experiments/storage-domain-atomicity.mjs` | 25/25 | **25/25 checks passed**（exit 0） | 成立，且是当前代码重跑所得 |
+| 20 步宿主集成 spike `packages/plugin/src/probe/harness/run-probe.ps1` | 20/20 | **20 个步骤全部 `[ok]`**（exit 0），步骤 id 与 `ok` 标记与旧证据逐一相同 | 成立 |
+
+补充说明：
+
+- 集成探针的 20 个步骤覆盖 workspace 映射（6）、会话创建与解析（4）、派发与子代理拒绝（3）、三条读回通道（3）、注入与 `turnOutline`（3）。原始证据已刷新为本次运行（`startedAt` 2026-10-19T14:17Z，`packages/plugin/src/probe/evidence/probe-report.json`）；上一版可从 Git 历史取回。
+- 两次运行都在 `DSH_HOME=<隔离目录>`、`--profile web --port 0 --no-open` 下完成，未触碰用户 GUI，未读写 `~/.dsh`。
+- **仍未关闭**：`readback.turnEnd` 以 `MISSING_CREDENTIAL` 结束（`assistantReplyCount=0`、`multiStepObserved=false`），真实模型的 `assistant` 回复与真实多步仍未验证；客户端实际渲染、装到真实 profile、`tools`/`systemPrompt` 注册、HOST-07 的区分表达设计仍按第 6 节视为未完成。
+
+据此，[ADR-001](../engineering/decisions/ADR-001-session-dispatch-and-consolidation-carrier.md)、[ADR-002](../engineering/decisions/ADR-002-paired-confirmation-single-write.md)、[ADR-003](../engineering/decisions/ADR-003-project-mapping-and-context-injection.md) 的状态由「提议」改为「采用」；[ADR-004](../engineering/decisions/ADR-004-界面挂载点与看板形态.md)（缺客户端渲染证据）与 [ADR-005](../engineering/decisions/ADR-005-浏览器半与宿主半的数据通道.md)（缺真实 Connection RPC 路由证据）保持「提议」。
+
+本页记录 2026-10-19 的隔离复核与 2026-10-20 的补充复核，不替代[交付状态](../delivery/status.md)与[功能验收](../prd/mapping/acceptance.csv)。

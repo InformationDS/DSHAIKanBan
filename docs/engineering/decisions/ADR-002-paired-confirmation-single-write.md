@@ -1,9 +1,10 @@
-> 复原说明：本页为 2026-10-14 S0 记录的原文复原（来源提交 bd16535）。2026-10-19 已在 DSH 44.7.0 上做部分复核，结论见 [S0 复核记录](../s0-reverification-20261019.md)；未复核部分仍是「提议」，不得当作已验证。
+> 复原说明：本页为 2026-10-14 S0 记录的原文复原（来源提交 bd16535）。2026-10-20 已在 DSH 44.7.0 上复核并据此把状态由「提议」改为「采用」，依据见 [S0 复核记录](../s0-reverification-20261019.md) 第 8 节；正文中标注「尚未验证」的子项仍按原样保留，不得当作已验证。
 
 # ADR-002：成对确认的单写原子性（storageDomain 写入边界）
 
 - 日期：2026-10-14
-- 状态：提议（Proposed）
+- 状态：采用（Accepted，2026-10-20 复核）
+- 状态依据：2026-10-20 重跑 `packages/core/experiments/storage-domain-atomicity.mjs`，**25/25 checks passed**（故障注入/并发/重启/损坏保护）；同时 `pnpm -r run test` 中 paired-confirmation、concurrency、restart、version-chain 等用例全绿（见 [复核记录第 8 节](../s0-reverification-20261019.md)）。
 - 决策范围：`packages/core`（S0-W2），影响全部正式内容保存路径
 - 来源规则：SAVE-01…10、OBJ-05…07、REC-01…06、APP-01…08、F06-R07、F07-R02/R06、F08-R02/R06/R07、F09-R03/R04/R06
 

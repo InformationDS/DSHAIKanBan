@@ -1,66 +1,66 @@
 {
   "probe": "aikanban-probe",
-  "startedAt": "2026-10-14T02:20:24.701Z",
+  "startedAt": "2026-10-19T14:17:25.420Z",
   "host": {
-    "pid": 20280,
-    "dshHome": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan\\.probe-home",
-    "cwd": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan"
+    "pid": 29416,
+    "dshHome": "C:\\Users\\InformationDS\\aikanban-s1\\.probe-home",
+    "cwd": "C:\\Users\\InformationDS\\aikanban-s1"
   },
   "steps": [
     {
       "id": "workspace.list",
       "title": "List durable workspaces",
-      "startedAt": "2026-10-14T02:20:24.701Z",
+      "startedAt": "2026-10-19T14:17:25.420Z",
       "ok": true,
       "detail": "ok",
       "data": [
         {
           "id": "03696d17-12c2-4d78-9b3e-ff3bdf9e6f10",
-          "path": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan",
+          "path": "C:\\Users\\InformationDS\\aikanban-s1",
           "title": "AIKanBan",
           "sessionCount": 0
         },
         {
           "id": "455306c1-4d0a-42ad-ba21-d63b41d753d8",
-          "path": "D:\\BaiduSyncdisk\\dsh-plugin",
+          "path": "C:\\Users\\InformationDS",
           "title": "dsh-plugin（旧）",
           "sessionCount": 0
         }
       ],
-      "finishedAt": "2026-10-14T02:20:24.702Z"
+      "finishedAt": "2026-10-19T14:17:25.421Z"
     },
     {
       "id": "workspace.resolveByPath.primary",
       "title": "Resolve the real AIKanBan workspace by canonical path",
-      "startedAt": "2026-10-14T02:20:24.702Z",
+      "startedAt": "2026-10-19T14:17:25.421Z",
       "ok": true,
       "detail": "ok",
       "data": {
         "id": "03696d17-12c2-4d78-9b3e-ff3bdf9e6f10",
-        "path": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan",
+        "path": "C:\\Users\\InformationDS\\aikanban-s1",
         "title": "AIKanBan",
         "status": "ok"
       },
-      "finishedAt": "2026-10-14T02:20:24.756Z"
+      "finishedAt": "2026-10-19T14:17:25.474Z"
     },
     {
       "id": "workspace.resolveByPath.secondary",
       "title": "Resolve the second real workspace by canonical path",
-      "startedAt": "2026-10-14T02:20:24.756Z",
+      "startedAt": "2026-10-19T14:17:25.474Z",
       "ok": true,
       "detail": "ok",
       "data": {
         "id": "455306c1-4d0a-42ad-ba21-d63b41d753d8",
-        "path": "D:\\BaiduSyncdisk\\dsh-plugin",
+        "path": "C:\\Users\\InformationDS",
         "title": "dsh-plugin（旧）",
         "status": "ok"
       },
-      "finishedAt": "2026-10-14T02:20:24.757Z"
+      "finishedAt": "2026-10-19T14:17:25.475Z"
     },
     {
       "id": "workspace.create.idempotent",
       "title": "Re-creating a workspace for an owned path reuses the entity",
-      "startedAt": "2026-10-14T02:20:24.757Z",
+      "startedAt": "2026-10-19T14:17:25.475Z",
       "ok": true,
       "detail": "ok",
       "data": {
@@ -70,112 +70,112 @@
         "titleAfterCreate": "AIKanBan",
         "workspaceCount": 2
       },
-      "finishedAt": "2026-10-14T02:20:24.759Z"
+      "finishedAt": "2026-10-19T14:17:25.477Z"
     },
     {
       "id": "workspace.create.duplicateTitle",
       "title": "Two distinct paths may share one display title",
-      "startedAt": "2026-10-14T02:20:24.759Z",
+      "startedAt": "2026-10-19T14:17:25.477Z",
       "ok": true,
       "detail": "ok",
       "data": {
-        "fixtureId": "217a59b6-57da-41f1-907a-92eedb9e9268",
-        "fixturePath": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan\\.probe-home\\ws-fixture",
+        "fixtureId": "2970c71f-8749-40ff-b21b-2d1a7020f8d8",
+        "fixturePath": "C:\\Users\\InformationDS\\aikanban-s1\\.probe-home\\ws-fixture",
         "workspacesTitledAIKanBan": [
           {
-            "id": "217a59b6-57da-41f1-907a-92eedb9e9268",
-            "path": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan\\.probe-home\\ws-fixture"
+            "id": "2970c71f-8749-40ff-b21b-2d1a7020f8d8",
+            "path": "C:\\Users\\InformationDS\\aikanban-s1\\.probe-home\\ws-fixture"
           },
           {
             "id": "03696d17-12c2-4d78-9b3e-ff3bdf9e6f10",
-            "path": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan"
+            "path": "C:\\Users\\InformationDS\\aikanban-s1"
           }
         ],
         "distinctIds": 2
       },
-      "finishedAt": "2026-10-14T02:20:24.817Z"
+      "finishedAt": "2026-10-19T14:17:25.531Z"
     },
     {
       "id": "workspace.resolveByPath.missing",
       "title": "A nonexistent path rejects instead of resolving",
-      "startedAt": "2026-10-14T02:20:24.817Z",
+      "startedAt": "2026-10-19T14:17:25.531Z",
       "ok": true,
       "detail": "ok",
       "data": {
         "rejected": true,
         "error": {
           "name": "Error",
-          "message": "ENOENT: no such file or directory, realpath 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan\\.probe-home\\does-not-exist'",
+          "message": "ENOENT: no such file or directory, realpath 'C:\\Users\\InformationDS\\aikanban-s1\\.probe-home\\does-not-exist'",
           "code": "ENOENT",
           "details": null,
-          "stack": "Error: ENOENT: no such file or directory, realpath 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan\\.probe-home\\does-not-exist'\n    at async realpath (node:internal/fs/promises:1889:10)\n    at async realpathNormalize (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:50:9)\n    at async Proxy.resolveByPath (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:477:21)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:286:5\n    at async step (file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:17)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:284:3"
+          "stack": "Error: ENOENT: no such file or directory, realpath 'C:\\Users\\InformationDS\\aikanban-s1\\.probe-home\\does-not-exist'\n    at async realpath (node:internal/fs/promises:1889:10)\n    at async realpathNormalize (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:50:9)\n    at async Proxy.resolveByPath (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:477:21)\n    at async file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:286:5\n    at async step (file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:17)\n    at async file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:284:3"
         }
       },
-      "finishedAt": "2026-10-14T02:20:24.818Z"
+      "finishedAt": "2026-10-19T14:17:25.532Z"
     },
     {
       "id": "workspace.pathUnavailable",
       "title": "A workspace whose directory vanished reports missing-dir but keeps its record",
-      "startedAt": "2026-10-14T02:20:24.818Z",
+      "startedAt": "2026-10-19T14:17:25.532Z",
       "ok": true,
       "detail": "ok",
       "data": {
-        "id": "217a59b6-57da-41f1-907a-92eedb9e9268",
+        "id": "2970c71f-8749-40ff-b21b-2d1a7020f8d8",
         "status": "missing-dir",
         "stillListed": true,
         "resolveRejected": true
       },
-      "finishedAt": "2026-10-14T02:20:24.822Z"
+      "finishedAt": "2026-10-19T14:17:25.536Z"
     },
     {
       "id": "session.create.byWorkspaceId",
       "title": "create({workspaceId}) sets cwd from the workspace and attaches",
-      "startedAt": "2026-10-14T02:20:24.824Z",
+      "startedAt": "2026-10-19T14:17:25.538Z",
       "ok": true,
       "detail": "ok",
       "data": {
-        "sessionId": "session-859c7ea9-f026-48e1-83a8-4f20742a7f1a",
+        "sessionId": "session-2612d1a3-7a3b-4659-a2fd-a92d261901f4",
         "agentPreset": "standard",
-        "headerCwd": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan",
+        "headerCwd": "C:\\Users\\InformationDS\\aikanban-s1",
         "headerOrigin": null,
         "attachedToWorkspace": true
       },
-      "finishedAt": "2026-10-14T02:20:25.441Z"
+      "finishedAt": "2026-10-19T14:17:26.216Z"
     },
     {
       "id": "session.resolveAgent",
       "title": "resolveAgent() yields the live Agent for the probe session",
-      "startedAt": "2026-10-14T02:20:25.442Z",
+      "startedAt": "2026-10-19T14:17:26.216Z",
       "ok": true,
       "detail": "ok",
       "data": {
         "agentId": "undefined",
         "hasSession": false
       },
-      "finishedAt": "2026-10-14T02:20:25.442Z"
+      "finishedAt": "2026-10-19T14:17:26.216Z"
     },
     {
       "id": "workspace.attachSession.cwdMismatch",
       "title": "attachSession rejects a session whose cwd is another workspace",
-      "startedAt": "2026-10-14T02:20:25.442Z",
+      "startedAt": "2026-10-19T14:17:26.216Z",
       "ok": true,
       "detail": "ok",
       "data": {
         "rejected": true,
         "error": {
           "name": "Error",
-          "message": "cannot attach session 'session-859c7ea9-f026-48e1-83a8-4f20742a7f1a' to workspace 'D:\\BaiduSyncdisk\\dsh-plugin': its cwd resolves to 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan'",
+          "message": "cannot attach session 'session-2612d1a3-7a3b-4659-a2fd-a92d261901f4' to workspace 'C:\\Users\\InformationDS': its cwd resolves to 'C:\\Users\\InformationDS\\aikanban-s1'",
           "code": null,
           "details": null,
-          "stack": "Error: cannot attach session 'session-859c7ea9-f026-48e1-83a8-4f20742a7f1a' to workspace 'D:\\BaiduSyncdisk\\dsh-plugin': its cwd resolves to 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan'\n    at WorkspaceEntity.attachSession (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:122:40)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:346:5\n    at async step (file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:17)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:342:3"
+          "stack": "Error: cannot attach session 'session-2612d1a3-7a3b-4659-a2fd-a92d261901f4' to workspace 'C:\\Users\\InformationDS': its cwd resolves to 'C:\\Users\\InformationDS\\aikanban-s1'\n    at WorkspaceEntity.attachSession (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:122:40)\n    at async file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:346:5\n    at async step (file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:17)\n    at async file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:342:3"
         }
       },
-      "finishedAt": "2026-10-14T02:20:25.445Z"
+      "finishedAt": "2026-10-19T14:17:26.221Z"
     },
     {
       "id": "workspace.attachSession.noCwd",
       "title": "attachSession rejects a session whose header carries no cwd",
-      "startedAt": "2026-10-14T02:20:25.445Z",
+      "startedAt": "2026-10-19T14:17:26.221Z",
       "ok": true,
       "detail": "ok",
       "data": {
@@ -184,18 +184,18 @@
         "rejected": true,
         "error": {
           "name": "Error",
-          "message": "cannot attach session 'session-1' to workspace 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan': its stored header carries no cwd to validate against",
+          "message": "cannot attach session 'session-1' to workspace 'C:\\Users\\InformationDS\\aikanban-s1': its stored header carries no cwd to validate against",
           "code": null,
           "details": null,
-          "stack": "Error: cannot attach session 'session-1' to workspace 'D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan': its stored header carries no cwd to validate against\n    at WorkspaceEntity.attachSession (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:114:37)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:357:5\n    at async step (file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:17)\n    at async file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:353:3"
+          "stack": "Error: cannot attach session 'session-1' to workspace 'C:\\Users\\InformationDS\\aikanban-s1': its stored header carries no cwd to validate against\n    at WorkspaceEntity.attachSession (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-workspace/lib/index.js:114:37)\n    at async file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:357:5\n    at async step (file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:17)\n    at async file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:353:3"
         }
       },
-      "finishedAt": "2026-10-14T02:20:25.448Z"
+      "finishedAt": "2026-10-19T14:17:26.224Z"
     },
     {
       "id": "dispatch.subagentGuard",
       "title": "prompt() refuses an origin:subagent session",
-      "startedAt": "2026-10-14T02:20:25.448Z",
+      "startedAt": "2026-10-19T14:17:26.224Z",
       "ok": true,
       "detail": "ok",
       "data": {
@@ -209,30 +209,30 @@
           "details": {
             "reason": "use subagent delivery for this child session"
           },
-          "stack": "RemoteError: session \"session-2\" is owned by subagent routing\n    at apiSessionSubagentOwnershipError (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:137:9)\n    at ApiSessionAgentController.resolve (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:221:102)\n    at ApiSessionAgentController.resolveAgent (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:207:15)\n    at SessionCommandController.resolveAgent (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:880:35)\n    at SessionCommandController.prompt (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:740:28)\n    at Proxy.prompt (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:2922:25)\n    at Object.apply (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:120:36)\n    at file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:369:33\n    at step (file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:23)\n    at file:///D:/BaiduSyncdisk/dsh-plugin/AIKanBan/.probe-home/profiles/node_modules/@aikanban/probe/index.js:365:9"
+          "stack": "RemoteError: session \"session-2\" is owned by subagent routing\n    at apiSessionSubagentOwnershipError (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:137:9)\n    at ApiSessionAgentController.resolve (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:221:102)\n    at ApiSessionAgentController.resolveAgent (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:207:15)\n    at SessionCommandController.resolveAgent (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:880:35)\n    at SessionCommandController.prompt (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:740:28)\n    at Proxy.prompt (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:2922:25)\n    at Object.apply (file:///C:/Users/InformationDS/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:120:36)\n    at file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:369:33\n    at step (file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:106:23)\n    at file:///C:/Users/InformationDS/aikanban-s1/.probe-home/profiles/node_modules/@aikanban/probe/index.js:365:9"
         }
       },
-      "finishedAt": "2026-10-14T02:20:25.451Z"
+      "finishedAt": "2026-10-19T14:17:26.228Z"
     },
     {
       "id": "dispatch.prompt.queue",
       "title": "sessionController.prompt(queue) accepts a marked visible message",
-      "startedAt": "2026-10-14T02:20:25.451Z",
+      "startedAt": "2026-10-19T14:17:26.228Z",
       "ok": true,
       "detail": "ok",
       "data": {
         "accepted": {
           "accepted": true
         },
-        "requestId": "aikanban-probe-1791944425451-909185",
-        "promptText": "Reply with the single word ACK, then use the pwsh tool to run the command `Write-Output aikanban-probe-step-2` and report its output. Do not do anything else.\n\n[probe-request-id aikanban-probe-1791944425451-909185]"
+        "requestId": "aikanban-probe-1792419446228-66549",
+        "promptText": "Reply with the single word ACK, then use the pwsh tool to run the command `Write-Output aikanban-probe-step-2` and report its output. Do not do anything else.\n\n[probe-request-id aikanban-probe-1792419446228-66549]"
       },
-      "finishedAt": "2026-10-14T02:20:25.460Z"
+      "finishedAt": "2026-10-19T14:17:26.237Z"
     },
     {
       "id": "readback.turnEnd",
       "title": "Wait for the dispatched turn to reach turn/end, then read events back",
-      "startedAt": "2026-10-14T02:20:25.460Z",
+      "startedAt": "2026-10-19T14:17:26.238Z",
       "ok": true,
       "detail": "ok",
       "data": {
@@ -406,12 +406,12 @@
           }
         ]
       },
-      "finishedAt": "2026-10-14T02:20:25.961Z"
+      "finishedAt": "2026-10-19T14:17:26.740Z"
     },
     {
       "id": "dispatch.requestIdIdempotent",
       "title": "Re-using the same requestId is acknowledged but delivers nothing",
-      "startedAt": "2026-10-14T02:20:25.961Z",
+      "startedAt": "2026-10-19T14:17:26.740Z",
       "ok": true,
       "detail": "ok",
       "data": {
@@ -423,16 +423,16 @@
         "duplicateCreated": false,
         "secondPayloadLeaked": false
       },
-      "finishedAt": "2026-10-14T02:20:27.476Z"
+      "finishedAt": "2026-10-19T14:17:28.248Z"
     },
     {
       "id": "readback.followSnapshot",
       "title": "follow() streams an opening snapshot carrying the dispatched turn",
-      "startedAt": "2026-10-14T02:20:27.476Z",
+      "startedAt": "2026-10-19T14:17:28.248Z",
       "ok": true,
       "detail": "ok",
       "data": {
-        "elapsedMs": 2,
+        "elapsedMs": 4,
         "frameTypes": [
           "snapshot"
         ],
@@ -482,12 +482,12 @@
           "plan"
         ]
       },
-      "finishedAt": "2026-10-14T02:20:27.479Z"
+      "finishedAt": "2026-10-19T14:17:28.252Z"
     },
     {
       "id": "readback.page",
       "title": "page() reads a cold-safe history page through the last event",
-      "startedAt": "2026-10-14T02:20:27.479Z",
+      "startedAt": "2026-10-19T14:17:28.252Z",
       "ok": true,
       "detail": "ok",
       "data": {
@@ -518,12 +518,12 @@
         "includesTurnEnd": true,
         "includesInjectedBlock": true
       },
-      "finishedAt": "2026-10-14T02:20:27.479Z"
+      "finishedAt": "2026-10-19T14:17:28.252Z"
     },
     {
       "id": "inject.projectionExactlyOnce",
       "title": "Durable log carries the injected block exactly once",
-      "startedAt": "2026-10-14T02:20:27.479Z",
+      "startedAt": "2026-10-19T14:17:28.252Z",
       "ok": true,
       "detail": "ok",
       "data": {
@@ -535,8 +535,8 @@
         "projectionInjections": [
           {
             "seq": 11,
-            "time": 1791944425846,
-            "text": "AIKANBAN-PROBE-CONTEXT (turn 1, step 1)\nAIKanBan probe background block: this text is injected context, not a human instruction.\nnonce=2026-10-14T02:20:24.701Z"
+            "time": 1792419446651,
+            "text": "AIKANBAN-PROBE-CONTEXT (turn 1, step 1)\nAIKanBan probe background block: this text is injected context, not a human instruction.\nnonce=2026-10-19T14:17:25.420Z"
           }
         ],
         "dispatchedSeqs": [
@@ -554,12 +554,12 @@
         "markerPresentInLog": true,
         "injectedSourceForm": "snapshot"
       },
-      "finishedAt": "2026-10-14T02:20:27.479Z"
+      "finishedAt": "2026-10-19T14:17:28.253Z"
     },
     {
       "id": "inject.multiStepOnlyOnce",
       "title": "Pre-step fired per step; injection committed only at step 1",
-      "startedAt": "2026-10-14T02:20:27.479Z",
+      "startedAt": "2026-10-19T14:17:28.253Z",
       "ok": true,
       "detail": "ok",
       "data": {
@@ -580,12 +580,12 @@
         "projectionStepCount": 1,
         "projectionInjectionCount": 1
       },
-      "finishedAt": "2026-10-14T02:20:27.480Z"
+      "finishedAt": "2026-10-19T14:17:28.253Z"
     },
     {
       "id": "inject.turnOutline",
       "title": "turnOutline neither shows the injected block as a prompt nor merges it",
-      "startedAt": "2026-10-14T02:20:27.480Z",
+      "startedAt": "2026-10-19T14:17:28.253Z",
       "ok": true,
       "detail": "ok",
       "data": {
@@ -622,23 +622,23 @@
         "outlinePromptContainsInjectMark": false,
         "dispatchedPreview": "Reply with the singl"
       },
-      "finishedAt": "2026-10-14T02:20:27.481Z"
+      "finishedAt": "2026-10-19T14:17:28.254Z"
     }
   ],
   "preStepCalls": [
     {
-      "sessionId": "session-859c7ea9-f026-48e1-83a8-4f20742a7f1a",
+      "sessionId": "session-2612d1a3-7a3b-4659-a2fd-a92d261901f4",
       "turn": 1,
       "step": 1,
       "decisionKind": "enter",
       "incomingMessages": 3,
       "aborted": false,
       "injected": true,
-      "at": "2026-10-14T02:20:25.842Z",
-      "injectedText": "AIKANBAN-PROBE-CONTEXT (turn 1, step 1)\nAIKanBan probe background block: this text is injected context, not a human instruction.\nnonce=2026-10-14T02:20:24.701Z"
+      "at": "2026-10-19T14:17:26.647Z",
+      "injectedText": "AIKANBAN-PROBE-CONTEXT (turn 1, step 1)\nAIKanBan probe background block: this text is injected context, not a human instruction.\nnonce=2026-10-19T14:17:25.420Z"
     }
   ],
-  "injectedContextText": "AIKANBAN-PROBE-CONTEXT (turn 1, step 1)\nAIKanBan probe background block: this text is injected context, not a human instruction.\nnonce=2026-10-14T02:20:24.701Z",
+  "injectedContextText": "AIKANBAN-PROBE-CONTEXT (turn 1, step 1)\nAIKanBan probe background block: this text is injected context, not a human instruction.\nnonce=2026-10-19T14:17:25.420Z",
   "verdict": {
     "dispatchAccepted": true,
     "readBackTurnEnded": true,
@@ -659,9 +659,9 @@
     "multiStepObserved": false,
     "outlineClean": true,
     "workspaceMappingAllOk": true,
-    "probeSessionId": "session-859c7ea9-f026-48e1-83a8-4f20742a7f1a",
-    "probeSessionCwd": "D:\\BaiduSyncdisk\\dsh-plugin\\AIKanBan",
+    "probeSessionId": "session-2612d1a3-7a3b-4659-a2fd-a92d261901f4",
+    "probeSessionCwd": "C:\\Users\\InformationDS\\aikanban-s1",
     "subagentFixtureSessionId": "session-2"
   },
-  "finishedAt": "2026-10-14T02:20:27.481Z"
+  "finishedAt": "2026-10-19T14:17:28.255Z"
 }

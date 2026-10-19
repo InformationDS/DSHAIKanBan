@@ -1,6 +1,6 @@
 # 文档入口
 
-这里统一保存 AIKanBan 的产品需求文档。本仓库当前只保留 PRD；实施代码、技术决策与交付进度已移除，项目入口见[项目 README](../README.md)。
+这里统一保存 AIKanBan 的产品需求文档。本仓库当前只保留需求与治理约定，不保存实施代码：技术决策按[技术决策记录](engineering/decisions/README.md)的约定落点，实现与验收进度只在[交付状态](delivery/status.md)维护。项目入口见[项目 README](../README.md)。
 
 ## 按任务阅读
 
@@ -12,6 +12,8 @@
 | 核对需求来源 | [追溯说明](prd/traceability.md) → 条款映射/验收映射 → 原始基线 |
 | 处理尚未定义的行为 | [未决事项](prd/open-questions.md) |
 | 核对验收场景 | 当前功能验收条件 → [验收映射](prd/mapping/acceptance.csv) |
+| 记录技术决策 | [技术决策记录](engineering/decisions/README.md)（约定与索引，当前暂无记录） |
+| 查看实现与验收进度 | [交付状态](delivery/status.md)（唯一状态入口） |
 
 ## 文档职责与有效性
 
@@ -19,7 +21,8 @@
 - `prd/feature-catalog.json` 是功能编号、目录、阶段、直接依赖和 FR 来源的结构化索引，供链接和校验使用，不代替具体规则。
 - `prd/baseline/` 仅保存 v1.17 历史基线；不在日常需求修改时同步改基线，不能要求编码 AI 每次加载整份。
 - `prd/mapping/` 是定位、归属和验收责任索引，不是另一份可独立修改的业务规则正文。
-- 技术决策、实现记录与交付进度不保存在本仓库；实现开始时在该功能目录创建 implementation.md，验收开始时创建 verification.md，其内容与有效 PRD 分离。
+- `engineering/decisions/` 保存技术决策（约定与索引见其 [README](engineering/decisions/README.md)）；`delivery/status.md` 是[实现与验收进度的唯一入口](delivery/status.md)。实现开始时在该功能目录创建 implementation.md，验收开始时创建 verification.md，记录内容与有效 PRD 分离，状态变化只登记到交付状态页。
+- 本仓库不保存实施代码：产品需求、技术决策约定与状态入口都在 `docs/` 下，根目录只有 [项目 README](../README.md)。
 - `tools/` 下的脚本只校验文档结构，不代表产品已实现或已验收。
 
 ## 维护与变更

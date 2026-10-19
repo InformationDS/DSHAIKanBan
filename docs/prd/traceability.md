@@ -7,6 +7,7 @@
 - [条款映射](mapping/requirements.csv)：每个 FR 下的非空正文、列表项和内容表格行一个稳定 C 编号，含原始行号、主要负责功能、公共规则及 90 字以内定位摘要。表头也作为结构条目保留；表格分隔线和小标题不作为行为条款。原行号以冻结基线为准。
 - [验收映射](mapping/acceptance.csv)：完整 106 个 AT 的原场景、原通过标准、主要验收功能、原 FR 与按来源推导的协同候选。一个场景只有一个主要责任方，可需多个功能联合验收；协同候选不强制全部成为直接依赖。
 - [交互规则映射](mapping/interaction.csv)：UX-01—16 的原规则、行号与主要责任功能；共享行为从组件首次实现有效。
+- [新增验收](mapping/acceptance-additions.csv)：功能 PRD §6 中原先没有编号的验收行，按各功能表格内出现顺序编号为 AT-107 起，记录原来源列、主责功能、可执行步骤、预期结果与登记日期 `source_date`。原 106 个 AT 冻结不变，新增项不伪装成原 AT；分工见下文「原始 106 个 AT 与新增验收的分工」。
 - 列表中的 owner 表示主维护/验收责任，不表示其他引用方免于遵守。公共规则与小 PRD 中相关实现规则仍是有效正文；映射不替代它们。
 - FR-27 明确 excluded；运行中整理的未决分支记录 pending-boundary/OQ-01，均没有通过拆分变成默认开发功能。混合 P0/P1/P2 条款须读有效 PRD 明确范围，不整行升级候选。
 - 基线第 1—7、13—17 章及附录含全局背景/约束，按下表整体映射；其中 FR 的细条款和全部 AT 另有逐行索引。
@@ -23,8 +24,9 @@
 | 8—12 FR-01—32 | 下表及逐条 CSV；FR-27 排除 |
 | 13 异常与文案 | 各功能异常节、REC、SAVE、CTX |
 | 14 范围及约束 | overview、roadmap、common、open-questions |
-| 15.1 AT-01—106 | acceptance.csv、[验收映射](mapping/acceptance.csv)、各主要功能验收节 |
-| 15.2—15.3 自用与阻断 | acceptance.csv、overview |
+| 15.1 AT-01—106（基线行 1084—1189） | acceptance.csv、[验收映射](mapping/acceptance.csv)、各主要功能验收节 |
+| 15.2 真实自用验证（基线行 1191 起） | 无逐条映射条目；由 [overview](overview.md) 成功判断节散文概述，试用时按基线原文核对 |
+| 15.3 上线阻断项（基线行 1208 起） | 无逐条映射条目；由 [overview](overview.md) 成功判断节末段散文概述，任何出现即首版阻断 |
 | 16 指标与验证 | overview、acceptance.csv；无已达成指标 |
 | 17 确定决定与评审 | common、相关功能、[未决](open-questions.md) |
 | 附录 A 动作边界 | OBJ-10、CTX、SAVE、各功能规则 |
@@ -65,6 +67,14 @@
 | FR-30 | 9 | [F19](features/F19-desktop-accessibility/prd.md) |
 | FR-31 | 10 | [F11](features/F11-context-preparation-and-sync/prd.md)、[F12](features/F12-record-retrieval-and-copy/prd.md)、[F18](features/F18-recovery-and-offline/prd.md) |
 | FR-32 | 11 | [F20](features/F20-chat-task-management/prd.md) |
+
+## 原始 106 个 AT 与新增验收的分工
+
+- [验收映射](mapping/acceptance.csv) 冻结为基线第 15.1 节的原始 106 个 AT（AT-01—AT-106），不得增删行或改号；其中场景、通过标准与来源 FR 须与基线逐字一致，仅协同功能列可维护。
+- 功能 PRD §6 中原先没有编号的验收行，统一登记在 [新增验收](mapping/acceptance-additions.csv)，编号自 AT-107 起按功能与表格顺序连续分配，并逐条写明原来源列（`baseline_source`）、主责功能（`primary_owner` / `owner_path`）与登记日期（`source_date`，本批为 2026-10-19）。
+- 新增验收是拆分时补齐的验收条目，不是基线第 15.1 节的原始 AT；引用时须按新增验收文件的编号与 `source_date` 说明来源，不得伪装成原 106 个 AT。
+- 两个文件共同构成完整验收索引：acceptance.csv 对应基线原场景，acceptance-additions.csv 对应拆分时补齐的条目；各功能 PRD §6 的编号集合须与其「验收来源」一致，并分别落在上述两个文件中。
+- 新增验收的校验由 `docs/tools/check_docs.py` 承担：编号须自 AT-107 起连续、不得复用原 106 个编号、`source_date` 须为日期、`kind` 限于「新增-本功能」与「新增-联合」，且每条须在其主责功能 §6 与「验收来源」中一致出现。该脚本只做文档结构与交叉一致性校验，不判定产品验收是否通过。
 
 ## 后续变更
 

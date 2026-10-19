@@ -19,10 +19,10 @@
 
 ## 2. 必读规则与依赖
 
-- [上下文规则](../../common/context-rules.md)：CTX-01—CTX-04、CTX-08、CTX-10。
-- [结论适用性](../../common/conclusion-applicability.md)：APP-01—APP-03、APP-05—APP-06、APP-08。
+- [上下文规则](../../common/context-rules.md)：CTX-01—04、CTX-08、CTX-10。
+- [结论适用性](../../common/conclusion-applicability.md)：APP-01—03、APP-05—06、APP-08。
 - [对象与状态](../../common/objects-and-states.md)：OBJ-01、OBJ-03、OBJ-05、OBJ-09。
-- [保存与恢复](../../common/persistence-and-recovery.md)：REC-03、REC-05—REC-06。
+- [保存与恢复](../../common/persistence-and-recovery.md)：REC-03、REC-05—06。
 - F06 提供当前正式任务记录；未确认记录不能作为正式事实。
 - F09 提供片段适用状态、范围和人工修正；正文当前版本不代表片段仍有效。
 - F11 提供背景构成、实际使用基线、快照与本轮补充合同。
@@ -78,7 +78,7 @@
 
 历史仅按用户明确的追溯、比较或恢复意图读取指定对象/版本/范围。
 对象不明确时只澄清必要范围，不扩大到所有历史；追溯不改当前事实。
-其他对话原文须先说明正式材料缺失及拟读取来源，由用户决定是否和范围。
+其他对话原文须先说明正式材料缺失及拟读取来源，由用户决定是否读取及读取范围。
 不把历史页面已展开、旧版本数量或可访问权限当作默认读取授权。
 
 ### F12-R06：复制与可读交接
@@ -130,4 +130,4 @@
 允许调整索引和展开呈现，不得以权限可读为由自动扩大实际上下文。
 不提供备份导出或外部自动同步；可读交接输出与项目数据备份必须区分。
 交付检索与复制范围合同，供 F13/F20 共用，记录实际使用去重依据。
-实现前创建 implementation.md；验收时创建 verification.md；进度不在本 PRD 内维护。
+实现前创建 implementation.md；验收时创建 verification.md；进度与验收状态见 [交付状态](../../../delivery/status.md)，不在本 PRD 内维护。

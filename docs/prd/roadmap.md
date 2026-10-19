@@ -4,7 +4,7 @@
 
 ## S0 开发准备
 
-输出架构决定、宿主能力落实计划、源码/测试目录和真实运行命令。不能假设项目/对话/模型设置已实现；未定义的大桌面 Agent 能力不扩入看板 PRD。
+输出架构决定、宿主能力落实计划、源码/测试目录和真实运行命令；架构决定记入[技术决策记录](../engineering/decisions/README.md)（ADR 目录），实施与验证进展只登记到[交付状态](../delivery/status.md)。不能假设项目/对话/模型设置已实现；未定义的大桌面 Agent 能力不扩入看板 PRD。S0 的工程未决与宿主能力缺口见 [OQ-03](open-questions.md)。
 
 进入 S1 的门槛：明确对象与保存合同、项目隔离、持久标识、版本/草稿保护、键盘/失败反馈基础；记录技术选择并建立可运行项目。当前 S0 尚未实施。
 
@@ -16,7 +16,7 @@
 | S2 任务与对话连接 | F04 → F05 → F11 | 项目未关联和任务归属两入口、继续/固定关联、默认范围和下次发送自动同步；不发送不执行、重试不重复 |
 | S3 跨对话接力 | F06 → F07 → F08/F09 → F12 | A 形成精简记录并成对确认，B 从正式当前背景继续；编辑核对、并发贡献、人工修正、检索片段与复制，旧结论不当事实 |
 | S4 项目成果 | F13 → F14 → F15 | 完成后系统整理对话生成成果与总览、一次确认；缺来源透明、重开更新同一条目、待确认与行动提示分开 |
-| S5 完整首版 | F10/F16/F17 → F18；F19/F20 | 四类历史/恢复、搜索归档删除、连续保存恢复/离线、桌面可达、聊天管理；全 AT、真实使用与阻断项核验 |
+| S5 完整首版 | F10、F17 → F18；F17 → F16/F19；F18 → F20 | 四类历史/恢复、搜索归档删除、连续保存恢复/离线、桌面可达、聊天管理；全 AT、真实使用与阻断项核验 |
 
 S1/S2 可内部试用，但不能作为删减成果闭环的正式首版。失败保留、幂等、成对保存、版本、适用性读取和键盘等公共规则从对应组件首次实现即有效，F18/F19 在 S5 进行完整跨流程核验。
 
@@ -43,20 +43,20 @@ S1 暂无来源记录，手动概况仍保存用户版本和明确修正合同�
 | [F13](features/F13-project-record-workflow/prd.md) | S4 | F02、F06、F07、F08、F09、F12 |
 | [F14](features/F14-project-record-lifecycle/prd.md) | S4 | F13 |
 | [F15](features/F15-pending-updates/prd.md) | S4 | F03、F06、F13、F14 |
-| [F16](features/F16-search-filter-sort/prd.md) | S5 | F02、F09、F14、F15 |
+| [F16](features/F16-search-filter-sort/prd.md) | S5 | F02、F09、F14、F15、F17 |
 | [F17](features/F17-archive-and-delete/prd.md) | S5 | F04、F05、F13、F14、F15 |
 | [F18](features/F18-recovery-and-offline/prd.md) | S5 | F08、F10、F11、F13、F17 |
-| [F19](features/F19-desktop-accessibility/prd.md) | S5 | F02、F04、F07、F13、F15 |
-| [F20](features/F20-chat-task-management/prd.md) | S5 | F02、F05、F06、F11、F12、F13 |
+| [F19](features/F19-desktop-accessibility/prd.md) | S5 | F02、F04、F07、F08、F13、F15、F17 |
+| [F20](features/F20-chat-task-management/prd.md) | S5 | F02、F05、F06、F11、F12、F13、F17、F18 |
 
 ## 每次 vibecoding 的交付单元
 
-选择一份小 PRD → 验证直接依赖 → 读最小公共规则 → 写 implementation → 实现可运行行为和错误路径 → 执行本功能验收 → 写 verification 与进度 → 条件齐全时联测所属阶段。
+选择一份小 PRD → 验证直接依赖 → 读最小公共规则 → 写 implementation → 实现可运行行为和错误路径 → 执行本功能验收 → 写 verification，并把实现与验收状态登记到[交付状态](../delivery/status.md) → 条件齐全时联测所属阶段。
 
 若仍过大，优先按一个完整正常闭环加明确规则变体拆子任务，保留功能 PRD 为规则入口，不按纯 UI/纯 API/纯存储分成对用户无可用结果的需求。不要用大段原 PRD 替代当前功能输入。
 
-## 暂缓与局部阻塞
+## 未决与排除首版边界
 
-[OQ-01](open-questions.md) 需在运行中整理入口实现前明确最小反馈。已结束正常路径可先实施，相关分支不得伪报验收；不新增全项目队列关卡。备份 FR-27 排除，P1/P2 候选未进入开发。
+[OQ-01](open-questions.md) 未决：运行中整理入口实现前需明确最小反馈。已结束正常路径可先实施，相关分支不得伪报验收；不新增全项目队列关卡。备份 FR-27 与 [OQ-02](open-questions.md) 排除首版，P1/P2 候选未进入开发。
 
 阶段调整时保持功能编号与路径，只更新 catalog、路线、状态以及受影响验收，不移动功能目录。不得因调整阶段改变业务规则或优先级。

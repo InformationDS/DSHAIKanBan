@@ -1,20 +1,20 @@
 ﻿at_id,baseline_line,primary_owner,owner_path,collaborators,scenario,expected,source_fr,status
 AT-01,1084,F01,features/F01-project-and-tasks/prd.md,,空项目创建仅有标题的任务，AI 不可用,状态未开始，无预置记录或 AI 调用，重复提交不重复,FR-01—02,待执行
-AT-02,1085,F01,features/F01-project-and-tasks/prd.md,,两项目切换并各自确认记录,任务、概况、总览、待确认和偏好不串入,FR-01,待执行
+AT-02,1085,F01,features/F01-project-and-tasks/prd.md,F06;F13;F15;F16;F17,两项目切换并各自确认记录,任务、概况、总览、待确认和偏好不串入,FR-01,待执行
 AT-03,1086,F02,features/F02-task-status-and-cards/prd.md,,拖入阻塞，取消后再次填写；失败后撤销,原状态准确，原因必填，正式结果不半改变,FR-04,待执行
-AT-04,1087,F02,features/F02-task-status-and-cards/prd.md,F03;F07;F08;F09,AI 阶段结束、任务记录确认、项目记录保存,三者都不自动完成任务或停止其他对话,FR-04、12、17,待执行
-AT-05,1088,F02,features/F02-task-status-and-cards/prd.md,F01;F03;F15,无概况、有正式概况及有草稿时查看卡片,显示正确目标/整体进展，草稿不冒充正式,FR-03、05,待执行
+AT-04,1087,F02,features/F02-task-status-and-cards/prd.md,F03;F04;F06;F07;F08;F09;F13;F20,AI 阶段结束、任务记录确认、项目记录保存,三者都不自动完成任务或停止其他对话,FR-04、12、17,待执行
+AT-05,1088,F02,features/F02-task-status-and-cards/prd.md,F01;F03;F06;F15,无概况、有正式概况及有草稿时查看卡片,显示正确目标/整体进展，草稿不冒充正式,FR-03、05,待执行
 AT-06,1089,F16,features/F16-search-filter-sort/prd.md,F03;F09;F10;F11;F12;F18,搜索当前记录内容，再查看历史页面,当前搜索不无标识混入历史正文；查看历史不自动投递,FR-06、20、31,待执行
-AT-07,1090,F17,features/F17-archive-and-delete/prd.md,,归档恢复进行中任务，有已有项目成果,状态、四类数据和来源保留，成果不自动删除,FR-07,待执行
-AT-08,1091,F17,features/F17-archive-and-delete/prd.md,,永久删除归档任务,影响有确认，原始聊天/代码不删除，项目成果注明源任务已删除,FR-07,待执行
+AT-07,1090,F17,features/F17-archive-and-delete/prd.md,F13;F14,归档恢复进行中任务，有已有项目成果,状态、四类数据和来源保留，成果不自动删除,FR-07,待执行
+AT-08,1091,F17,features/F17-archive-and-delete/prd.md,F14,永久删除归档任务,影响有确认，原始聊天/代码不删除，项目成果注明源任务已删除,FR-07,待执行
 AT-09,1092,F04,features/F04-conversation-entry/prd.md,,任务内新建对话，快速重复点击,一条独立对话自动归属并跳转，不复制此前聊天,FR-08,待执行
-AT-10,1093,F04,features/F04-conversation-entry/prd.md,F08;F18,创建成功但归属或准备失败后重试,只补失败步骤，无重复对话，输入保留,FR-08、28,待执行
+AT-10,1093,F04,features/F04-conversation-entry/prd.md,F08;F11;F18,创建成功但归属或准备失败后重试,只补失败步骤，无重复对话，输入保留,FR-08、28,待执行
 AT-11,1094,F11,features/F11-context-preparation-and-sync/prd.md,F04;F12,新对话准备好后不发送,没有工作执行；无概况/总览仍可输入要求,FR-08、21,待执行
 AT-12,1095,F04,features/F04-conversation-entry/prd.md,,多对话中继续某条并重复打开,可选择正确目标，不自动发送；形成记录后仍能继续,FR-09,待执行
 AT-13,1096,F05,features/F05-conversation-binding/prd.md,F11,未关联或已关联对话重启,未关联不自动绑定，已关联保持唯一固定归属，不出现解除或转移入口,FR-10、22,待执行
 AT-14,1097,F05,features/F05-conversation-binding/prd.md,,尝试把已绑定 A 的对话关联到 B,不可选择或改绑；推进 B 时新建对话，A 的来源和记录保留,FR-10,待执行
-AT-15,1098,F04,features/F04-conversation-entry/prd.md,,来源对话不能打开,记录、概况贡献和来源标识保留，可另开对话,FR-11,待执行
-AT-16,1099,F08,features/F08-concurrent-confirmation/prd.md,F06,同任务两条对话同时推进并形成记录,两个独立草稿可同时存在，不被任务级限制拦截,FR-12、15,待执行
+AT-15,1098,F04,features/F04-conversation-entry/prd.md,F06,来源对话不能打开,记录、概况贡献和来源标识保留，可另开对话,FR-11,待执行
+AT-16,1099,F08,features/F08-concurrent-confirmation/prd.md,F06;F15,同任务两条对话同时推进并形成记录,两个独立草稿可同时存在，不被任务级限制拦截,FR-12、15,待执行
 AT-17,1100,F08,features/F08-concurrent-confirmation/prd.md,,A 先确认，B 随后确认其已编辑草稿,B 编辑保留，只核对最新概况；最终包含 A/B 有效成果,FR-12、19,待执行
 AT-18,1101,F08,features/F08-concurrent-confirmation/prd.md,F06;F07;F09,A/B 提出矛盾方案或不同验证结果,来源清楚，可保留待决定，不按后确认者自动覆盖,FR-12—13、16,待执行
 AT-19,1102,F06,features/F06-task-record-workflow/prd.md,F09,某项测试未执行，某方案只是候选,不写成测试通过或既定决策,FR-13,待执行
@@ -22,24 +22,24 @@ AT-20,1103,F06,features/F06-task-record-workflow/prd.md,F04;F05;F09,同对话形
 AT-21,1104,F06,features/F06-task-record-workflow/prd.md,F05;F08,放弃整理后重新形成记录,未确认工作仍在范围内，不因放弃跳过,FR-14—15,待执行
 AT-22,1105,F06,features/F06-task-record-workflow/prd.md,F05;F09,对话工作结束后形成记录，成果仍有未验证部分,整理已结束工作，无消息区间选择；结束不等于验证通过,FR-13—14,待执行
 AT-23,1106,F07,features/F07-edited-record-reconciliation/prd.md,F06,编辑/拒绝记录某分区，离开再返回,编辑恢复，对应概况核对，拒绝事实不进入正式汇总,FR-16,待执行
-AT-24,1107,F06,features/F06-task-record-workflow/prd.md,F07;F08;F18,确认中出现保存失败并重试,记录和概况/总览不半生效，候选保留，成功结果仅一次,FR-18、28,待执行
-AT-25,1108,F06,features/F06-task-record-workflow/prd.md,F07,无变化或仅一个对象实质变化,不重复生成相同版本，只保留真正改变的对象版本,FR-18,待执行
-AT-26,1109,F03,features/F03-manual-summaries/prd.md,F01;F02;F07;F09;F10,无对话时手动填任务概况，后续有对话记录,无虚构对话来源，后续汇总核对并保留人工修正,FR-03、17、20,待执行
-AT-27,1110,F09,features/F09-conclusion-applicability/prd.md,F03;F07;F08,用户手动改概况或总览，AI 后续提出相反结论,明确差异、由用户决定，无静默覆盖,FR-17、19,待执行
-AT-28,1111,F08,features/F08-concurrent-confirmation/prd.md,,本条记录基础被改，与其他对话仅改概况分别测试,本条基础变动需核对；别的概况变化不废弃独立记录草稿,FR-19,待执行
-AT-29,1112,F08,features/F08-concurrent-confirmation/prd.md,F01;F02;F03;F07;F09,任务目标或状态在审核期间被用户修改,当前值可见，记录确认不覆盖字段或自动改状态,FR-03—04、17,待执行
+AT-24,1107,F06,features/F06-task-record-workflow/prd.md,F07;F08;F13;F18,确认中出现保存失败并重试,记录和概况/总览不半生效，候选保留，成功结果仅一次,FR-18、28,待执行
+AT-25,1108,F06,features/F06-task-record-workflow/prd.md,F07;F13,无变化或仅一个对象实质变化,不重复生成相同版本，只保留真正改变的对象版本,FR-18,待执行
+AT-26,1109,F03,features/F03-manual-summaries/prd.md,F01;F02;F06;F07;F09;F10,无对话时手动填任务概况，后续有对话记录,无虚构对话来源，后续汇总核对并保留人工修正,FR-03、17、20,待执行
+AT-27,1110,F09,features/F09-conclusion-applicability/prd.md,F03;F06;F07;F08;F13,用户手动改概况或总览，AI 后续提出相反结论,明确差异、由用户决定，无静默覆盖,FR-17、19,待执行
+AT-28,1111,F08,features/F08-concurrent-confirmation/prd.md,F10,本条记录基础被改，与其他对话仅改概况分别测试,本条基础变动需核对；别的概况变化不废弃独立记录草稿,FR-19,待执行
+AT-29,1112,F08,features/F08-concurrent-confirmation/prd.md,F01;F02;F03;F06;F07;F09,任务目标或状态在审核期间被用户修改,当前值可见，记录确认不覆盖字段或自动改状态,FR-03—04、17,待执行
 AT-30,1113,F10,features/F10-record-history/prd.md,F03;F09,恢复任务记录或项目记录的历史版本,成新版本并核对汇总，不回滚状态或删除之后历史,FR-20,待执行
 AT-31,1114,F11,features/F11-context-preparation-and-sync/prd.md,F09;F12;F18,只增加历史规模，保持当前正式正文相同后新建对话,默认正文不追加历史版本，只有当前概况/总览及任务信息,FR-21、31,待执行
 AT-32,1115,F12,features/F12-record-retrieval-and-copy/prd.md,F11,新对话需要某项验证详情,按需读取对应当前任务记录，不同时加载其他版本全文,FR-21,待执行
 AT-33,1116,F12,features/F12-record-retrieval-and-copy/prd.md,F03;F09;F10;F11;F20,明确要求比较两个指定历史版本,只读取指定范围，标明追溯用途，不改当前事实,FR-20—21、32,待执行
-AT-34,1117,F11,features/F11-context-preparation-and-sync/prd.md,F09;F12;F18,展开历史列表/正文，再新建对话,查看历史不授权默认附带历史，发送范围保持一致,FR-21、31,待执行
+AT-34,1117,F11,features/F11-context-preparation-and-sync/prd.md,F09;F10;F12;F16;F18,展开历史列表/正文，再新建对话,查看历史不授权默认附带历史，发送范围保持一致,FR-21、31,待执行
 AT-35,1118,F12,features/F12-record-retrieval-and-copy/prd.md,F03;F06;F09;F11;F13;F14,概况/总览过长需要精简,风险与关键约束不静默丢失，详细材料留在记录按需读取,FR-13、21、24,待执行
 AT-36,1119,F11,features/F11-context-preparation-and-sync/prd.md,F04,原对话已有相同背景，或背景有更新且正忙,不重复追加相同全文；下一次用户发送自动同步，不中途替换工作,FR-09、22,待执行
 AT-37,1120,F11,features/F11-context-preparation-and-sync/prd.md,,取消未使用准备，再尝试取消实际已读内容,前者结果准确，后者不能假称已撤回,FR-22,待执行
 AT-38,1121,F13,features/F13-project-record-workflow/prd.md,F02;F03;F09;F14,用户标记完成并生成项目记录,明确完成与生成两个动作，成果和总览同屏预览、一次确认,FR-04、24—25,待执行
-AT-39,1122,F13,features/F13-project-record-workflow/prd.md,F02;F14,标记完成时对话仍运行或记录不齐,不强制停止/补齐，列出缺失与运行提示,FR-04、25,待执行
+AT-39,1122,F13,features/F13-project-record-workflow/prd.md,F02;F04;F14,标记完成时对话仍运行或记录不齐,不强制停止/补齐，列出缺失与运行提示,FR-04、25,待执行
 AT-40,1123,F13,features/F13-project-record-workflow/prd.md,F14,选择按现有正式内容生成，部分成果尚未记录,截止和缺失明确，不按目标推断未记录工作已完成,FR-25,待执行
-AT-41,1124,F14,features/F14-project-record-lifecycle/prd.md,F03;F09;F13,已有项目成果的任务重新打开，记录随后更新,前次成果保留，来源范围与待更新提示可见,FR-24—25,待执行
+AT-41,1124,F14,features/F14-project-record-lifecycle/prd.md,F02;F03;F09;F13,已有项目成果的任务重新打开，记录随后更新,前次成果保留，来源范围与待更新提示可见,FR-24—25,待执行
 AT-42,1125,F14,features/F14-project-record-lifecycle/prd.md,F13,同任务再次完成并重新生成项目记录,同一条目更新、历史保留，不重复计为多个任务成果,FR-25,待执行
 AT-43,1126,F08,features/F08-concurrent-confirmation/prd.md,F13;F14,不同任务同时生成项目记录，先后确认,独立成果草稿保留，后者核对最新总览，不覆盖前者贡献,FR-19、25,待执行
 AT-44,1127,F03,features/F03-manual-summaries/prd.md,F07;F09;F13;F14,首个任务完成前手动初始化项目总览,可以保存目标与约定，无需虚构成果记录,FR-17、24,待执行
@@ -52,19 +52,19 @@ AT-50,1133,F19,features/F19-desktop-accessibility/prd.md,,中英切换、窄窗�
 AT-51,1134,F11,features/F11-context-preparation-and-sync/prd.md,F09;F12;F18,临时补充或额外材料读取,范围可见，不变成长期约束，不带其他项目信息,FR-31,待执行
 AT-52,1135,F20,features/F20-chat-task-management/prd.md,,聊天说阶段结束、明确完成任务、明确生成项目记录,三类意图分别处理，普通查询不返回全历史,FR-32,待执行
 AT-53,1136,F12,features/F12-record-retrieval-and-copy/prd.md,,复制当前背景或复制失败,默认范围与新对话一致，无历史全文；失败可手动复制,FR-23,待执行
-AT-54,1137,F08,features/F08-concurrent-confirmation/prd.md,F06;F07;F18,两窗口确认同一更新或竞争修改汇总,一个有效结果，另处核对/显示已处理，不重复版本,FR-18—19、28,待执行
+AT-54,1137,F08,features/F08-concurrent-confirmation/prd.md,F06;F07;F15;F18,两窗口确认同一更新或竞争修改汇总,一个有效结果，另处核对/显示已处理，不重复版本,FR-18—19、28,待执行
 AT-55,1138,F10,features/F10-record-history/prd.md,F03;F09,用户手动编辑已有对话记录,归属仍准确，修改来源为用户，不伪造 AI 原文,FR-20,待执行
 AT-56,1139,F14,features/F14-project-record-lifecycle/prd.md,F08;F13,项目草稿生成中源内容更新或任务重开,保存草稿并核对新来源/完成范围，不无提示确认当前成果,FR-19、25,待执行
 AT-57,1140,F04,features/F04-conversation-entry/prd.md,F11;F12,项目内新建未关联对话，并发送、暂停、继续,任务归属为空但可正常工作；只准备当前项目总览，无虚构任务、概况或记录,FR-08—09、21,待执行
 AT-58,1141,F05,features/F05-conversation-binding/prd.md,F04,从任务详情搜索并关联项目已有未关联对话,明确入口，标题及归属可见；直接关联，原消息不复制/改写，任务状态不变,FR-10—11,待执行
 AT-59,1142,F05,features/F05-conversation-binding/prd.md,F11,未关联对话正在执行时建立归属，之后使用任务背景,当前工作不打断，关联不冒充背景已使用；任务信息用于下一次明确发送，不自动执行,FR-10、22,待执行
-AT-60,1143,F05,features/F05-conversation-binding/prd.md,F06;F08;F18,未关联对话点击形成任务记录，选择/创建任务，中途取消或关联失败,尚未关联时仍为空；无虚构记录；已创建目标不重复，已明确关联再取消整理不自动解除,FR-10、14、28,待执行
+AT-60,1143,F05,features/F05-conversation-binding/prd.md,F01;F06;F08;F18,未关联对话点击形成任务记录，选择/创建任务，中途取消或关联失败,尚未关联时仍为空；无虚构记录；已创建目标不重复，已明确关联再取消整理不自动解除,FR-10、14、28,待执行
 AT-61,1144,F06,features/F06-task-record-workflow/prd.md,F05;F07;F09;F11;F12,已有对话首次形成记录，关联前包含相关工作及闲聊,从整条对话提炼相关结论，草稿可编辑，无消息范围选择，全文不搬进记录,FR-13—14、18、21,待执行
 AT-62,1145,F17,features/F17-archive-and-delete/prd.md,F05;F11,已绑定对话的任务被删除，尝试关联另一个任务,原始对话及来源标识保留，不能改绑；待用任务背景取消，已读内容不宣称撤回,FR-07、10、22,待执行
-AT-63,1146,F05,features/F05-conversation-binding/prd.md,F08;F09;F11;F12;F18;F20,重启后查询从未关联及已绑定任务的对话,未关联仍为空；已绑定保留任务来源，不能因任务删除或重启成为其他任务候选,FR-10、28、31—32,待执行
+AT-63,1146,F05,features/F05-conversation-binding/prd.md,F04;F08;F09;F11;F12;F17;F18;F20,重启后查询从未关联及已绑定任务的对话,未关联仍为空；已绑定保留任务来源，不能因任务删除或重启成为其他任务候选,FR-10、28、31—32,待执行
 AT-64,1147,F09,features/F09-conclusion-applicability/prd.md,F06;F11;F12,记录最新版内方案 A 已被 B 替代，读取验证细节,当前采用 B，A 的阶段原文带替代标注；A 验证不证明 B 已验证，同条其他成果保留,FR-13、21,待执行
 AT-65,1148,F16,features/F16-search-filter-sort/prd.md,F06;F09;F11;F12;F18,搜索命中已否定、已替代片段或待确认结论,原句不单独冒充当前事实，状态、范围、修正可见,FR-06、13、31,待执行
-AT-66,1149,F09,features/F09-conclusion-applicability/prd.md,F03;F06;F13;F14,已有项目成果引用后来被否定的任务结论，再读取或生成成果,同范围修正随引用可见，不等待重生成才能阻止失效事实进入当前共识,FR-13、24—25,待执行
+AT-66,1149,F09,features/F09-conclusion-applicability/prd.md,F03;F06;F12;F13;F14,已有项目成果引用后来被否定的任务结论，再读取或生成成果,同范围修正随引用可见，不等待重生成才能阻止失效事实进入当前共识,FR-13、24—25,待执行
 AT-67,1150,F09,features/F09-conclusion-applicability/prd.md,F03;F06;F07,先仅删除摘要一句，再明确否定来源结论并确认,摘要删减不自动撤销；明确否定后概况修正与片段状态一致生效,FR-13、17—18,待执行
 AT-68,1151,F09,features/F09-conclusion-applicability/prd.md,F03;F06;F11;F12;F13;F14,本任务改变结论，同项目其他任务有同名方案；另有未裁定分歧,修正不越界，其他任务不按同字样失效；待确认结论不作为确定依据,FR-13、21、24,待执行
 AT-69,1152,F10,features/F10-record-history/prd.md,F03;F09;F11;F12,恢复包含已否定结论的历史正文,后续修正仍可见，未重新明确采用时不恢复结论效力,FR-20—21,待执行
@@ -73,7 +73,7 @@ AT-71,1154,F11,features/F11-context-preparation-and-sync/prd.md,F09;F12;F18,已�
 AT-72,1155,F06,features/F06-task-record-workflow/prd.md,F05;F09,对话含重复问答、闲聊、已放弃方案与最终成果,记录只含有效结论与必要边界，无占位、重复事实或过程流水；仅有必要时简述放弃原因,FR-13—14,待执行
 AT-73,1156,F06,features/F06-task-record-workflow/prd.md,F09,生成文件但未执行验证，另有失败测试,产物与验证分开表达，标明未验证/未通过及范围，不宣称全部成功,FR-13,待执行
 AT-74,1157,F06,features/F06-task-record-workflow/prd.md,F03;F05;F09;F10,保存记录后继续同一对话，再次形成记录,更新同一份记录并保留版本，不追加重复记录，无补录/排除操作,FR-13—14、20,待执行
-AT-75,1158,F09,features/F09-conclusion-applicability/prd.md,F03;F05;F06;F07,用户删除无关噪音并修正结论，随后再次整理,遵守已确认编辑，不重复恢复同一噪音；必要约束和风险不因精简静默丢失,FR-13—14、17,待执行
+AT-75,1158,F09,features/F09-conclusion-applicability/prd.md,F03;F05;F06;F07;F18,用户删除无关噪音并修正结论，随后再次整理,遵守已确认编辑，不重复恢复同一噪音；必要约束和风险不因精简静默丢失,FR-13—14、17,待执行
 AT-76,1159,F11,features/F11-context-preparation-and-sync/prd.md,F09;F12;F18,项目大量记录和历史，新建任务对话,默认仅提供任务信息、当前概况与总览，不预加载全部正文、索引或工作目录文件,FR-21、31,待执行
 AT-77,1160,F12,features/F12-record-retrieval-and-copy/prd.md,F09;F11;F18,当前问题需要一个决策细节,先检索相关索引，再读必要片段及修正；足够即停止，不连带加载全项目或历史,FR-21、31,待执行
 AT-78,1161,F12,features/F12-record-retrieval-and-copy/prd.md,F11,相关成果不足，需要同项目其他任务细节,可自主读取直接相关正式记录，无逐次确认，不改变归属；原始聊天和历史不随之读取,FR-21,待执行
@@ -84,24 +84,24 @@ AT-82,1165,F07,features/F07-edited-record-reconciliation/prd.md,F03;F06;F10;F18,
 AT-83,1166,F07,features/F07-edited-record-reconciliation/prd.md,F03;F06;F08;F09,概况已被用户编辑，再请求更新建议,保留两边人工编辑，相关差异由用户选择，不直接覆盖；其他对话有效贡献保留,FR-16—17、19,待执行
 AT-84,1167,F07,features/F07-edited-record-reconciliation/prd.md,F03;F06;F08;F10;F18,更新建议失败，或概况/总览待核对时尝试正式保存,草稿保留，可重试或手动核对；汇总一致性待核对不正式保存、不显示已同步,FR-16、18、28—29,待执行
 AT-85,1168,F07,features/F07-edited-record-reconciliation/prd.md,F06;F08,核对完成后再次实质修改记录，或概况基线更新,重新核对相关概况并保留编辑，不以旧核对结果保存；未编辑正常路径一次确认,FR-16、18—19,待执行
-AT-86,1169,F06,features/F06-task-record-workflow/prd.md,F05;F07;F08,从任务详情或对话点击形成任务记录,整理要求发送到对应工作对话，用户无需再发送；记录与概况同屏审核，不自动正式保存,FR-14—16、18,待执行
+AT-86,1169,F06,features/F06-task-record-workflow/prd.md,F05;F07;F08;F20,从任务详情或对话点击形成任务记录,整理要求发送到对应工作对话，用户无需再发送；记录与概况同屏审核，不自动正式保存,FR-14—16、18,待执行
 AT-87,1170,F06,features/F06-task-record-workflow/prd.md,F05;F08,已结束工作发起整理，重复点击,打开同一次整理进度或草稿，不重复派发或生成多个确认项,FR-14—15,待执行
 AT-88,1171,F06,features/F06-task-record-workflow/prd.md,F05;F09,已有多轮整理消息，再次形成任务记录,整理指令、回复与未确认草稿不成为新成果，不自我重复；此前正式成果和修正保留,FR-13—14,待执行
 AT-89,1172,F13,features/F13-project-record-workflow/prd.md,F06;F08;F11;F12;F14;F15,完成任务后点击生成项目记录,系统新建本次整理对话并发送要求，可查看过程；不继承工作对话完整上下文，不计入工作对话或未记录提示,FR-15、21、25—26,待执行
 AT-90,1173,F13,features/F13-project-record-workflow/prd.md,F06;F07;F08;F14;F18,项目整理失败重试、编辑后更新建议、保存后新一轮生成,同次保留对话与草稿，核对结果不重复派发；新整理使用新上下文，过程与成果来源区分,FR-15—16、25、28,待执行
-AT-91,1174,F06,features/F06-task-record-workflow/prd.md,F03;F05;F07;F08;F09;F13;F14,Agent 收到记录或汇总整理要求,只读必要材料并生成草稿，不修改代码、执行验证、继续开发或自动改变正式记录与状态,FR-14—18、25,待执行
+AT-91,1174,F06,features/F06-task-record-workflow/prd.md,F03;F05;F07;F08;F09;F13;F14;F20,Agent 收到记录或汇总整理要求,只读必要材料并生成草稿，不修改代码、执行验证、继续开发或自动改变正式记录与状态,FR-14—18、25,待执行
 AT-92,1175,F06,features/F06-task-record-workflow/prd.md,F04;F07;F08,再次整理新增重复解释，无实质更新,显示已整理无需更新，清除新内容提示，推进处理位置，不生成版本或要求确认,FR-11、15、18,待执行
-AT-93,1176,F06,features/F06-task-record-workflow/prd.md,F04;F07;F08,新内容产生更新草稿，随后保存成功、失败、取消或放弃,仅保存成功推进位置并清除提示；其他结果保留，正式内容不半生效,FR-11、15、18,待执行
-AT-94,1177,F06,features/F06-task-record-workflow/prd.md,F04;F05;F08,完成处理后 Agent 输出整理回复，随后用户新增实际交流,整理消息不触发新内容提示；后续新交流可再次提示，不阻止新建对话或完成任务,FR-11、14—15,待执行
-AT-95,1178,F17,features/F17-archive-and-delete/prd.md,F11;F12,永久删除任务后打开其原对话并继续聊天,来源任务已删除及名称可见，允许交流，不读取已删除概况或记录；不宣称清除此前聊天内容,FR-07、21—22,待执行
-AT-96,1179,F17,features/F17-archive-and-delete/prd.md,F04;F05,已删除来源对话尝试形成记录、返回任务或改绑,记录入口禁用并说明原因，返回项目，无新内容待整理或任务草稿提示，不可改绑,FR-07、10—11,待执行
-AT-97,1180,F17,features/F17-archive-and-delete/prd.md,F05;F08;F18,删除后在项目列表筛选及重启查询,全部/已关联中可见，不归未关联，不需新增筛选；删除确认提前说明记录限制和不可改绑,FR-07、10、28,待执行
-AT-98,1181,F07,features/F07-edited-record-reconciliation/prd.md,F06;F09,记录与概况均保留未定方案或适用性分歧,显示待确认结论，可正式保存为未决问题，不冒充确定事实，不要求消除全部分歧,FR-13、16、18,待执行
-AT-99,1182,F07,features/F07-edited-record-reconciliation/prd.md,F06,同时存在待确认结论与概况一致性待核对,状态明确区分，仅后者阻止保存；完成概况核对后可保留未决结论一起保存,FR-16、18,待执行
-AT-100,1183,F05,features/F05-conversation-binding/prd.md,F04,关联已有对话或任务内新建对话,关联前显示目标名称及不可解除/改绑含删除后果的就地提示；新建提示固定归属，无新增确认弹窗,FR-08、10,待执行
+AT-93,1176,F06,features/F06-task-record-workflow/prd.md,F04;F07;F08;F18,新内容产生更新草稿，随后保存成功、失败、取消或放弃,仅保存成功推进位置并清除提示；其他结果保留，正式内容不半生效,FR-11、15、18,待执行
+AT-94,1177,F06,features/F06-task-record-workflow/prd.md,F04;F05;F08;F15,完成处理后 Agent 输出整理回复，随后用户新增实际交流,整理消息不触发新内容提示；后续新交流可再次提示，不阻止新建对话或完成任务,FR-11、14—15,待执行
+AT-95,1178,F17,features/F17-archive-and-delete/prd.md,F04;F11;F12,永久删除任务后打开其原对话并继续聊天,来源任务已删除及名称可见，允许交流，不读取已删除概况或记录；不宣称清除此前聊天内容,FR-07、21—22,待执行
+AT-96,1179,F17,features/F17-archive-and-delete/prd.md,F04;F05;F15,已删除来源对话尝试形成记录、返回任务或改绑,记录入口禁用并说明原因，返回项目，无新内容待整理或任务草稿提示，不可改绑,FR-07、10—11,待执行
+AT-97,1180,F17,features/F17-archive-and-delete/prd.md,F04;F05;F08;F18,删除后在项目列表筛选及重启查询,全部/已关联中可见，不归未关联，不需新增筛选；删除确认提前说明记录限制和不可改绑,FR-07、10、28,待执行
+AT-98,1181,F07,features/F07-edited-record-reconciliation/prd.md,F06;F09;F13;F15,记录与概况均保留未定方案或适用性分歧,显示待确认结论，可正式保存为未决问题，不冒充确定事实，不要求消除全部分歧,FR-13、16、18,待执行
+AT-99,1182,F07,features/F07-edited-record-reconciliation/prd.md,F06;F13;F15,同时存在待确认结论与概况一致性待核对,状态明确区分，仅后者阻止保存；完成概况核对后可保留未决结论一起保存,FR-16、18,待执行
+AT-100,1183,F05,features/F05-conversation-binding/prd.md,F04;F20,关联已有对话或任务内新建对话,关联前显示目标名称及不可解除/改绑含删除后果的就地提示；新建提示固定归属，无新增确认弹窗,FR-08、10,待执行
 AT-101,1184,F11,features/F11-context-preparation-and-sync/prd.md,F04;F12,B 更新概况后，A 打开并发送新要求,打开不执行；发送时自动比较并补充必要变化，无额外确认，实际提供后登记新版本,FR-09、21—22,待执行
 AT-102,1185,F11,features/F11-context-preparation-and-sync/prd.md,F09;F12;F18,概况跨多个版本更新，总览未变,仅补充任务概况净变化及修正，不逐个加载历史，不重复加入未变化总览；实际范围可展开,FR-21—22、31,待执行
-AT-103,1186,F11,features/F11-context-preparation-and-sync/prd.md,F05;F12,旧对话无可靠使用基线，或首次绑定任务后发送,提供当前精简适用背景和必要修正，不读全历史；关联不伪造此前使用,FR-10、21—22,待执行
+AT-103,1186,F11,features/F11-context-preparation-and-sync/prd.md,F05;F12;F20,旧对话无可靠使用基线，或首次绑定任务后发送,提供当前精简适用背景和必要修正，不读全历史；关联不伪造此前使用,FR-10、21—22,待执行
 AT-104,1187,F11,features/F11-context-preparation-and-sync/prd.md,F08;F18,背景同步失败或发送结果未知，再重试,保留用户输入，不静默用旧背景，不伪登记已使用；核对结果后重试，不重复执行,FR-22、28,待执行
 AT-105,1188,F11,features/F11-context-preparation-and-sync/prd.md,F12,同一背景连续发送，或快照发送后背景更新,未变不重复追加；本轮保持快照，变化用于下次发送，背景更新不自行启动工作,FR-21—22,待执行
 AT-106,1189,F11,features/F11-context-preparation-and-sync/prd.md,F06;F09;F12,记录正文版本不变，但相关结论后来被否定,下次发送能识别有效修正并补充，不只检查正文版本而沿用已否定事实,FR-13、21—22,待执行

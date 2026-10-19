@@ -18,10 +18,10 @@
     {"id":"F13","slug":"project-record-workflow","title":"生成项目记录与总览并确认","stage":"S4","depends":["F02","F06","F07","F08","F09","F12"],"sources":["FR-24","FR-25"]},
     {"id":"F14","slug":"project-record-lifecycle","title":"任务重开与项目成果更新","stage":"S4","depends":["F13"],"sources":["FR-24","FR-25"]},
     {"id":"F15","slug":"pending-updates","title":"集中待确认与行动提示","stage":"S4","depends":["F03","F06","F13","F14"],"sources":["FR-05","FR-26"]},
-    {"id":"F16","slug":"search-filter-sort","title":"任务搜索、筛选与排序","stage":"S5","depends":["F02","F09","F14","F15"],"sources":["FR-06"]},
+    {"id":"F16","slug":"search-filter-sort","title":"任务搜索、筛选与排序","stage":"S5","depends":["F02","F09","F14","F15","F17"],"sources":["FR-06"]},
     {"id":"F17","slug":"archive-and-delete","title":"归档、恢复与永久删除","stage":"S5","depends":["F04","F05","F13","F14","F15"],"sources":["FR-07"]},
     {"id":"F18","slug":"recovery-and-offline","title":"中断恢复、保存反馈与 AI 降级","stage":"S5","depends":["F08","F10","F11","F13","F17"],"sources":["FR-28","FR-29","FR-31"]},
-    {"id":"F19","slug":"desktop-accessibility","title":"语言、窗口与键盘体验","stage":"S5","depends":["F02","F04","F07","F13","F15"],"sources":["FR-30"]},
-    {"id":"F20","slug":"chat-task-management","title":"聊天中的明确任务管理","stage":"S5","depends":["F02","F05","F06","F11","F12","F13"],"sources":["FR-32"]}
+    {"id":"F19","slug":"desktop-accessibility","title":"语言、窗口与键盘体验","stage":"S5","depends":["F02","F04","F07","F08","F13","F15","F17"],"sources":["FR-30"]},
+    {"id":"F20","slug":"chat-task-management","title":"聊天中的明确任务管理","stage":"S5","depends":["F02","F05","F06","F11","F12","F13","F17","F18"],"sources":["FR-32"]}
   ]
 }

@@ -1,0 +1,23 @@
+﻿id,baseline_source,primary_owner,owner_path,kind,steps,expected,source_date
+AT-107,FR-01 / 本功能,F01,features/F01-project-and-tasks/prd.md,新增-本功能,使工作目录不可用，再修改标题及项目位置,管理数据可维护；未访问其他项目、不移动代码、不改变已有对话范围,2026-10-19
+AT-108,FR-02 / 本功能,F01,features/F01-project-and-tasks/prd.md,新增-本功能,注入创建失败及未知结果，保留输入后重试,最终一项任务，失败无假成功，输入和已成功结果不丢失,2026-10-19
+AT-109,UX-06 / 本功能,F02,features/F02-task-status-and-cards/prd.md,新增-本功能,仅用键盘切状态，展开取消列，返回详情,可完成操作，取消默认折叠，定位保留,2026-10-19
+AT-110,FR-10 / 本功能补充,F05,features/F05-conversation-binding/prd.md,新增-本功能,两窗口同时把未关联对话关联 A/B,只有一个固定结果，另一处显示实际归属，不出现双重关系,2026-10-19
+AT-111,联合边界补充（FR-07/25）,F13,features/F13-project-record-workflow/prd.md,新增-联合,生成项目草稿后归档来源，尝试确认；恢复后确认；另删除来源并尝试生成/纠正已有成果,归档先恢复，不半保存；删除不自动发布或重建，已保存成果及来源保留且可手动纠正；F17 就绪后联合验收，不计为新增原始 AT,2026-10-19
+AT-112,补充验收,F14,features/F14-project-record-lifecycle/prd.md,新增-本功能,AI 离线手动修改来源不可用的成果,可以成对预览保存用户纠正，不能自动重新生成,2026-10-19
+AT-113,补充验收,F14,features/F14-project-record-lifecycle/prd.md,新增-本功能,更新保存失败后重试、两入口打开成果,不半生效、不重复条目、各入口显示同一有效结果,2026-10-19
+AT-114,补充验收,F15,features/F15-pending-updates/prd.md,新增-本功能,整理完成后反复进出/重启，关闭完成提醒,同事件不重复通知，静态列表仍可访问,2026-10-19
+AT-115,补充验收,F15,features/F15-pending-updates/prd.md,新增-本功能,AI 离线及列表读取失败分别进入,离线可本地审核；读取失败不显示无待办或清数据,2026-10-19
+AT-116,FR-06 / 本功能,F16,features/F16-search-filter-sort/prd.md,新增-本功能,同类别选两状态，再组合待确认与关键词，查看计数,同类 OR、异类 AND，重复命中不重复计数，条件可清除,2026-10-19
+AT-117,FR-06 / 联合 F17,F16,features/F16-search-filter-sort/prd.md,新增-联合,活动与归档各有匹配，默认查再包含归档,默认不含归档，纳入后标记明确，可查看不误启动工作,2026-10-19
+AT-118,FR-06 / 本功能,F16,features/F16-search-filter-sort/prd.md,新增-本功能,切最近更新排序，尝试列内拖动后切回手动,自动模式不假承诺保存顺序，原手动顺序规则可预期,2026-10-19
+AT-119,FR-06 / 本功能,F16,features/F16-search-filter-sort/prd.md,新增-本功能,空项目与有任务但零匹配分别查看，再注入查询失败,三种状态区分，清除可恢复，失败不清数据,2026-10-19
+AT-120,FR-07 / 本功能,F17,features/F17-archive-and-delete/prd.md,新增-本功能,运行中归档再尝试删除，注入停止失败/未知,归档不停止，永久删除等待真实工作结束，不假完成,2026-10-19
+AT-121,FR-07 / 本功能,F17,features/F17-archive-and-delete/prd.md,新增-本功能,归档草稿在整理后尝试确认，再恢复,可完成草稿，恢复前不能正式确认，恢复后保留编辑,2026-10-19
+AT-122,补充验收,F18,features/F18-recovery-and-offline/prd.md,新增-本功能,依次测试 AI、对话、范围、保存四类失败,分类文案和恢复动作对应真实原因，设置复用宿主,2026-10-19
+AT-123,补充验收,F19,features/F19-desktop-accessibility/prd.md,新增-本功能,输入中触发后台通知和语言变化,焦点不被抢，输入/选区/草稿保留,2026-10-19
+AT-124,补充验收,F19,features/F19-desktop-accessibility/prd.md,新增-本功能,首次空项目进入并查看版本详情,只有短说明无示例数据，时间遵用户偏好且可核对,2026-10-19
+AT-125,补充验收,F19,features/F19-desktop-accessibility/prd.md,新增-本功能,AI 离线、保存失败后仅键盘恢复,原因、替代操作和重试可访问，不产生虚假成功,2026-10-19
+AT-126,补充验收,F20,features/F20-chat-task-management/prd.md,新增-本功能,两个同名任务，给模糊修改指令,只澄清必要目标，无后台整项目拆分或猜测修改,2026-10-19
+AT-127,补充验收,F20,features/F20-chat-task-management/prd.md,新增-本功能,同次创建/保存超时，重复要求后核对,已成功对象不重复，不把未知结果当成功,2026-10-19
+AT-128,补充验收,F20,features/F20-chat-task-management/prd.md,新增-本功能,AI 生成草稿后在聊天要求保存、但汇总未核对,打开具体预览并完成核对，一次用户确认才正式生效,2026-10-19

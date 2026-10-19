@@ -1,0 +1,59 @@
+# 交付状态
+
+更新日期：2026-10-19。本页是**工程实现与验证进度的唯一入口**；其他文档只引用本页，不重复维护状态。
+
+## 当前范围
+
+本仓库当前**只保留产品需求与治理约定**（本页与[技术决策记录](../engineering/decisions/README.md)）：实施代码、构建配置、宿主能力核对与验收记录已整体移除。**F01—F20 的实现均未开始，产品验收均未执行。** 需求文档齐全不等于功能已实现或已验收。
+
+- 需求入口：[文档入口](../README.md) → [产品总览](../prd/overview.md)
+- 实施顺序：[分阶段实施路线](../prd/roadmap.md)
+- 技术决策落点：[技术决策记录](../engineering/decisions/README.md)
+- 未决边界：[未决事项](../prd/open-questions.md)（S0 工程准备缺口见 OQ-03）
+
+## 状态词表
+
+| 维度 | 取值 | 说明 |
+| --- | --- | --- |
+| 实现 | 未开始 / 进行中 / 已实现 / 受局部阻塞 | 以代码与可运行行为为准；只有真实实现才能记为已实现 |
+| 验收 | 待执行 / 部分执行 / 通过 / 失败 / 结果需核对 | 以实际执行记录与证据为准；未执行一律为待执行 |
+| 记录 | 指向实际文件与证据 | 记录须指向真实的 implementation / verification 文件与命令输出 |
+
+规则：记录必须指向实际文件与证据，不写预期结果；**PRD 文档存在不能把实现列为已实现**；未执行验收不得写为通过；部分场景未就绪时写「结果需核对」或「待执行」，不伪报通过。
+
+## 功能状态
+
+阶段取自 [feature-catalog.json](../prd/feature-catalog.json)，与[实施路线](../prd/roadmap.md)一致。
+
+| 功能 | 阶段 | 实现 | 验收 | 记录 |
+| --- | --- | --- | --- | --- |
+| [F01 项目隔离与任务创建编辑](../prd/features/F01-project-and-tasks/prd.md) | S1 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F02 任务状态、卡片与详情](../prd/features/F02-task-status-and-cards/prd.md) | S1 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F03 手动维护任务概况与项目总览](../prd/features/F03-manual-summaries/prd.md) | S1 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F04 新建、继续与查看工作对话](../prd/features/F04-conversation-entry/prd.md) | S2 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F05 关联已有对话与固定归属](../prd/features/F05-conversation-binding/prd.md) | S2 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F06 形成任务记录与概况并确认](../prd/features/F06-task-record-workflow/prd.md) | S3 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F07 编辑记录后核对汇总](../prd/features/F07-edited-record-reconciliation/prd.md) | S3 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F08 并行记录与竞争汇总核对](../prd/features/F08-concurrent-confirmation/prd.md) | S3 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F09 关键结论适用性与人工修正](../prd/features/F09-conclusion-applicability/prd.md) | S3 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F10 正式记录手动编辑、历史与恢复](../prd/features/F10-record-history/prd.md) | S5 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F11 默认背景准备与发送时自动同步](../prd/features/F11-context-preparation-and-sync/prd.md) | S2 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F12 正式材料按需读取与背景复制](../prd/features/F12-record-retrieval-and-copy/prd.md) | S3 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F13 生成项目记录与总览并确认](../prd/features/F13-project-record-workflow/prd.md) | S4 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F14 任务重开与项目成果更新](../prd/features/F14-project-record-lifecycle/prd.md) | S4 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F15 集中待确认与行动提示](../prd/features/F15-pending-updates/prd.md) | S4 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F16 任务搜索、筛选与排序](../prd/features/F16-search-filter-sort/prd.md) | S5 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F17 归档、恢复与永久删除](../prd/features/F17-archive-and-delete/prd.md) | S5 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F18 中断恢复、保存反馈与 AI 降级](../prd/features/F18-recovery-and-offline/prd.md) | S5 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F19 语言、窗口与键盘体验](../prd/features/F19-desktop-accessibility/prd.md) | S5 | 未开始 | 待执行 | 尚无 implementation/verification |
+| [F20 聊天中的明确任务管理](../prd/features/F20-chat-task-management/prd.md) | S5 | 未开始 | 待执行 | 尚无 implementation/verification |
+
+## S0 开发准备
+
+S0 **尚未实施**：交付形态、存储与并发模型、宿主能力边界、源码/测试目录和真实运行命令都还没有落地。缺口与限制见[未决事项 OQ-03](../prd/open-questions.md)；技术选择在做出时记录到[技术决策记录](../engineering/decisions/README.md)，不预先填写结论。
+
+## 维护约定
+
+- 本页是唯一状态来源：功能 PRD、路线与入口文档只引用本页，不各自维护另一套实现/验收状态。
+- 状态变化时更新对应行并给出实际记录文件与证据；实现记录按功能目录的 `implementation.md`、验收记录按 `verification.md` 命名，文档存在不等于状态推进。
+- 验收结论须引用 [验收映射](../prd/mapping/acceptance.csv) 中的编号与实际执行结果，跨功能场景未齐备时写待联合验收，不写通过。

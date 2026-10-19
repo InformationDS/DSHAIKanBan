@@ -232,6 +232,7 @@ at_collab = {r['at_id']: set(filter(None, r['collaborators'].split(';'))) for r 
 add_owner = {r['id']: r['primary_owner'] for r in additions}
 valid_ids = expected_ats | set(add_ids)
 section_ids = {}
+add_rows = {}
 for f in features:
     fid = f['id']
     if fid not in texts:
@@ -244,6 +245,8 @@ for f in features:
         found = at_ids(head)
         require(bool(found), f'{fid}: acceptance row without a numbered ID: {head!r}')
         ids |= found
+        for addition_id in found & set(add_ids):
+            add_rows[addition_id] = cells
     unknown = ids - valid_ids
     require(not unknown, f'{fid}: unknown acceptance IDs {sorted(unknown)}')
     section_ids[fid] = ids
@@ -275,6 +278,15 @@ for addition in add_ids:
     holders = sorted(fid for fid, idset in section_ids.items() if addition in idset)
     require(holders == [add_owner[addition]],
             f'{addition}: section 6 holders {holders}, expected [{add_owner[addition]}]')
+    # The additions file is a transcription of the PRD rows, so its wording must
+    # match the row verbatim, not merely be equivalent to it.
+    cells = add_rows.get(addition)
+    if cells:
+        require(len(cells) >= 3, f'{addition}: malformed section-6 row')
+        if len(cells) >= 3:
+            row = next((r for r in additions if r['id'] == addition), None)
+            require(cells[1] == row['steps'], f'{addition}: steps differ from its section-6 row')
+            require(cells[2] == row['expected'], f'{addition}: expected differs from its section-6 row')
 
 # traceability.md's FR responsibility table must agree with requirements.csv.
 trace_body = re.split(r'^## FR 条款主责任分布', traceability_text, flags=re.M)

@@ -267,8 +267,9 @@ export interface DomainSpecLike {
 /**
  * Build the domain spec from the host's own zod instance.
  *
- * @param zod - the host's zod module (`import z from 'zod'`); the core has no
- *   runtime dependency on zod, so the caller supplies it.
+ * @param zod - the host's zod-shaped validator factory (the `zod` module
+ *   itself); the core has no runtime dependency on zod, so the caller supplies
+ *   it.
  * @returns a spec the host passes to `defineDomain` / `ctx.storageDomain.open`.
  */
 export function buildDomainSpec(zod: ZodLike): DomainSpecLike {

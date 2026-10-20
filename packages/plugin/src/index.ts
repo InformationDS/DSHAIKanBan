@@ -33,6 +33,15 @@
  * @module @aikanban/dsh-aikanban
  */
 
+import type { KanbanCore } from '@aikanban/core'
+
+import {
+  isStorageDomainLike,
+  openDataLayer,
+  type DataLayerOpenResult,
+  type StorageDomainLike,
+} from './data-layer.js'
+
 /** Version reported by the diagnostic tool. Kept in sync with package.json. */
 export const PLUGIN_VERSION = '0.0.0'
 
@@ -193,6 +202,11 @@ function readPid(): number | null {
   return typeof pid === 'number' ? pid : null
 }
 
+/** Render an unknown thrown value for a diagnostic line; never throws itself. */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 /* ------------------------------------------------------------------ *
  * Diagnostic tool
  * ------------------------------------------------------------------ */
@@ -282,6 +296,12 @@ export const inject: string[] = []
 /** The most recently completed activation, or `null` before `apply()` runs. */
 let lastActivation: ActivationSnapshot | null = null
 
+/** The core opened by the asynchronous data-layer bootstrap, or `null`. */
+let lastCore: KanbanCore | null = null
+
+/** Why the last data-layer bootstrap attempt failed, or `null`. Diagnostic only. */
+let lastDataLayerError: string | null = null
+
 /**
  * Read the last activation snapshot. Exported so tests and the probe host can
  * assert on the same value the diagnostic tool returns.
@@ -290,6 +310,24 @@ let lastActivation: ActivationSnapshot | null = null
  */
 export function getLastActivation(): ActivationSnapshot | null {
   return lastActivation
+}
+
+/**
+ * Read the core opened by the data-layer bootstrap.
+ *
+ * @returns the core, or `null` while the data layer is not ready.
+ */
+export function getKanbanCore(): KanbanCore | null {
+  return lastCore
+}
+
+/**
+ * Read why the data-layer bootstrap last failed.
+ *
+ * @returns the failure message, or `null` when no attempt failed.
+ */
+export function getDataLayerError(): string | null {
+  return lastDataLayerError
 }
 
 /**
@@ -308,6 +346,8 @@ export function apply(ctx: HostContext): void {
   const servicesObserved: string[] = []
   let statusToolRegistered = false
   let promptSectionRegistered = false
+  lastCore = null
+  lastDataLayerError = null
 
   const noteService = (name: string): void => {
     if (!servicesObserved.includes(name)) servicesObserved.push(name)
@@ -375,10 +415,93 @@ export function apply(ctx: HostContext): void {
   tryRegisterTool()
   tryRegisterSection()
 
+  // ---- data layer: open `aikanban_core` and build the core (async) ----
+  //
+  // P2 evidence step: nothing consumes the core yet (the board channel is
+  // registered in the next change). This block exists to answer, inside a real
+  // host, whether `ctx.storageDomain.open(<bare DomainSpecLike>)` is accepted
+  // and when the service becomes reachable. The probe reads the TEMPORARY
+  // console lines below from the captured host stdout; they are replaced by the
+  // activation snapshot fields once those exist.
+  const serviceAt = (name: string): unknown => ctx.reflect?.get(name, false)
+
+  console.warn(
+    '[aikanban] P2 services at apply(): '
+    + ['storageDomain', 'connection', 'workspaceRegistry']
+      .map((name) => `${name}=${serviceAt(name) === undefined ? 'absent' : 'reachable'}`)
+      .join(' '),
+  )
+
+  type BootstrapState = 'idle' | 'running' | 'ready' | 'failed'
+  let bootstrapState: BootstrapState = 'idle'
+
+  const reportBootstrap = (result: DataLayerOpenResult | null, thrown?: unknown): void => {
+    // TEMPORARY (P2 evidence): the host's stdout/stderr is the only surface the
+    // isolated probe can read before the activation snapshot carries the
+    // data-layer state. Removed when those snapshot fields land.
+    if (result === null) {
+      console.warn(`[aikanban] P2 data-layer: exception ${errorMessage(thrown)}`)
+      return
+    }
+    if (result.ok) {
+      console.warn(`[aikanban] P2 data-layer: open-ok domain=${result.domain.name} probeRead=getDraft`)
+      return
+    }
+    console.warn(`[aikanban] P2 data-layer: ${result.stage} message=${result.message}`)
+  }
+
+  const startBootstrap = (candidate?: unknown): void => {
+    if (bootstrapState === 'running' || bootstrapState === 'ready') return
+    const storageDomain = isStorageDomainLike(candidate) ? candidate : serviceAt('storageDomain')
+    if (!isStorageDomainLike(storageDomain)) {
+      bootstrapState = 'failed'
+      lastDataLayerError = 'storageDomain service is not bound'
+      return
+    }
+    if (bootstrapState === 'failed') {
+      console.warn('[aikanban] P2 data-layer: storageDomain became reachable after apply()')
+    }
+    bootstrapState = 'running'
+    noteService('storageDomain')
+    runBootstrap(storageDomain)
+  }
+
+  const runBootstrap = (storageDomain: StorageDomainLike): void => {
+    void (async (): Promise<void> => {
+      const result = await openDataLayer(storageDomain)
+      reportBootstrap(result)
+      if (result.ok) {
+        lastCore = result.core
+        lastDataLayerError = null
+        bootstrapState = 'ready'
+        ctx.logger?.info(`${ACTIVATION_MARKER_PREFIX} data layer ready (domain ${result.domain.name})`)
+      } else {
+        lastDataLayerError = result.message
+        bootstrapState = 'failed'
+        ctx.logger?.warn(`${ACTIVATION_MARKER_PREFIX} data layer failed at ${result.stage}: ${result.message}`)
+      }
+      // The data-layer state is a `servicesObserved` entry today and becomes a
+      // snapshot field in the next change; either way the latest state is
+      // republished so outside observers can wait for the final answer.
+      lastActivation = snapshot()
+      publishActivationSignal(lastActivation)
+    })().catch((error: unknown) => {
+      // `openDataLayer` returns failures, so this is belt-and-braces: an
+      // unhandled rejection here could be treated as a host crash.
+      bootstrapState = 'failed'
+      lastDataLayerError = errorMessage(error)
+      ctx.logger?.warn(`${ACTIVATION_MARKER_PREFIX} data layer bootstrap threw: ${lastDataLayerError}`)
+      reportBootstrap(null, error)
+    })
+  }
+
+  startBootstrap()
+
   // Service arrival is order-independent: re-attempt on every binding.
   ctx.on('internal/service', ((name: string, value: unknown) => {
     if (name === 'tools') tryRegisterTool(value)
     else if (name === 'systemPrompt') tryRegisterSection(value)
+    else if (name === 'storageDomain') startBootstrap(value)
   }) as never)
 
   lastActivation = snapshot()

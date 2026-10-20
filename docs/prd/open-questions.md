@@ -34,13 +34,15 @@
   - 存储与并发：`ctx.storageDomain` ＋ 成对确认单写，见 [ADR-002](../engineering/decisions/ADR-002-paired-confirmation-single-write.md)（**采用**）。
   - 项目映射与背景注入：`workspace.id` ＋ `agent/pre-step` 注入，见 [ADR-003](../engineering/decisions/ADR-003-project-mapping-and-context-injection.md)（**采用**）。
   - 会话派发与整理载体：见 [ADR-001](../engineering/decisions/ADR-001-session-dispatch-and-consolidation-carrier.md)（**采用**）。
-  - 系统整理对话与工作来源的区分表达：见 [ADR-006](../engineering/decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（**采用**；2026-10-20 用户确认，工程证据待取证）。
+  - 系统整理对话与工作来源的区分表达：见 [ADR-006](../engineering/decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（**已定**；2026-10-20 用户确认，工程证据待取证）。
+  - **S1 接线与当前项目解析（2026-10-20 已定）**：Q1＝B（当前项目**每次显式选择、不持久化**，`board/read` 的 `projectId` 改为必填）、Q2＝A（**扩展 wire/BoardController 契约**，不在适配层弱化 F02-R04/SAVE-05），决策见 [ADR-007](../engineering/decisions/ADR-007-s1-wiring-and-current-project.md)（已定），实施规格见 [S1 接线实施规格](../engineering/s1-wiring.md)。
+  - **故障注入（Q3，2026-10-20 已定）**：允许 test-only 构建开关/探针钩子做故障注入，且满足条件时承认为 AT 证据，政策见[验收执行规则](../engineering/acceptance-execution.md) 第 3 节。
   - 宿主能力：HOST-01—10 逐条有核对结论，见[宿主能力合同](../engineering/host-capabilities.md)；2026-10-20 已重跑存储原子性 25/25 与 20 步宿主集成探针 20/20。
   - 真实模型路径：**已解决（2026-10-20）**。方法：把 `DEEPSEEK_API_KEY` 作为**启动环境变量**注入**那一个隔离探针进程**（未写任何凭据文件，事后全工作区扫描该 key 字符串 0 命中）；20 步探针 20/20 `[ok]`，真实 `assistant` 回复与真实多步（含 pwsh 工具调用）已实测成立，见 [S0 复核记录](../engineering/s0-reverification-20261019.md) 第 9 节。
-- 仍未决（**决策级只剩三项**，均已分别落点）：
-  1. **插件装进哪个 profile、何时重启 GUI**——需用户确认；`desktop` 由 Electron 独占管理。
-  2. **界面挂载点与看板形态**（[ADR-004](../engineering/decisions/ADR-004-界面挂载点与看板形态.md)，提议）——缺客户端实际渲染证据。
-  3. **浏览器半 ↔ 宿主半数据通道**（[ADR-005](../engineering/decisions/ADR-005-浏览器半与宿主半的数据通道.md)，提议）——缺真实 Connection RPC 路由证据。
+- 仍未决（**两项决策级待证据 + 一项执行待用户确认**）：
+  1. **执行待办（不是决策）**：插件装进哪个 profile、何时重启 GUI——需用户确认后执行；`desktop` 由 Electron 独占管理。
+  2. **决策级待证据**：界面挂载点与看板形态（[ADR-004](../engineering/decisions/ADR-004-界面挂载点与看板形态.md)，提议）——缺客户端实际渲染证据。
+  3. **决策级待证据**：浏览器半 ↔ 宿主半数据通道（[ADR-005](../engineering/decisions/ADR-005-浏览器半与宿主半的数据通道.md)，提议）——缺真实 Connection RPC 路由证据。
 - 处理入口：技术选择记入[技术决策记录](../engineering/decisions/README.md)，实施与验证进展登记到[交付状态](../delivery/status.md)；复核过程见 [S0 复核记录](../engineering/s0-reverification-20261019.md)。
 - 限制：不要默认 DSH 的项目/聊天/模型入口已存在，不借本次拆分定义所有终端/文件权限功能。仅确定满足 AIKanBan 必需边界的最小工程方案。
 

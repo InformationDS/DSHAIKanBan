@@ -28,7 +28,15 @@
    （`dsh --profile desktop` 被启动器拒绝），安装进当前 GUI 必须写该 profile 并重启进程。
    因此：**装到哪个 profile、何时重启，需用户确认后执行**；`tools/sync-to-profile.mjs` 按 profile 参数化，**默认 `desktop`**（脚本的 `--profile` 说明与实现均为 desktop）。
 2. **模型凭据下的端到端验证**：**2026-10-20 已复验**。方法：把 `DEEPSEEK_API_KEY` 作为**启动环境变量**注入**那一个隔离探针进程**（`DSH_HOME=<隔离目录>`、`--profile web --port 0 --no-open`、DSH 44.7.0），未写任何凭据文件，事后全工作区扫描该 key 字符串 **0 命中**。结果：20 步宿主集成探针 **20/20 `[ok]`**；`readback.turnEnd` 以 `completed` 结束并含两条 `assistant/message`（`assistantTurns=[{seq:17,turn:1,step:1},{seq:22,turn:1,step:2}]`，`lastAssistantText` 经 pwsh 工具调用得到）；`multiStepObserved=true`、`injectedCallCount=1`。因此「真实模型 `assistant` 回复」与「真实多步（含工具调用）」两项成立，[ADR-001](decisions/ADR-001-session-dispatch-and-consolidation-carrier.md)/[ADR-003](decisions/ADR-003-project-mapping-and-context-injection.md) 的「证据分级」与「尚未验证」两节已按此收紧（其余未验证项保留，见[复核记录](s0-reverification-20261019.md)第 9 节）。
-3. **系统整理对话与工作来源的区分表达**（HOST-07）：已由 [ADR-006](decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（**采用**，2026-10-20 用户确认）确定；工程证据待取证，取证前不得写成已验证。
+3. **系统整理对话与工作来源的区分表达**（HOST-07）：已由 [ADR-006](decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（**已定**，2026-10-20 用户确认）确定；按新状态词表「已确认、工程证据待取证」，取证前不得写成已验证（实施规格草案见其第 14 节）。
+
+**已定（2026-10-20，见 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)）：S1 接线与当前项目解析（Q1/Q2）**
+
+- Q1＝B：**当前项目每次显式选择、不持久化**（`board/read` 的 `projectId` 改为必填，不记上次/默认第一个/最近使用）。
+- Q2＝A：**扩展 wire/BoardController 契约**（基线 `expectedStatusVersion` 与撤销凭据 `appliedUpdateId`+`statusRevision` 真正过 wire），**不在适配层弱化 F02-R04/SAVE-05**。
+- 以上两项已定，决策与理由见 `ADR-007`（已定）；实施规格入口见 [s1-wiring.md](s1-wiring.md)（工程证据待后补，不得写成已验证）。
+- Q3 **允许 test-only 故障注入且承认其证据**：已定，政策见[验收执行规则](acceptance-execution.md) 第 3 节（不进入正式构建、默认关闭、开关登记、证据注明注入方式）。
+- 实施规格入口：S1 接线见 [s1-wiring.md](s1-wiring.md)；验收执行与证据档位见 [acceptance-execution.md](acceptance-execution.md)、记录格式见 [verification 模板](../prd/templates/verification.md)。
 
 ## 建议职责边界
 

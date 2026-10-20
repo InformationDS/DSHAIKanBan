@@ -46,6 +46,9 @@ function task(overrides: Partial<BoardTask> = {}): BoardTask {
     status: 'todo',
     statusLabel: '未开始',
     order: 0,
+    // Required contract fields (Q2=A): the write baseline and undo credential.
+    statusRevision: 0,
+    undoTarget: null,
     ...overrides,
   }
 }
@@ -234,5 +237,16 @@ describe('detail skeleton (F02-R07)', () => {
     expect(deriveTaskDetail(task()).hints).toEqual([])
     const withHint = deriveTaskDetail(task({ hints: [{ kind: 'attention', text: '需要核对' }] }))
     expect(withHint.hints).toEqual([{ kind: 'attention', text: '需要核对' }])
+  })
+
+  it('offers undo only when the data layer supplied an undoTarget (never inferred)', () => {
+    expect(deriveTaskDetail(task()).undoAvailable).toBe(false)
+    const undoable = deriveTaskDetail(task({
+      statusRevision: 3,
+      undoTarget: { statusVersion: 'ver1:2', appliedUpdateId: 'op-prev' },
+    }))
+    expect(undoable.undoAvailable).toBe(true)
+    // The numeric baseline stays available for the write path.
+    expect(task({ statusRevision: 7 }).statusRevision).toBe(7)
   })
 })

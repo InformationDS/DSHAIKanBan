@@ -27,7 +27,6 @@ export const NO_CONNECTION_DETAIL = "未找到 ctx.connection（该组合未挂�
 
 let currentSource: BoardSource = createUnavailableBoardSource(NO_CONNECTION_DETAIL)
 let currentController: BoardController | null = null
-let selectedProjectId: string | null = null
 
 /**
  * Install the data source. Drops the controller so the next panel mount reads
@@ -50,23 +49,17 @@ export function getBoardSource(): BoardSource {
 }
 
 /**
- * Set the project every later read asks for. The host resolves the current
- * project when this is `null`.
- *
- * @param projectId - the workspace id, or null to let the host decide.
- */
-export function setSelectedProject(projectId: string | null): void {
-  selectedProjectId = projectId
-  currentController = null
-}
-
-/**
  * The panel's controller, created on first use.
+ *
+ * A new controller starts on the explicit `selection-required` state and with no
+ * project (Q1=B). The selection lives **only** in `controller.state` — this
+ * module deliberately keeps no copy, so nothing can survive a panel mount or be
+ * persisted.
  *
  * @returns the controller bound to the installed source.
  */
 export function getBoardController(): BoardController {
-  currentController ??= createBoardController({ source: currentSource, projectId: selectedProjectId })
+  currentController ??= createBoardController({ source: currentSource })
   return currentController
 }
 
@@ -86,5 +79,4 @@ export function setBoardController(controller: BoardController | null): void {
 export function resetBoardRuntime(): void {
   currentSource = createUnavailableBoardSource(NO_CONNECTION_DETAIL)
   currentController = null
-  selectedProjectId = null
 }

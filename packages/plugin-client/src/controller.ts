@@ -92,8 +92,14 @@ export interface UndoToken {
 }
 
 /**
- * The read state: `idle` before the first read, `loading` in flight, `ready`
- * with a board, and the two explicit failure shapes.
+ * The read state: `selection-required` until the user picks a project, `idle`
+ * before the first read of a selection, `loading` in flight, `ready` with a
+ * board, and the two explicit failure shapes.
+ *
+ * `selection-required` is the **initial** state and the state every panel mount
+ * returns to: no project is selected, so no `board/read` is sent and nothing is
+ * guessed (Q1=B). It is not `failed` (nothing failed) and not `idle` (the panel
+ * must say why it is empty).
  *
  * `failed` keeps the last known board (`kept`) so a transient read error does
  * not blank the panel; `unknown-project` deliberately keeps nothing, because
@@ -102,7 +108,8 @@ export interface UndoToken {
  */
 export type BoardReadState =
   | { readonly kind: 'idle' }
-  | { readonly kind: 'loading'; readonly projectId: string | null }
+  | { readonly kind: 'selection-required'; readonly message: string }
+  | { readonly kind: 'loading'; readonly projectId: string }
   | {
       readonly kind: 'ready'
       readonly projectId: string
@@ -117,7 +124,7 @@ export type BoardReadState =
     }
   | {
       readonly kind: 'failed'
-      readonly projectId: string | null
+      readonly projectId: string
       readonly code: BoardFailureCode
       readonly message: string
       /** Last known good board, when there was one. */
@@ -154,7 +161,11 @@ export interface StatusDialogState {
 export interface BoardState {
   readonly read: BoardReadState
   readonly transport: BoardSource['transport']
-  /** The project this controller is showing; `null` means nothing is selected, so no read is sent (Q1=B). */
+  /**
+   * The project this controller is showing; `null` means nothing is selected
+   * (`selection-required`, no read is sent). This is the **only** owner of the
+   * selection: the runtime holds no second copy and nothing is persisted (Q1=B).
+   */
   readonly selectedProjectId: string | null
   /** Cancelled column expanded? Collapsed by default (F02 §3.2). */
   readonly cancelledExpanded: boolean
@@ -198,6 +209,15 @@ export function undoBlockedText(current: FormalStatusValue, label?: string): str
   return `无法直接撤销：此后已有新的修改，当前正式状态为「${shown}」（版本 ${current.statusVersion}）。`
 }
 
+/** Title of the selection-required empty state (Q1=B). Never a default project. */
+export const SELECTION_REQUIRED_TITLE = '请选择项目'
+
+/**
+ * Explanation shown under the title. Deliberately says the board does not
+ * remember the last project: no default, no recency, no title heuristic (Q1=B).
+ */
+export const SELECTION_REQUIRED_DESCRIPTION = '看板不会记住上次的项目；每次进入都需要显式选择。'
+
 /** Shown when a write failed. */
 export function writeFailedText(code: BoardFailureCode): string {
   switch (code) {
@@ -229,8 +249,6 @@ export function writeFailedText(code: BoardFailureCode): string {
 /** Construction options. */
 export interface BoardControllerOptions {
   readonly source: BoardSource
-  /** Initial project selection; `null`/absent means nothing is selected (nothing is read until `selectProject`). */
-  readonly projectId?: string | null
   /** Operation-id minter; injectable so tests are deterministic. */
   readonly newOperationId?: () => string
   /** Change listener (React `useSyncExternalStore` shape). */
@@ -242,12 +260,27 @@ export interface BoardController {
   getState(): BoardState
   subscribe(listener: () => void): () => void
 
-  /** Read the board for the selected project. */
+  /**
+   * Read the board for the currently selected project.
+   *
+   * Takes no argument by design: the selection lives in `state.selectedProjectId`
+   * and nowhere else. With no selection this sets `selection-required` and sends
+   * no request (Q1=B — the host has no "current project" and never guesses).
+   */
   load(): Promise<void>
-  /** Retry a failed read. */
+  /** Retry a failed read (same selection; no write is replayed). */
   retryRead(): Promise<void>
-  /** Switch projects: everything read after this belongs to the new selection. */
+  /**
+   * Switch projects: clears the previous view, records the selection in state
+   * and reads. `null` returns to `selection-required` without a read.
+   */
   selectProject(projectId: string | null): Promise<void>
+  /**
+   * Reset to the selection-required state (every panel mount calls this).
+   * Clears the selection, the previous view, the detail and the dialog; sends no
+   * request and does not touch the source.
+   */
+  resetSelection(): void
 
   /** Expand/collapse the collapsed column (cancelled by default). */
   toggleCancelled(): void
@@ -285,6 +318,12 @@ export interface BoardController {
 
   /** Undo the change the current success feedback refers to. */
   undoLastChange(): void
+
+  /**
+   * Undo the status change a task's `undoTarget` points at (works after a
+   * refresh, because the credential comes from the read snapshot).
+   */
+  undoTaskChange(taskId: string): void
 }
 
 /**
@@ -302,9 +341,11 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   const keptReasons = new Map<string, string>()
 
   let state: BoardState = {
-    read: { kind: 'idle' },
+    // Q1=B: a fresh board never assumes a project; the panel opens on the
+    // explicit selection empty state and sends no read.
+    read: { kind: 'selection-required', message: SELECTION_REQUIRED_DESCRIPTION },
     transport: source.transport,
-    selectedProjectId: options.projectId ?? null,
+    selectedProjectId: null,
     cancelledExpanded: false,
     openTaskId: null,
     detail: null,
@@ -327,6 +368,30 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     }
     state = next as unknown as BoardState
     emit()
+  }
+
+  /** The explicit "no project selected" read state (Q1=B). */
+  const selectionRequired = (): BoardReadState => ({
+    kind: 'selection-required',
+    message: SELECTION_REQUIRED_DESCRIPTION,
+  })
+
+  /**
+   * Clear the selection and everything derived from it, without touching the
+   * source. Every panel mount calls this, so a cached controller can never carry
+   * a previous project's cards into a new entry (Q1=B).
+   */
+  const resetSelectionState = (): void => {
+    keptReasons.clear()
+    setState({
+      selectedProjectId: null,
+      read: selectionRequired(),
+      openTaskId: null,
+      detail: null,
+      statusDialog: null,
+      feedback: null,
+      busy: null,
+    })
   }
 
   /**
@@ -405,10 +470,17 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       result = await attempt()
     } catch (error) {
       // A transport that throws is an unconfirmed write, not a crash of the panel.
+      // F9/F10: an unknown outcome must not keep a write-retry intent — only a
+      // re-read, after which the user decides again.
       const message = error instanceof Error ? error.message : String(error)
       setState({
         busy: null,
-        feedback: { kind: 'failure', text: `${writeFailedText('unknown-result')}（${message}）`, code: 'unknown-result', retry },
+        feedback: {
+          kind: 'failure',
+          text: `${writeFailedText('unknown-result')}（${message}）`,
+          code: 'unknown-result',
+          retry: { kind: 'read' },
+        },
       })
       return
     }
@@ -442,13 +514,17 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     // Failure: keep the previous authoritative view. When the data layer told us
     // the real current value, reflect that — never the attempted value.
     if (result.current !== undefined) refreshFromHostValue(taskId, result.current)
+    // F9/F10/D6: an unknown outcome, or a write whose re-read failed, must not
+    // offer a write retry — the write may already have landed, and reorder has no
+    // order-level baseline. The only honest retry is a fresh read.
+    const readOnlyRetry = result.code === 'unknown-result' || result.code === 'read-failed'
     setState({
       busy: null,
       feedback: {
         kind: 'failure',
         text: result.message.length > 0 ? result.message : writeFailedText(result.code),
         code: result.code,
-        retry,
+        retry: readOnlyRetry ? { kind: 'read' } : retry,
       },
     })
   }
@@ -563,9 +639,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       const requested = state.selectedProjectId
       if (requested === null) {
         // Q1=B: there is no "current project" to read. Do not call the data
-        // layer without an id; boundary B turns this into the explicit
-        // `selection-required` state.
-        setState({ read: { kind: 'idle' }, busy: null })
+        // layer without an id; the panel shows the explicit selection state.
+        setState({ read: selectionRequired(), busy: null })
         return
       }
       // Snapshot what is on screen *before* switching to `loading`: a failure
@@ -629,8 +704,13 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     },
 
     async selectProject(projectId) {
+      if (projectId === null || projectId.trim().length === 0) {
+        resetSelectionState()
+        return
+      }
       // Clearing the view first is deliberate: the previous project's cards must
       // never render under the new project's header.
+      keptReasons.clear()
       setState({
         selectedProjectId: projectId,
         read: { kind: 'idle' },
@@ -638,8 +718,13 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         detail: null,
         statusDialog: null,
         feedback: null,
+        busy: null,
       })
       await this.load()
+    },
+
+    resetSelection() {
+      resetSelectionState()
     },
 
     toggleCancelled() {
@@ -786,6 +871,29 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       }
       setState({ feedback: null })
       void runWrite('undo', undo.taskId, { kind: 'undo', input: undo }, () => source.undoStatusChange(undo))
+    },
+
+    undoTaskChange(taskId) {
+      const task = taskById(taskId)
+      if (task === undefined) {
+        setState({ feedback: { kind: 'failure', text: writeFailedText('not-found'), code: 'not-found', retry: null } })
+        return
+      }
+      if (!currentCapabilities().undo) {
+        refuseMissingCapability()
+        return
+      }
+      // `undoTarget` is the only source of the credential: it survives a refresh
+      // (it comes from the read snapshot), while the success banner does not.
+      if (task.undoTarget === null) return
+      const undo: UndoInput = {
+        taskId,
+        operationId: mintOperationId(),
+        expectedStatusVersion: task.undoTarget.statusVersion,
+        appliedUpdateId: task.undoTarget.appliedUpdateId,
+      }
+      setState({ feedback: null })
+      void runWrite('undo', taskId, { kind: 'undo', input: undo }, () => source.undoStatusChange(undo))
     },
   }
 }

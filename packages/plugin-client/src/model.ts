@@ -402,6 +402,8 @@ export interface TaskDetailView {
   readonly summaryProgress: TaskProgressView | null
   readonly progress: CardProgress
   readonly needsRecheck: boolean
+  /** Whether the data layer supplied an undo credential for this task (F02-R04). */
+  readonly undoAvailable: boolean
   readonly hints: readonly BoardActionHint[]
   readonly placeholders: readonly DetailPlaceholder[]
 }
@@ -432,6 +434,9 @@ export function deriveTaskDetail(task: BoardTask): TaskDetailView {
     summaryProgress: task.summaryProgress ?? null,
     progress: deriveCardProgress(task),
     needsRecheck: task.needsRecheck === true,
+    // Undo is offered only when the data layer's snapshot says there is
+    // something to undo; the UI never infers it from "a change just happened".
+    undoAvailable: task.undoTarget !== null,
     hints: task.hints ?? [],
     placeholders: DETAIL_PLACEHOLDERS,
   }

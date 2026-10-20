@@ -38,6 +38,7 @@ import {
   type TaskDetailView,
 } from './model.js'
 import type { BoardController, BoardState, StatusDialogState } from './controller.js'
+import { SELECTION_REQUIRED_TITLE } from './controller.js'
 import { getBoardController } from './runtime.js'
 import { NO_CHANNEL_MESSAGE } from './source.js'
 
@@ -83,6 +84,8 @@ export interface BoardActions {
   onToggleCollapsed(): void
   onRetry(): void
   onUndo(): void
+  /** Undo one task's last status change, from that task's `undoTarget`. */
+  onUndoTask(taskId: string): void
   onDialogReason(text: string): void
   onDialogConfirm(): void
   onDialogCancel(): void
@@ -104,9 +107,15 @@ export interface StatusChoice {
  * @param task - the task to render.
  * @param actions - the panel's actions.
  * @param selectable - statuses offered by the menu; empty hides the control.
+ * @param canUndo - whether the data layer can serve undo at all.
  * @returns the card node.
  */
-function renderCard(task: BoardTask, actions: BoardActions, selectable: readonly StatusChoice[]): ReactNode {
+function renderCard(
+  task: BoardTask,
+  actions: BoardActions,
+  selectable: readonly StatusChoice[],
+  canUndo: boolean,
+): ReactNode {
   const progress = deriveCardProgress(task)
   const children: ReactNode[] = [
     createElement('div', { key: 'title', style: { fontWeight: 600 } }, task.title),
@@ -139,6 +148,23 @@ function renderCard(task: BoardTask, actions: BoardActions, selectable: readonly
         },
         selectable.map((choice) => createElement('option', { key: choice.id, value: choice.id }, choice.label)),
       ),
+    ))
+  }
+
+  // Undo is offered only when the data layer's snapshot carries a credential
+  // (`undoTarget !== null`): this is what makes undo work after a refresh, and
+  // it never appears just because "a change happened".
+  if (canUndo && task.undoTarget !== null) {
+    children.push(createElement(
+      'button',
+      {
+        key: 'undo-task',
+        type: 'button',
+        'data-aikanban-undo-task': task.taskId,
+        onClick: () => { actions.onUndoTask(task.taskId) },
+        style: { marginTop: '6px' },
+      },
+      '撤销该状态修改',
     ))
   }
 
@@ -179,6 +205,7 @@ function renderCard(task: BoardTask, actions: BoardActions, selectable: readonly
  * @param selectable - statuses offered by the card menus.
  * @param collapsed - whether the column body is collapsed.
  * @param onToggle - called by the header button.
+ * @param canUndo - whether the data layer can serve undo at all.
  * @returns the column node.
  */
 function renderColumn(
@@ -187,6 +214,7 @@ function renderColumn(
   selectable: readonly StatusChoice[],
   collapsed: boolean,
   onToggle: () => void,
+  canUndo: boolean,
 ): ReactNode {
   const header = createElement(
     'div',
@@ -220,7 +248,7 @@ function renderColumn(
         onDragOver: (event: { preventDefault?: () => void }) => { event.preventDefault?.() },
         onDrop: () => { actions.onDrop(column.status, column.tasks.length) },
       },
-      column.tasks.map((task) => renderCard(task, actions, selectable)),
+      column.tasks.map((task) => renderCard(task, actions, selectable, canUndo)),
     )
 
   return createElement(
@@ -280,6 +308,7 @@ function renderStatusDialog(dialog: StatusDialogState, actions: BoardActions): R
  * @param actions - the panel's actions.
  * @param selectable - statuses offered by the menu.
  * @param status - the live status id (the detail may be a snapshot).
+ * @param canUndo - whether the data layer can serve undo at all.
  * @returns the detail node.
  */
 function renderDetail(
@@ -287,6 +316,7 @@ function renderDetail(
   actions: BoardActions,
   selectable: readonly StatusChoice[],
   status: string,
+  canUndo: boolean,
 ): ReactNode {
   return createElement(
     'section',
@@ -336,6 +366,17 @@ function renderDetail(
         `${entry.label}：${entry.reason}`,
       )),
     ),
+    // Same rule as the card: the detail offers undo only when the snapshot's
+    // undoTarget says there is something to undo.
+    canUndo && detail.undoAvailable
+      ? createElement('button', {
+        key: 'undo-detail',
+        type: 'button',
+        'data-aikanban-undo-task': detail.taskId,
+        onClick: () => { actions.onUndoTask(detail.taskId) },
+        style: { marginTop: '8px' },
+      }, '撤销该状态修改')
+      : null,
     createElement('button', { key: 'close', type: 'button', 'data-aikanban-close-detail': detail.taskId, onClick: actions.onCloseDetail }, '返回看板'),
   )
 }
@@ -371,12 +412,16 @@ function renderFeedback(state: BoardState, actions: BoardActions): ReactNode {
   }
 
   if (feedback.kind === 'failure') {
+    // F9/F10: when the only allowed retry is a re-read (unknown write result or
+    // a read-after-write failure), say exactly that instead of the generic
+    // 「重试」, which could read as "resubmit the write".
+    const retryLabel = feedback.retry?.kind === 'read' ? '重新读取' : '重试'
     return createElement(
       'div',
       { key: 'feedback', role: 'status', 'data-aikanban-feedback': 'failure', style: CARD_STYLE },
       createElement('span', { key: 'text' }, feedback.text),
       feedback.retry !== null
-        ? createElement('button', { key: 'retry', type: 'button', 'data-aikanban-retry': feedback.code, onClick: actions.onRetry, style: { marginLeft: '8px' } }, '重试')
+        ? createElement('button', { key: 'retry', type: 'button', 'data-aikanban-retry': feedback.code, onClick: actions.onRetry, style: { marginLeft: '8px' } }, retryLabel)
         : null,
     )
   }
@@ -423,6 +468,21 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
   if (read.kind === 'loading') {
     children.push(createElement('div', { key: 'loading', style: MUTED }, '正在读取看板…'))
   }
+  if (read.kind === 'selection-required') {
+    // Q1=B: the explicit empty state. It must never imply a default project
+    // ("all tasks", "recent project", or the first workspace).
+    children.push(createElement(
+      'section',
+      {
+        key: 'selection-required',
+        role: 'status',
+        'data-aikanban-selection-required': 'true',
+        style: { ...CARD_STYLE, marginTop: '8px' },
+      },
+      createElement('div', { key: 'title', style: { fontWeight: 600 } }, SELECTION_REQUIRED_TITLE),
+      createElement('div', { key: 'description', style: { fontSize: '12px', marginTop: '4px' } }, read.message),
+    ))
+  }
   if (read.kind === 'unknown-project') {
     children.push(createElement(
       'div',
@@ -443,6 +503,7 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
     const selectable: StatusChoice[] = view.capabilities.statusChange
       ? view.columns.map((column) => ({ id: column.status, label: column.label }))
       : []
+    const canUndo = view.capabilities.undo
 
     children.push(createElement(
       'div',
@@ -466,6 +527,7 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
         selectable,
         column.collapsedByDefault && !state.cancelledExpanded,
         actions.onToggleCollapsed,
+        canUndo,
       )),
     ))
   }
@@ -475,7 +537,7 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
     const selectable: StatusChoice[] = view?.capabilities.statusChange === true
       ? view.columns.map((column) => ({ id: column.status, label: column.label }))
       : []
-    children.push(renderDetail(state.detail, actions, selectable, state.detail.status))
+    children.push(renderDetail(state.detail, actions, selectable, state.detail.status, view?.capabilities.undo === true))
   }
   children.push(renderFeedback(state, actions))
 
@@ -497,10 +559,11 @@ export function BoardPanel(props: { readonly controller: BoardController }): Rea
   )
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
 
-  // One read when the panel first mounts (or after a source swap). Reads are
-  // user-triggered afterwards — no polling (REC-01).
+  // Q1=B: every mount resets to the explicit selection state. A cached
+  // controller must not carry the previous project, view or dialog into this
+  // entry, and nothing is read until a project is explicitly selected.
   useEffect(() => {
-    if (controller.getState().read.kind === 'idle') void controller.load()
+    controller.resetSelection()
   }, [controller])
 
   const actions: BoardActions = {
@@ -517,6 +580,7 @@ export function BoardPanel(props: { readonly controller: BoardController }): Rea
     onToggleCollapsed: () => { controller.toggleCancelled() },
     onRetry: () => { controller.retryPending() },
     onUndo: () => { controller.undoLastChange() },
+    onUndoTask: (taskId) => { controller.undoTaskChange(taskId) },
     onDialogReason: (text) => { controller.setDialogReason(text) },
     onDialogConfirm: () => { controller.confirmStatusDialog() },
     onDialogCancel: () => { controller.cancelStatusDialog() },

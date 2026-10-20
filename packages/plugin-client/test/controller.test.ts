@@ -126,14 +126,27 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
   return source
 }
 
-/** A controller with deterministic operation ids. */
-function controllerFor(source: BoardSource, projectId: string | null = 'ws-1'): BoardController {
+/** A controller with deterministic operation ids, starting on `selection-required`. */
+function controllerFor(source: BoardSource): BoardController {
   let counter = 0
   return createBoardController({
     source,
-    projectId,
     newOperationId: () => `op-${++counter}`,
   })
+}
+
+/**
+ * A controller whose project was explicitly selected and read (Q1=B: the panel
+ * never starts with a project, so tests must select one like the UI would).
+ *
+ * @param source - the scripted data source.
+ * @param projectId - the project to select.
+ * @returns the loaded controller.
+ */
+async function loadedController(source: BoardSource, projectId = 'ws-1'): Promise<BoardController> {
+  const controller = controllerFor(source)
+  await controller.selectProject(projectId)
+  return controller
 }
 
 /** The board currently on screen, whether the read succeeded or kept data. */
@@ -163,8 +176,7 @@ function shownTasks(state: BoardState, status: string): string[] {
 describe('read states (F01 three-state read, REC-05)', () => {
   it('shows the board after a successful read', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     const state = controller.getState()
     expect(state.read.kind).toBe('ready')
@@ -175,8 +187,7 @@ describe('read states (F01 three-state read, REC-05)', () => {
 
   it('keeps known data and offers a retry when a read fails, never an empty board', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     source.nextRead = { ok: false, code: 'read-failed', message: '读取失败' }
     await controller.load()
@@ -193,8 +204,7 @@ describe('read states (F01 three-state read, REC-05)', () => {
 
   it('shows an unregistered project as its own state, with no board at all', async () => {
     const source = fakeSource({ read: { ok: false, code: 'unknown-project', message: UNKNOWN_PROJECT_MESSAGE } })
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     const state = controller.getState()
     expect(state.read.kind).toBe('unknown-project')
@@ -203,8 +213,7 @@ describe('read states (F01 three-state read, REC-05)', () => {
 
   it('drops a response that belongs to another project', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     // The data layer keeps answering for ws-1 while ws-2 is selected.
     source.nextRead = { ok: true, snapshot: snapshot() as never }
@@ -218,8 +227,7 @@ describe('read states (F01 three-state read, REC-05)', () => {
 
   it('clears the previous project before the new one arrives', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     source.nextRead = { ok: true, snapshot: snapshot({ project: { ...PROJECT, projectId: 'ws-2' } }) as never }
     await controller.selectProject('ws-2')
@@ -233,16 +241,14 @@ describe('read states (F01 three-state read, REC-05)', () => {
 describe('status entry points (F02-R02: menu ≡ drag)', () => {
   it('sends the same request whether the user used the menu or dropped the card', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     controller.menuSelectStatus('t1', 'doing')
     await Promise.resolve()
     const fromMenu = source.statusCalls[0]
 
     const other = fakeSource()
-    const otherController = controllerFor(other)
-    await otherController.load()
+    const otherController = await loadedController(other)
     otherController.dropTask({ taskId: 't1', toStatus: 'doing', toIndex: 0 })
     await Promise.resolve()
     const fromDrop = other.statusCalls[0]
@@ -259,8 +265,7 @@ describe('status entry points (F02-R02: menu ≡ drag)', () => {
 
   it('refuses to enter blocked without a reason: dialog opens, nothing is written', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     controller.menuSelectStatus('t1', 'blocked')
     await Promise.resolve()
@@ -276,8 +281,7 @@ describe('status entry points (F02-R02: menu ≡ drag)', () => {
 
   it('confirms a blocked transition once a reason is typed, and keeps the reason on cancel', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     controller.menuSelectStatus('t1', 'blocked')
     controller.setDialogReason('   ')
@@ -308,8 +312,7 @@ describe('status entry points (F02-R02: menu ≡ drag)', () => {
   it('refuses quietly while the same task already has a change in flight', async () => {
     const source = fakeSource()
     source.holdWrites = true
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     controller.menuSelectStatus('t1', 'doing')
     controller.menuSelectStatus('t1', 'done')
@@ -324,8 +327,7 @@ describe('status entry points (F02-R02: menu ≡ drag)', () => {
 
   it('shows the formal status again and offers a retry when the write fails', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     source.nextWrite = { ok: false, code: 'save-failed', message: '保存失败：正式状态与顺序未改变，可重试。' }
     controller.menuSelectStatus('t1', 'doing')
@@ -354,8 +356,7 @@ describe('status entry points (F02-R02: menu ≡ drag)', () => {
 
   it('keeps the order and shows the failure when a reorder fails', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     source.nextWrite = { ok: false, code: 'save-failed', message: '保存失败' }
     controller.dropTask({ taskId: 't2', toStatus: 'doing', toIndex: 3 })
@@ -375,8 +376,7 @@ describe('capability gating', () => {
         snapshot: snapshot({ capabilities: { statusChange: false, reorder: false, undo: false } }) as never,
       },
     })
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     controller.menuSelectStatus('t1', 'doing')
     await Promise.resolve()
@@ -391,8 +391,7 @@ describe('capability gating', () => {
     const source = fakeSource({
       read: { ok: true, snapshot: snapshot({ capabilities: { statusChange: false, reorder: false, undo: false } }) as never },
     })
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     controller.menuSelectStatus('t1', 'blocked')
     expect(controller.getState().statusDialog?.invalidReason).toBe(true)
@@ -403,8 +402,7 @@ describe('capability gating', () => {
 describe('undo (F02-R04)', () => {
   it('offers undo after a successful change and calls the data layer', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     // The undo credential comes only from the post-write snapshot.
     source.nextWrite = {
@@ -443,8 +441,7 @@ describe('undo (F02-R04)', () => {
 
   it('refuses to overwrite later changes and shows the actual current value', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     source.nextWrite = {
       ok: true,
@@ -474,8 +471,7 @@ describe('undo (F02-R04)', () => {
 
   it('does not offer undo when the post-write snapshot carries no undoTarget', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     source.nextWrite = { ok: true, snapshot: snapshot() as never, undoable: false }
     controller.menuSelectStatus('t1', 'doing')
@@ -494,8 +490,7 @@ describe('undo (F02-R04)', () => {
 describe('detail view and collapse state', () => {
   it('opens the detail of a rendered task and closes it without losing the board', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
 
     controller.openDetail('t2')
     const detail: TaskDetailView | null = controller.getState().detail
@@ -509,18 +504,204 @@ describe('detail view and collapse state', () => {
 
   it('ignores a detail request for a task that is not rendered', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
     controller.openDetail('nope')
     expect(controller.getState().detail).toBeNull()
   })
 
   it('keeps the collapsed column collapsed until it is expanded', async () => {
     const source = fakeSource()
-    const controller = controllerFor(source)
-    await controller.load()
+    const controller = await loadedController(source)
     expect(controller.getState().cancelledExpanded).toBe(false)
     controller.toggleCancelled()
     expect(controller.getState().cancelledExpanded).toBe(true)
+  })
+})
+
+describe('selection state (Q1=B: explicit, in-memory, never persisted)', () => {
+  it('starts on selection-required and never reads without a selection', async () => {
+    const source = fakeSource()
+    const controller = controllerFor(source)
+
+    const state = controller.getState()
+    expect(state.read.kind).toBe('selection-required')
+    expect(state.selectedProjectId).toBeNull()
+    if (state.read.kind === 'selection-required') {
+      expect(state.read.message).toContain('显式选择')
+    }
+
+    // load() is selection-driven: with no selection it must not touch the source.
+    await controller.load()
+    expect(source.reads).toBe(0)
+    expect(controller.getState().read.kind).toBe('selection-required')
+  })
+
+  it('passes the selected project id on every read', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+
+    expect(source.readProjects).toEqual(['ws-1'])
+    expect(controller.getState().selectedProjectId).toBe('ws-1')
+    await controller.load()
+    expect(source.readProjects).toEqual(['ws-1', 'ws-1'])
+  })
+
+  it('resetSelection returns to selection-required without a read and clears the view', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    expect(controller.getState().read.kind).toBe('ready')
+    expect(viewOf(controller.getState())).not.toBeNull()
+
+    controller.resetSelection()
+
+    const state = controller.getState()
+    expect(state.read.kind).toBe('selection-required')
+    expect(state.selectedProjectId).toBeNull()
+    expect(viewOf(state)).toBeNull()
+    expect(state.detail).toBeNull()
+    expect(source.reads).toBe(1)
+    // A load after the reset still does not read.
+    await controller.load()
+    expect(source.reads).toBe(1)
+  })
+
+  it('selectProject(null) returns to selection-required', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+
+    await controller.selectProject(null)
+
+    expect(controller.getState().read.kind).toBe('selection-required')
+    expect(controller.getState().selectedProjectId).toBeNull()
+    expect(source.reads).toBe(1)
+  })
+
+  it('a fresh controller has no memory of a previous selection', async () => {
+    const source = fakeSource()
+    const first = await loadedController(source)
+    expect(first.getState().selectedProjectId).toBe('ws-1')
+
+    const second = controllerFor(source)
+    expect(second.getState().selectedProjectId).toBeNull()
+    expect(second.getState().read.kind).toBe('selection-required')
+    expect(source.reads).toBe(1)
+  })
+})
+
+describe('write-failure retry policy (F9/F10/D6: no blind write replay)', () => {
+  it('keeps a write retry only for a confirmed non-landing (save-failed)', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+
+    source.nextWrite = { ok: false, code: 'save-failed', message: '保存失败' }
+    controller.menuSelectStatus('t1', 'doing')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const feedback = controller.getState().feedback
+    expect(feedback?.kind).toBe('failure')
+    if (feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(feedback.retry?.kind).toBe('status')
+  })
+
+  it('offers only a re-read after an unknown write result, and retryPending never re-writes', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+
+    source.nextWrite = { ok: false, code: 'unknown-result', message: '写入结果未知' }
+    controller.menuSelectStatus('t1', 'doing')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const feedback = controller.getState().feedback
+    expect(feedback?.kind).toBe('failure')
+    if (feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(feedback.code).toBe('unknown-result')
+    expect(feedback.retry).toEqual({ kind: 'read' })
+
+    const readsBefore = source.reads
+    controller.retryPending()
+    await Promise.resolve()
+    await Promise.resolve()
+    // The retry is a re-read; the write is not replayed (it may already have landed).
+    expect(source.reads).toBe(readsBefore + 1)
+    expect(source.statusCalls).toHaveLength(1)
+    expect(source.reorderCalls).toHaveLength(0)
+    expect(source.undoCalls).toHaveLength(0)
+  })
+
+  it('offers only a re-read after a read-failed write outcome (no-change re-read failed)', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+
+    source.nextWrite = { ok: false, code: 'read-failed', message: '正式值未变，但重读失败。' }
+    controller.dropTask({ taskId: 't2', toStatus: 'doing', toIndex: 3 })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const feedback = controller.getState().feedback
+    expect(feedback?.kind).toBe('failure')
+    if (feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(feedback.code).toBe('read-failed')
+    expect(feedback.retry).toEqual({ kind: 'read' })
+
+    controller.retryPending()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(source.reorderCalls).toHaveLength(1)
+  })
+
+  it('treats a throwing transport as unknown-result with only a re-read available', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    source.setStatus = async () => { throw new Error('socket dropped') }
+
+    controller.menuSelectStatus('t1', 'doing')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const feedback = controller.getState().feedback
+    expect(feedback?.kind).toBe('failure')
+    if (feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(feedback.code).toBe('unknown-result')
+    expect(feedback.retry).toEqual({ kind: 'read' })
+  })
+})
+
+describe('undo from the read snapshot (Q2=A: refresh-safe)', () => {
+  it('undoes the task credential carried by the snapshot with a fresh operation id', async () => {
+    const source = fakeSource({
+      read: {
+        ok: true,
+        snapshot: snapshot({
+          tasks: [
+            task('t1', 'doing', 0, { statusRevision: 3, undoTarget: UNDO_TARGET }),
+            task('t2', 'doing', 1),
+          ],
+        }) as never,
+      },
+    })
+    const controller = await loadedController(source)
+
+    controller.undoTaskChange('t1')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(source.undoCalls).toEqual([{
+      taskId: 't1',
+      operationId: 'op-1',
+      expectedStatusVersion: 'ver1:2',
+      appliedUpdateId: 'op-prev',
+    }])
+  })
+
+  it('does nothing when the task has no undoTarget', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+
+    controller.undoTaskChange('t1')
+    await Promise.resolve()
+
+    expect(source.undoCalls).toHaveLength(0)
   })
 })

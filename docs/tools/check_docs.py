@@ -355,7 +355,8 @@ if len(roadmap_body) == 2:
 
 # The verification template must speak the one canonical conclusion vocabulary
 # (S4: real-operation evidence and fault-injected evidence stay distinct at word
-# level). This is a light guard against template/policy drift, not a record check.
+# level; product decision (b): a seventh function-level summary value exists).
+# This is a light guard against template/policy drift, not a record check.
 VERIFICATION_VOCABULARY = ('待执行', '通过（真实操作）', '通过（含故障注入）', '部分执行', '失败', '结果需核对')
 verification_template = PRD / 'templates' / 'verification.md'
 require(verification_template.exists(), 'Missing docs/prd/templates/verification.md')
@@ -382,6 +383,20 @@ if verification_template.exists():
                 value = cells[conclusion_at]
                 require(value == '' or value in VERIFICATION_VOCABULARY,
                         f'verification.md template: conclusion word {value!r} not in the frozen vocabulary')
+
+# Both the template and the delivery-status page must list the full seven-value
+# vocabulary (six AT-level words + one function-level summary word). This keeps
+# a future edit from silently regressing to six values.
+FUNCTION_SUMMARY_VOCABULARY = ('通过（真实操作，含注入分支）',)
+ALL_VOCABULARY = VERIFICATION_VOCABULARY + FUNCTION_SUMMARY_VOCABULARY
+for vocab_path in (verification_template, ROOT / 'docs' / 'delivery' / 'status.md'):
+    require(vocab_path.exists(), f'Missing {vocab_path.relative_to(ROOT)}')
+    if vocab_path.exists():
+        vocab_text = vocab_path.read_text(encoding='utf-8')
+        missing = [word for word in ALL_VOCABULARY if word not in vocab_text]
+        require(not missing,
+                f'{vocab_path.relative_to(ROOT)}: must declare all seven conclusion values '
+                f'(six AT-level + one function-level summary); missing {missing}')
 
 if ERRORS:
     print('DOCUMENT CHECK FAILED')

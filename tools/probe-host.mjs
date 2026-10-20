@@ -517,7 +517,7 @@ if (boardLine !== null) {
   let detail = payload
   try {
     const parsed = JSON.parse(payload)
-    detail = `channel=${String(parsed.channel)} registered=${String(parsed.registered)} reason=${String(parsed.reason)}`
+    detail = `channel=${String(parsed.channel)} registered=${String(parsed.registered)} path=${String(parsed.path)} reason=${String(parsed.reason)}`
   } catch { /* keep the raw payload */ }
   // This check is about the channel, not the data layer (a broken open() must
   // not be able to hide behind a PASS here). Surface the final data-layer state

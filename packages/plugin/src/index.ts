@@ -103,6 +103,21 @@ export const BOARD_CHANNEL_EVENT = 'aikanban:board-channel'
 /** Why the board channel is (or is not) registered. */
 export type BoardChannelRegistrationReason = 'no-connection' | 'register-failed' | null
 
+/**
+ * Which registration path an attempt took.
+ *
+ * `public` — the documented `connection.rpc.handle` worked.
+ * `compat` — the documented entry point threw and the fallback in
+ *   `scoped-channel-registration.ts` registered the route instead (DSH 44.7.0
+ *   ownership defect; see ADR-005「宿主缺陷与兼容层」).
+ * `failed` — neither path produced a route.
+ * `null` — there was no `connection` service to try at all.
+ *
+ * Published so a host upgrade is observable: after a fix, `path` must read
+ * `public`; a `compat` that stops working shows up as `failed`.
+ */
+export type BoardChannelEventPath = 'public' | 'compat' | 'failed' | null
+
 /** Payload of one {@link BOARD_CHANNEL_EVENT} message. */
 export interface BoardChannelEventPayload {
   /** The channel the registration targets ({@link BOARD_CHANNEL} on failure). */
@@ -111,6 +126,8 @@ export interface BoardChannelEventPayload {
   readonly registered: boolean
   /** Why it did not register; `null` on success. */
   readonly reason: BoardChannelRegistrationReason
+  /** Which registration path was used; see {@link BoardChannelEventPath}. */
+  readonly path: BoardChannelEventPath
   /** Epoch milliseconds of the attempt. */
   readonly at: number
 }
@@ -502,7 +519,8 @@ export function apply(ctx: HostContext): void {
     registered: boolean
     channel: string | null
     reason: BoardChannelRegistrationReason
-  } = { registered: false, channel: null, reason: null }
+    path: BoardChannelEventPath
+  } = { registered: false, channel: null, reason: null, path: null }
   /** Whether `apply()` has returned; late changes republish the signal. */
   let applyCompleted = false
 
@@ -589,6 +607,7 @@ export function apply(ctx: HostContext): void {
       channel: channelState.channel ?? BOARD_CHANNEL,
       registered: channelState.registered,
       reason: channelState.reason,
+      path: channelState.path,
       at: nowMs(),
     })
   }
@@ -599,8 +618,8 @@ export function apply(ctx: HostContext): void {
     readonly channel: string | null
     readonly reason: BoardChannelRegistrationReason
     readonly message: string
-    /** The documented path failed and the compatibility path succeeded. */
-    readonly viaCompat?: boolean
+    /** Which path produced this outcome (ADR-005「宿主缺陷与兼容层」). */
+    readonly path: BoardChannelEventPath
   }
 
   /**
@@ -612,9 +631,10 @@ export function apply(ctx: HostContext): void {
     channelState.registered = outcome.ok
     channelState.channel = outcome.ok ? outcome.channel : null
     channelState.reason = outcome.ok ? null : outcome.reason
+    channelState.path = outcome.path
     if (!outcome.ok) {
       ctx.logger?.warn(`${ACTIVATION_MARKER_PREFIX} board channel registration failed: ${outcome.message}`)
-    } else if (outcome.viaCompat === true) {
+    } else if (outcome.path === 'compat') {
       ctx.logger?.warn(
         `${ACTIVATION_MARKER_PREFIX} board channel registered through the compatibility path: `
         + 'this host\'s public connection.rpc.handle throws "cannot get property webServer without inject"',
@@ -638,6 +658,7 @@ export function apply(ctx: HostContext): void {
         channel: null,
         reason: 'no-connection',
         message: 'connection service is not bound',
+        path: null,
       })
       return
     }
@@ -646,14 +667,26 @@ export function apply(ctx: HostContext): void {
       const registration = registerBoardChannel(connection, delayedPort)
       settleChannelRegistration(
         registration.ok
-          ? { ok: true, channel: registration.channel, reason: null, message: '' }
-          : { ok: false, channel: null, reason: registration.reason, message: 'the connection service rejected rpc.handle registration' },
+          ? { ok: true, channel: registration.channel, reason: null, message: '', path: 'public' }
+          : {
+              ok: false,
+              channel: null,
+              reason: registration.reason,
+              message: 'the connection service rejected rpc.handle registration',
+              path: 'failed',
+            },
       )
     } catch (error) {
       // `register-failed` is diagnostic only — it is not a browser failure code:
       // an unregistered channel means the handler is never called, so browser
       // reads surface as `read-failed` and writes as `unknown-result`.
-      settleChannelRegistration({ ok: false, channel: null, reason: 'register-failed', message: errorMessage(error) })
+      settleChannelRegistration({
+        ok: false,
+        channel: null,
+        reason: 'register-failed',
+        message: errorMessage(error),
+        path: 'failed',
+      })
     }
   }
 
@@ -701,14 +734,26 @@ export function apply(ctx: HostContext): void {
                   channel: registration.channel,
                   reason: null,
                   message: '',
-                  viaCompat: registration.path === 'compat',
+                  path: registration.path === 'compat' ? 'compat' : 'public',
                 }
-              : { ok: false, channel: null, reason: 'register-failed', message: registration.message },
+              : {
+                  ok: false,
+                  channel: null,
+                  reason: 'register-failed',
+                  message: registration.message,
+                  path: 'failed',
+                },
           )
         } catch (error) {
           // A throwing injected callback must not become an unhandled fiber
           // rejection: report it and keep the visible failed state instead.
-          settleChannelRegistration({ ok: false, channel: null, reason: 'register-failed', message: errorMessage(error) })
+          settleChannelRegistration({
+            ok: false,
+            channel: null,
+            reason: 'register-failed',
+            message: errorMessage(error),
+            path: 'failed',
+          })
         }
       })
     } catch (error) {
@@ -717,6 +762,7 @@ export function apply(ctx: HostContext): void {
         channel: null,
         reason: 'register-failed',
         message: `ctx.inject threw: ${errorMessage(error)}`,
+        path: 'failed',
       })
     }
   }

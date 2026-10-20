@@ -31,6 +31,9 @@ importers:
 
   packages/plugin:
     devDependencies:
+      '@aikanban/core':
+        specifier: workspace:*
+        version: link:../core
       '@aikanban/plugin-client':
         specifier: workspace:*
         version: link:../plugin-client

@@ -54,6 +54,7 @@
     }
   },
   "devDependencies": {
+    "@aikanban/core": "workspace:*",
     "@aikanban/plugin-client": "workspace:*"
   },
   "engines": {

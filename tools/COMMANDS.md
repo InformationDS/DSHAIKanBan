@@ -221,16 +221,18 @@ git -C $BOX checkout --detach <commit-or-branch>
 & $NODE $PNPM install --frozen-lockfile
 & $NODE $PNPM run typecheck              # 期望 EXIT 0
 & $NODE $PNPM run build                  # 期望 EXIT 0；产出 packages/plugin/lib/index.js 与 lib/client.js
-& $NODE $PNPM -r --if-present run test   # 期望 149 通过
+& $NODE $PNPM -r --if-present run test   # 期望 164 通过（core 66 / plugin 53 / plugin-client 45）
 & $NODE tools\verify-host-import.mjs     # 期望 11/11 PASS
-& $NODE tools\probe-host.mjs             # 期望 PROBE OK 4/4（约 30–90 秒）
+& $NODE tools\probe-host.mjs             # 期望 PROBE OK 5/5（约 40–120 秒）
 ```
 
 **实测基线（2026-10-20，DSH 44.7.0，提交 `d7d73a6`）**：以上六条全部 `EXIT 0`。用例分布为 `packages/core` **66**（11 个测试文件）、`packages/plugin` **38**（3 个）、`packages/plugin-client` **45**（3 个），合计 **149**；§4 记的 35/26/7 是 2026-10-14 的更早快照，不要再用旧数字。
+
+**更新（2026-10-21，P2/P3 档）**：`packages/plugin` 新增 15 个 host 半接线用例后为 **53**，合计 **164**；探针新增第 5 项 `/aikanban` 注册断言后为 **5/5**。上方 149/4/4 是 2026-10-20 的历史快照，保留原文。
 
 ### 10.4 仍然禁止 / 仍然需要人
 
 - **仍然禁止** `pnpm --filter <包名>`（同步盘挂起）；一律用 `pnpm -r` 或 `pnpm -C`。
 - **仍然不要**自行重启用户的 GUI 进程。装进真实 profile 属于要用户确认的动作（见 §7/§8 与 `docs/engineering/architecture.md` 的未决项）；`desktop` profile 由 Electron 独占，CLI 的 `--dump-config` 会被拒绝。
 - **2026-10-20 已用启动环境变量注入 `DEEPSEEK_API_KEY` 完成复验**（`completed`、2 条 `assistant` 消息、`multiStepObserved=true`），详见 `docs/engineering/s0-reverification-20261019.md` 第 9 节；探针**默认仍不含凭据**，不要用「探针通过」替代真实模型验证。
-- `probe-host` 第 4 项若报 `SKIP … NODE_OPTIONS restricted`，属于**未观察**，不得当作通过。
+- `probe-host` 第 4/5 项若报 `SKIP … NODE_OPTIONS restricted`，属于**未观察**，不得当作通过；第 5 项 PASS 只证 `/aikanban` 已注册，数据层就绪以同一日志里的末次 `[probe] ACTIVATION` 的 `dataLayerReady` 为准（探针会把未观察到的情况列在 `not observed` 段）。

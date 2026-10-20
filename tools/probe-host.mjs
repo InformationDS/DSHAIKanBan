@@ -18,7 +18,7 @@
  * into the probe home except the throwaway `probe` profile — in particular no
  * credentials, so this probe stays hermetic and needs no live model.
  *
- * ## The four checks, and what each one proves
+ * ## The five checks, and what each one proves
  *
  * | # | Check | What a failure means |
  * | --- | --- | --- |
@@ -26,11 +26,12 @@
  * | 2 | A profile-anchored `import()` of the resolved package succeeds and `apply()` logs the marker | The host half cannot be resolved/imported **from the profile**, or it throws on activation. This uses `createRequire(<profile>/package.json)` deliberately, so a package that only resolves from this workspace fails here. |
  * | 3 | The booting host publishes a `window.__DSH_BOOT__` row for the package, and serves its revisioned `client.js` | The browser half was not accepted: `dsh.client` malformed, missing `exports["./client"]`, or the bundle missing. |
  * | 4 | A `node:diagnostics_channel` message arrives from inside the booting host | `apply()` did not actually run in the host process. |
+ * | 5 | An `aikanban:board-channel` message proves the booting host actually registered `/aikanban` (`registerBoardChannel`) | The board channel was never registered, so the browser half could not talk to the host even though `apply()` ran. The check only accepts `{ channel: '/aikanban', registered: true }`; a `registered: false` message (e.g. `reason: 'no-connection'` while the connection service is still late-arriving) is ignored, and the probe fails if only such a message was ever observed. |
  *
- * Check 4 uses the diagnostics channel, **not** a log line, on purpose: cordis's
- * logger is an in-memory ring buffer plus registered exporters, and the shipped
- * `dsh` app registers no console exporter in the profiles measured — so a
- * `logger.warn` marker is real but invisible from outside the process. The
+ * Checks 4 and 5 use the diagnostics channel, **not** a log line, on purpose:
+ * cordis's logger is an in-memory ring buffer plus registered exporters, and the
+ * shipped `dsh` app registers no console exporter in the profiles measured — so
+ * a `logger.warn` marker is real but invisible from outside the process. The
  * probe subscribes with `--require` passed through `NODE_OPTIONS`, which writes
  * nothing into the isolated home.
  *
@@ -64,13 +65,16 @@ const PACKAGE_NAME = '@aikanban/dsh-aikanban'
 /** The marker the host half logs when `apply()` runs. */
 const MARKER = '[aikanban] active'
 
+/** The line prefix the generated observer writes for the board-channel event. */
+const BOARD_CHANNEL_PREFIX = '[probe] BOARD-CHANNEL '
+
 const HOME_DIR_NAME = '.probe-home-scaffold'
 
 const HELP = `Usage: node tools/probe-host.mjs [options]
 
 Boot a real DSH host in an isolated, workspace-local Harness home and verify
-that the AIKanBan bundle is composed, resolved, imported, activated and
-published as a browser row.
+that the AIKanBan bundle is composed, resolved, imported and activated, that it
+registers its /aikanban board channel, and that it is published as a browser row.
 
 Options:
   --profile <name>   probe profile name (default: probe)
@@ -272,7 +276,7 @@ const linkPath = writeProbeProfile(profileDir)
 process.stdout.write(`prepared isolated home; ${PACKAGE_NAME} → ${linkPath}\n\n`)
 
 /* ---------------- 1. composition ---------------- */
-process.stdout.write('[1/4] composing the probe profile tree (--dump-config)\n')
+process.stdout.write('[1/5] composing the probe profile tree (--dump-config)\n')
 const dump = await run(node, [cli, '--profile', profileName, '--dump-config'], { env: { DSH_HOME: home }, timeoutMs: 180_000 })
 writeFileSync(dumpPath, `# exit ${String(dump.code)}\n# stdout\n${dump.stdout}\n# stderr\n${dump.stderr}\n`)
 const dumpLines = `${dump.stdout}\n${dump.stderr}`.split(/\r?\n/).filter((line) => line.includes('aikanban'))
@@ -286,7 +290,7 @@ if (dump.code === 0 && dumpLines.length > 0) {
 }
 
 /* ---------------- 2. profile-anchored resolution + activation ---------------- */
-process.stdout.write('\n[2/4] resolving and activating the host half from the profile directory\n')
+process.stdout.write('\n[2/5] resolving and activating the host half from the profile directory\n')
 try {
   // Anchor resolution at the PROFILE, exactly like the host: `createRequire`
   // against the profile manifest resolves `@aikanban/dsh-aikanban` through the
@@ -339,11 +343,11 @@ if (dumpOnly) {
   process.exit(checks.every((c) => c.ok) ? 0 : 1)
 }
 
-/* ---------------- 3 + 4. real boot ---------------- */
-process.stdout.write('\n[3/4] booting the probe host; reading its window.__DSH_BOOT__ graph\n')
+/* ---------------- 3 + 4 + 5. real boot ---------------- */
+process.stdout.write('\n[3/5] booting the probe host; reading its window.__DSH_BOOT__ graph\n')
 writeFileSync(logPath, '')
 
-// Subscribe to the plugin's activation channel inside the host process. The
+// Subscribe to the plugin's diagnostics channels inside the host process. The
 // cordis logger is an in-memory buffer plus exporters and the shipped dsh app
 // registers no console exporter, so a log line is NOT observable from outside;
 // `node:diagnostics_channel` is. The observer is a real file rather than an
@@ -351,10 +355,13 @@ writeFileSync(logPath, '')
 // var is fragile enough to prevent the host from starting at all — which looks
 // exactly like a plugin failure.
 const observerPath = join(outDir, 'activation-observer.cjs')
-writeFileSync(observerPath, `// Generated by tools/probe-host.mjs — subscribes to the AIKanBan activation channel.
+writeFileSync(observerPath, `// Generated by tools/probe-host.mjs — subscribes to the AIKanBan diagnostics channels.
 const dc = require('node:diagnostics_channel')
 dc.subscribe('aikanban:activation', (payload) => {
   process.stderr.write('[probe] ACTIVATION ' + JSON.stringify(payload) + '\\n')
+})
+dc.subscribe('aikanban:board-channel', (payload) => {
+  process.stderr.write('[probe] BOARD-CHANNEL ' + JSON.stringify(payload) + '\\n')
 })
 `)
 const child = spawn(node, [cli, '--profile', profileName, '--port', port, '--no-open'], {
@@ -389,6 +396,30 @@ function waitForLine(predicate, timeoutMs) {
       if (Date.now() > deadline) { clearInterval(poll); resolvePromise(null) }
     }, 250)
   })
+}
+
+/**
+ * Read the most recent activation payload the host published, if any.
+ *
+ * The host republishes on every late state change (data layer ready, channel
+ * registered), so the last line is the final state — unlike check 4, which only
+ * needs *an* activation to prove `apply()` ran.
+ *
+ * @returns {Record<string, unknown> | null} the parsed payload, or null.
+ */
+function latestActivation() {
+  const lines = bootLog.split(/\r?\n/)
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index] ?? ''
+    const marker = line.indexOf('[probe] ACTIVATION ')
+    if (marker < 0) continue
+    try {
+      return JSON.parse(line.slice(marker + '[probe] ACTIVATION '.length))
+    } catch {
+      // A truncated line is skipped; an earlier complete one may exist.
+    }
+  }
+  return null
 }
 
 const urlLine = await waitForLine((line) => line.includes('http://'), timeoutSec * 1000)
@@ -442,7 +473,7 @@ if (urlLine !== null) {
 
 record('host publishes a window.__DSH_BOOT__ row and serves client.js', boot.entryFound && boot.bundleOk, boot.detail)
 
-process.stdout.write('\n[4/4] waiting for the activation signal from inside the host\n')
+process.stdout.write('\n[4/5] waiting for the activation signal from inside the host\n')
 const signalLine = await waitForLine((line) => line.includes('[probe] ACTIVATION '), 60_000)
 if (signalLine !== null) {
   const payload = signalLine.slice(signalLine.indexOf('[probe] ACTIVATION ') + '[probe] ACTIVATION '.length)
@@ -460,6 +491,64 @@ if (signalLine !== null) {
 } else {
   process.stdout.write('  FAIL  the host never published aikanban:activation\n')
   record('apply() ran inside the booting host', false, 'no aikanban:activation message observed in the host process')
+}
+
+process.stdout.write('\n[5/5] waiting for the /aikanban board channel registration from inside the host\n')
+// Only a successful registration is a PASS. A `registered: false` line (the
+// public registration path failing, or a composition without `connection`) and
+// a line whose JSON does not parse are ignored while waiting; if no success
+// message arrives this check FAILs. Filtering instead of taking the first line
+// keeps the check independent of whether the host publishes a "not yet" line.
+const boardLine = observerUnavailable
+  ? null
+  : await waitForLine((line) => {
+      const marker = line.indexOf(BOARD_CHANNEL_PREFIX)
+      if (marker < 0) return false
+      try {
+        const parsed = JSON.parse(line.slice(marker + BOARD_CHANNEL_PREFIX.length))
+        return parsed?.channel === '/aikanban' && parsed?.registered === true
+      } catch {
+        return false
+      }
+    }, 60_000)
+if (boardLine !== null) {
+  const marker = boardLine.indexOf(BOARD_CHANNEL_PREFIX)
+  const payload = boardLine.slice(marker + BOARD_CHANNEL_PREFIX.length)
+  let detail = payload
+  try {
+    const parsed = JSON.parse(payload)
+    detail = `channel=${String(parsed.channel)} registered=${String(parsed.registered)} reason=${String(parsed.reason)}`
+  } catch { /* keep the raw payload */ }
+  // This check is about the channel, not the data layer (a broken open() must
+  // not be able to hide behind a PASS here). Surface the final data-layer state
+  // in the detail, and record it as *not observed* — never as verified — when
+  // the host never reported it ready.
+  const finalActivation = latestActivation()
+  const dataLayerReady = finalActivation?.['dataLayerReady'] === true
+  if (finalActivation !== null) detail += ` dataLayerReady=${String(finalActivation['dataLayerReady'])}`
+  process.stdout.write(`  PASS  the booting host registered the board channel:\n        ${detail}\n`)
+  record('host half registered /aikanban inside the booting host', true, detail)
+  if (!dataLayerReady) {
+    observations.push(
+      'the data layer was NOT observed ready in this run (dataLayerReady !== true): '
+      + 'channel registration alone does not prove the aikanban_core domain opened',
+    )
+  }
+} else if (observerUnavailable) {
+  // Never claim a skipped observation as verified.
+  process.stdout.write('  SKIP  the observer preload was refused into the host process (NODE_OPTIONS restricted)\n')
+  observations.push('the /aikanban board channel registration was NOT observed this run: the observer preload was refused')
+} else {
+  const seenPayloads = bootLog
+    .split(/\r?\n/)
+    .filter((line) => line.includes(BOARD_CHANNEL_PREFIX))
+    .map((line) => line.slice(line.indexOf(BOARD_CHANNEL_PREFIX) + BOARD_CHANNEL_PREFIX.length).trim())
+  const lastSeen = seenPayloads.at(-1)
+  const detail = lastSeen === undefined
+    ? 'no aikanban:board-channel message observed in the host process'
+    : `no registered:true message for channel "/aikanban"; last observed: ${lastSeen}`
+  process.stdout.write(`  FAIL  the host never reported a successful /aikanban registration\n          ${detail}\n`)
+  record('host half registered /aikanban via registerBoardChannel', false, detail)
 }
 
 // Tear the probe host down: never leave a server behind.

@@ -18,13 +18,18 @@ import { describe, expect, it } from 'vitest'
 import {
   ACTIVATION_CHANNEL,
   ACTIVATION_MARKER_PREFIX,
+  BOARD_CHANNEL_EVENT,
   STATUS_TOOL_NAME,
   apply,
   createStatusTool,
+  getDataLayerError,
+  getKanbanCore,
   getLastActivation,
   inject,
   publishActivationSignal,
   type ActivationSnapshot,
+  type BoardChannelEventPayload,
+  type BoardRpcHandler,
   type DiagnosticTool,
   type HostContext,
 } from '../src/index.js'
@@ -36,10 +41,15 @@ import {
  * returned `bindService` emits `internal/service` afterwards, which is how a
  * real host delivers a late binding. Pass `withTools: false` to model a
  * composition that provides no tool registry at all.
+ *
+ * `withInject: true` adds `ctx.inject(deps, callback)`: a child scope that runs
+ * once every dependency is bound (the shipped host's dynamic-inject contract).
+ * Without it, the context models the load-chain fakes, which have no injector.
  */
-function fakeHost(options: { services?: Record<string, unknown>; withTools?: boolean } = {}) {
+function fakeHost(options: { services?: Record<string, unknown>; withTools?: boolean; withInject?: boolean } = {}) {
   const logs: string[] = []
   const listeners = new Map<string, ((...args: never[]) => void)[]>()
+  const injections: { deps: readonly string[]; callback: (scoped: HostContext) => void }[] = []
   const registered: unknown[] = []
   const sections: { name: string; order: number; text: string }[] = []
   const bound = new Map<string, unknown>(Object.entries(options.services ?? {}))
@@ -49,6 +59,26 @@ function fakeHost(options: { services?: Record<string, unknown>; withTools?: boo
     section: (s: { name: string; order: number; text: string }) => { sections.push(s); return s },
   }
   if (options.withTools !== false) bound.set('tools', toolsService)
+
+  /** A child scope with the injected dependencies exposed as direct properties. */
+  const scopedContext = (): HostContext => {
+    const scoped: Record<string, unknown> = {
+      logger: ctx.logger,
+      reflect: { get: (name: string) => bound.get(name) },
+      on: () => undefined,
+    }
+    for (const [name, value] of bound) scoped[name] = value
+    return scoped as unknown as HostContext
+  }
+
+  /** Run every queued injection whose dependencies are now all bound. */
+  const runInjections = (): void => {
+    for (const injection of [...injections]) {
+      if (!injection.deps.every((name) => bound.has(name))) continue
+      injections.splice(injections.indexOf(injection), 1)
+      injection.callback(scopedContext())
+    }
+  }
 
   const ctx: HostContext = {
     logger: {
@@ -62,6 +92,15 @@ function fakeHost(options: { services?: Record<string, unknown>; withTools?: boo
       listeners.set(event, list)
       return () => { listeners.set(event, list.filter((l) => l !== listener)) }
     },
+    ...(options.withInject === true
+      ? {
+          inject: (deps: readonly string[], callback: (scoped: HostContext) => void) => {
+            injections.push({ deps, callback })
+            runInjections()
+            return undefined
+          },
+        }
+      : {}),
   }
 
   return {
@@ -74,6 +113,7 @@ function fakeHost(options: { services?: Record<string, unknown>; withTools?: boo
       for (const listener of listeners.get('internal/service') ?? []) {
         (listener as unknown as (n: string, v: unknown) => void)(name, value)
       }
+      runInjections()
     },
     toolsService: () => toolsService,
     systemPromptService: () => systemPromptService,
@@ -85,6 +125,91 @@ function bareHost(): HostContext {
   return { reflect: { get: () => undefined }, on: () => undefined }
 }
 
+/**
+ * A `connection` service double recording every `rpc.handle` call.
+ *
+ * `throwOnHandle` models a composition-level channel collision, which the host
+ * half must report as `register-failed` instead of letting it break `apply()`.
+ */
+function fakeConnection(options: { throwOnHandle?: boolean } = {}) {
+  const handles: { channel: string; handler: BoardRpcHandler }[] = []
+  const connection = {
+    rpc: {
+      handle(channel: string, handler: BoardRpcHandler) {
+        if (options.throwOnHandle === true) throw new Error('rpc.handle refused the channel')
+        handles.push({ channel, handler })
+        return () => { handles.length = 0 }
+      },
+    },
+  }
+  return { connection, handles }
+}
+
+/** A storage-domain handle good enough for `createStorageDomainPort`. */
+function fakeDomain(name = 'aikanban_core') {
+  const tables = new Map<string, Map<string, unknown>>()
+  const tableOf = (tableName: string): Map<string, unknown> => {
+    let records = tables.get(tableName)
+    if (records === undefined) {
+      records = new Map()
+      tables.set(tableName, records)
+    }
+    return records
+  }
+  return {
+    name,
+    table(tableName: string) {
+      const records = tableOf(tableName)
+      return {
+        get: (key: string) => records.get(key),
+        entries: () => records.entries(),
+        keys: () => records.keys(),
+        get size() { return records.size },
+        put: async (key: string, value: unknown) => { records.set(key, value) },
+        delete: async (key: string) => records.delete(key),
+        update: async (key: string, transform: (current: unknown) => unknown) => {
+          const next = transform(records.get(key))
+          records.set(key, next)
+          return next
+        },
+      }
+    },
+  }
+}
+
+/** A `storageDomain` service double recording the specs it was asked to open. */
+function fakeStorageDomain(options: { reject?: Error; domainName?: string } = {}) {
+  const opened: unknown[] = []
+  return {
+    opened,
+    service: {
+      async open(spec: unknown) {
+        opened.push(spec)
+        if (options.reject !== undefined) throw options.reject
+        return fakeDomain(options.domainName)
+      },
+    },
+  }
+}
+
+/** Subscribe to one diagnostics channel for the duration of a test. */
+async function subscribe<T>(channelName: string) {
+  const dc = await import('node:diagnostics_channel')
+  const received: T[] = []
+  const listener = (payload: unknown): void => { received.push(payload as T) }
+  dc.subscribe(channelName, listener)
+  return { received, unsubscribe: (): void => { dc.unsubscribe(channelName, listener) } }
+}
+
+/** Wait for an asynchronously-published state; fails the test after ~1s. */
+async function waitFor(predicate: () => boolean, label: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`timed out waiting for ${label}`)
+}
+
 describe('host half: activation', () => {
   it('activates without throwing when no optional service is bound', () => {
     expect(() => { apply(bareHost()) }).not.toThrow()
@@ -92,6 +217,9 @@ describe('host half: activation', () => {
     expect(snapshot).not.toBeNull()
     expect(snapshot?.statusToolRegistered).toBe(false)
     expect(snapshot?.promptSectionRegistered).toBe(false)
+    expect(snapshot?.boardChannelRegistered).toBe(false)
+    expect(snapshot?.boardChannel).toBeNull()
+    expect(snapshot?.dataLayerReady).toBe(false)
     expect(snapshot?.servicesObserved).toEqual([])
   })
 
@@ -180,6 +308,9 @@ describe('host half: diagnostic tool', () => {
       pid: null,
       statusToolRegistered: false,
       promptSectionRegistered: false,
+      boardChannelRegistered: false,
+      boardChannel: null,
+      dataLayerReady: false,
       servicesObserved: [],
     })
     expect(tool.name).toBe(STATUS_TOOL_NAME)
@@ -261,12 +392,16 @@ describe('host half: activation signal', () => {
       pid: null,
       statusToolRegistered: false,
       promptSectionRegistered: false,
+      boardChannelRegistered: false,
+      boardChannel: null,
+      dataLayerReady: false,
       servicesObserved: [],
     }) }).not.toThrow()
   })
 
   it('names the channel with the plugin prefix so no DSH channel is shadowed', () => {
     expect(ACTIVATION_CHANNEL).toMatch(/^aikanban:/)
+    expect(BOARD_CHANNEL_EVENT).toMatch(/^aikanban:/)
   })
 })
 
@@ -293,6 +428,9 @@ describe('host half: output schema obeys the host-enforced subset', () => {
     pid: null,
     statusToolRegistered: false,
     promptSectionRegistered: false,
+    boardChannelRegistered: false,
+    boardChannel: null,
+    dataLayerReady: false,
     servicesObserved: [],
   })
 
@@ -377,6 +515,25 @@ describe('host half: output schema obeys the host-enforced subset', () => {
     expect(checkSchema(tool.output.schema)).toEqual([])
   })
 
+  it('covers exactly the runtime activation snapshot fields (sentinel)', () => {
+    // Benchmarked against `apply(fakeHost)` + `getLastActivation()`, NOT a
+    // hand-written literal: test files are not checked by `tsc -b`, so a literal
+    // and the schema could drift together while this assertion still passed.
+    const host = fakeHost()
+    apply(host.ctx)
+    const snapshot = getLastActivation()
+    expect(snapshot, 'apply() did not record an activation snapshot').not.toBeNull()
+    const runtime = createStatusTool(snapshot as ActivationSnapshot)
+    const schema = runtime.output.schema as {
+      properties?: Record<string, unknown>
+      required?: readonly string[]
+    }
+    const fields = Object.keys(snapshot as ActivationSnapshot).sort()
+    expect(Object.keys(schema.properties ?? {}).sort()).toEqual(fields)
+    expect([...(schema.required ?? [])].sort()).toEqual(fields)
+    expect(checkSchema(schema)).toEqual([])
+  })
+
   it('rejects the mistakes that broke the real host (regression guard)', () => {
     // Mistake 1: `required: true` on a property. The host accepts `required`
     // only as an OBJECT-level array, so on a string node it reports the
@@ -415,5 +572,316 @@ describe('host half: output schema obeys the host-enforced subset', () => {
 
   it('accepts an empty parameter schema (no-argument tool)', () => {
     expect(tool.parameters).toEqual({})
+  })
+})
+
+/**
+ * `/aikanban` registration (ADR-005, s1-wiring.md §5.1/§5.5).
+ *
+ * The channel is registered synchronously in `apply()`, but the `connection`
+ * service arrives after `apply()` in the shipped web host, so the late-binding
+ * path is the one the probe actually exercises. A registration failure must be
+ * visible on the diagnostics channel and must not throw out of `apply()`.
+ */
+describe('host half: /aikanban board channel', () => {
+  it('registers /aikanban when the connection service is already bound', async () => {
+    const { connection, handles } = fakeConnection()
+    const host = fakeHost({ services: { connection } })
+    const events = await subscribe<BoardChannelEventPayload>(BOARD_CHANNEL_EVENT)
+    try {
+      apply(host.ctx)
+      expect(handles.map((entry) => entry.channel)).toEqual(['/aikanban'])
+      const snapshot = getLastActivation()
+      expect(snapshot?.boardChannelRegistered).toBe(true)
+      expect(snapshot?.boardChannel).toBe('/aikanban')
+      const registered = events.received.find((event) => event.registered)
+      expect(registered).toMatchObject({ channel: '/aikanban', registered: true, reason: null })
+      expect(typeof registered?.at).toBe('number')
+    } finally {
+      events.unsubscribe()
+    }
+  })
+
+  it('registers the channel when connection arrives after apply()', async () => {
+    const host = fakeHost()
+    const { connection, handles } = fakeConnection()
+    const events = await subscribe<BoardChannelEventPayload>(BOARD_CHANNEL_EVENT)
+    try {
+      apply(host.ctx)
+      expect(getLastActivation()?.boardChannelRegistered).toBe(false)
+      expect(events.received.some((event) => event.reason === 'no-connection')).toBe(true)
+
+      host.bindService('connection', connection)
+
+      expect(handles.map((entry) => entry.channel)).toEqual(['/aikanban'])
+      expect(getLastActivation()?.boardChannelRegistered).toBe(true)
+      expect(getLastActivation()?.boardChannel).toBe('/aikanban')
+      expect(events.received.some((event) => event.registered && event.channel === '/aikanban')).toBe(true)
+    } finally {
+      events.unsubscribe()
+    }
+  })
+
+  it('does not throw and reports no-connection when connection is absent', async () => {
+    const host = fakeHost()
+    const events = await subscribe<BoardChannelEventPayload>(BOARD_CHANNEL_EVENT)
+    try {
+      expect(() => { apply(host.ctx) }).not.toThrow()
+      expect(getLastActivation()?.boardChannelRegistered).toBe(false)
+      expect(getLastActivation()?.boardChannel).toBeNull()
+      const event = events.received[0]
+      expect(event).toMatchObject({ channel: '/aikanban', registered: false, reason: 'no-connection' })
+      expect(typeof event?.at).toBe('number')
+    } finally {
+      events.unsubscribe()
+    }
+  })
+
+  it('reports register-failed and does not throw when rpc.handle throws', async () => {
+    const { connection } = fakeConnection({ throwOnHandle: true })
+    const host = fakeHost({ services: { connection } })
+    const events = await subscribe<BoardChannelEventPayload>(BOARD_CHANNEL_EVENT)
+    try {
+      expect(() => { apply(host.ctx) }).not.toThrow()
+      expect(getLastActivation()?.boardChannelRegistered).toBe(false)
+      expect(getLastActivation()?.boardChannel).toBeNull()
+      expect(events.received.some((event) => event.reason === 'register-failed')).toBe(true)
+    } finally {
+      events.unsubscribe()
+    }
+  })
+
+  it('answers unavailable on every endpoint before the data layer is ready', async () => {
+    const { connection, handles } = fakeConnection()
+    const host = fakeHost({ services: { connection } })
+    apply(host.ctx)
+    const handler = handles[0]?.handler
+    expect(handler).toBeDefined()
+    if (handler === undefined) return
+    const signal = AbortSignal.timeout(5_000)
+
+    const read = await handler('board/read', { projectId: 'project-1' }, signal)
+    expect(read).toMatchObject({ ok: false, error: { code: 'unavailable' } })
+    const setStatus = await handler('task/status.set', { taskId: 't1', next: 'done', operationId: 'op-1' }, signal)
+    expect(setStatus).toMatchObject({ ok: false, error: { code: 'unavailable' } })
+    const reorder = await handler('task/reorder', { taskId: 't1', status: 'todo', toIndex: 0, operationId: 'op-2' }, signal)
+    expect(reorder).toMatchObject({ ok: false, error: { code: 'unavailable' } })
+    const undo = await handler('task/status.undo', { taskId: 't1', operationId: 'op-3' }, signal)
+    expect(undo).toMatchObject({ ok: false, error: { code: 'unavailable' } })
+  })
+})
+
+/**
+ * Data-layer bootstrap (s1-wiring.md §5.1/§5.2).
+ *
+ * `openDataLayer` must open the real spec shape through whatever `open()`
+ * implementation the host exposes, do one read, and report failure instead of
+ * throwing. The zod-free shim is asserted to actually validate, because a
+ * pass-through stub would silently accept corrupt records on reopen.
+ */
+describe('host half: data layer bootstrap', () => {
+  it('opens aikanban_core through storageDomain and marks the data layer ready', async () => {
+    const storage = fakeStorageDomain()
+    const { connection, handles } = fakeConnection()
+    const host = fakeHost({ services: { storageDomain: storage.service, connection } })
+    apply(host.ctx)
+    await waitFor(() => getLastActivation()?.dataLayerReady === true, 'dataLayerReady=true')
+
+    expect(storage.opened).toHaveLength(1)
+    const spec = storage.opened[0] as {
+      name: string
+      version: number
+      layout: string
+      tables: Record<string, { valueSchema: { parse(value: unknown): unknown } }>
+    }
+    expect(spec.name).toBe('aikanban_core')
+    expect(spec.version).toBe(1)
+    expect(spec.layout).toBe('single')
+    expect(Object.keys(spec.tables).sort()).toEqual(['drafts', 'scope_state'])
+    // The shim is real validation, not a pass-through stub.
+    expect(() => spec.tables['scope_state']?.valueSchema.parse({})).toThrow()
+    expect(getKanbanCore()).not.toBeNull()
+    expect(getLastActivation()?.dataLayerReady).toBe(true)
+    expect(getLastActivation()?.servicesObserved).toContain('storageDomain')
+
+    // Ready without the core adapter (P5b) = explicit placeholder, never an
+    // empty board and never a silent success.
+    const handler = handles[0]?.handler
+    expect(handler).toBeDefined()
+    if (handler === undefined) return
+    const signal = AbortSignal.timeout(5_000)
+    const read = await handler('board/read', { projectId: 'project-1' }, signal)
+    expect(read).toMatchObject({ ok: false, error: { code: 'read-failed' } })
+    expect(JSON.stringify(read)).toContain('not-wired-yet')
+    const write = await handler('task/status.set', { taskId: 't1', next: 'done', operationId: 'op-1' }, signal)
+    expect(write).toMatchObject({ ok: false, error: { code: 'save-failed' } })
+    expect(JSON.stringify(write)).toContain('not-wired-yet')
+  })
+
+  it('keeps dataLayerReady false and exposes the reason when open() rejects', async () => {
+    const storage = fakeStorageDomain({ reject: new Error('domain was refused by the host') })
+    const host = fakeHost({ services: { storageDomain: storage.service } })
+    expect(() => { apply(host.ctx) }).not.toThrow()
+    await waitFor(() => getDataLayerError() !== null, 'a visible data-layer failure')
+    expect(getLastActivation()?.dataLayerReady).toBe(false)
+    expect(getKanbanCore()).toBeNull()
+    expect(getDataLayerError()).toContain('domain was refused by the host')
+  })
+
+  it('does not attempt to open a domain when storageDomain is absent', async () => {
+    const host = fakeHost()
+    apply(host.ctx)
+    // Give a (wrong) bootstrap a chance to run: none must happen without the service.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(getKanbanCore()).toBeNull()
+    expect(getLastActivation()?.dataLayerReady).toBe(false)
+    expect(getDataLayerError()).toBe('storageDomain service is not bound')
+  })
+
+  it('republishes the activation signal once the data layer is ready', async () => {
+    const storage = fakeStorageDomain()
+    const host = fakeHost({ services: { storageDomain: storage.service } })
+    const dc = await import('node:diagnostics_channel')
+    const received: ActivationSnapshot[] = []
+    const listener = (payload: unknown): void => { received.push(payload as ActivationSnapshot) }
+    dc.subscribe(ACTIVATION_CHANNEL, listener)
+    try {
+      apply(host.ctx)
+      await waitFor(() => getLastActivation()?.dataLayerReady === true, 'dataLayerReady=true')
+      expect(received.some((snapshot) => snapshot.dataLayerReady === true)).toBe(true)
+    } finally {
+      dc.unsubscribe(ACTIVATION_CHANNEL, listener)
+    }
+  })
+})
+
+/**
+ * Reproduces DSH 44.7.0's channel-registration defect in a fake service.
+ *
+ * The shipped `connection` service exposes `rpc.handle`, but its closure
+ * captures an owner context shadowed to the service provider (which cannot
+ * resolve `webServer`), so `handle` throws. The same class also has the
+ * internal `register(owner, channel, handler)` that `handle` delegates to.
+ */
+class ShadowedRpcConnection {
+  readonly routes: { channel: string; handler: unknown }[] = []
+
+  get rpc() {
+    return {
+      handle: (channel: string, handler: unknown): unknown => {
+        void channel
+        void handler
+        throw new Error('cannot get property "webServer" without inject')
+      },
+    }
+  }
+
+  register(owner: unknown, channel: string, handler: unknown): void {
+    const webServer = (owner as { webServer?: { register?: unknown } }).webServer
+    if (typeof webServer?.register !== 'function') {
+      throw new Error('cannot get property "webServer" without inject')
+    }
+    ;(webServer.register as (route: unknown) => unknown)({ kind: 'prefix', path: channel, handler })
+    this.routes.push({ channel, handler })
+  }
+}
+
+/**
+ * Scoped channel registration (s1-wiring.md §5.1/§5.5).
+ *
+ * The channel must be registered from a context that injects `connection` and
+ * `webServer`. On DSH 44.7.0 the public `rpc.handle` throws before that works,
+ * so the fallback to the host's own `register(owner, …)` is pinned here; a
+ * future host that fixes `rpc.handle` keeps working through the primary path.
+ */
+describe('host half: scoped board channel registration', () => {
+  it('registers through the documented path when the host supports it', async () => {
+    const { connection } = fakeConnection()
+    const webServer = { register: () => () => undefined }
+    const host = fakeHost({ withInject: true, services: { connection, webServer } })
+    const events = await subscribe<BoardChannelEventPayload>(BOARD_CHANNEL_EVENT)
+    try {
+      apply(host.ctx)
+      expect(getLastActivation()?.boardChannelRegistered).toBe(true)
+      expect(getLastActivation()?.boardChannel).toBe('/aikanban')
+      expect(events.received.some((event) => event.registered && event.channel === '/aikanban')).toBe(true)
+    } finally {
+      events.unsubscribe()
+    }
+  })
+
+  it('falls back to the host register(owner) path when rpc.handle throws', async () => {
+    const connection = new ShadowedRpcConnection()
+    const webServer = { routes: [] as unknown[], register(route: unknown) { this.routes.push(route); return () => undefined } }
+    const host = fakeHost({ withInject: true, services: { connection, webServer } })
+    const events = await subscribe<BoardChannelEventPayload>(BOARD_CHANNEL_EVENT)
+    try {
+      apply(host.ctx)
+      expect(connection.routes.map((route) => route.channel)).toEqual(['/aikanban'])
+      expect(webServer.routes).toHaveLength(1)
+      const snapshot = getLastActivation()
+      expect(snapshot?.boardChannelRegistered).toBe(true)
+      expect(snapshot?.boardChannel).toBe('/aikanban')
+      expect(events.received.some((event) => event.registered && event.channel === '/aikanban')).toBe(true)
+    } finally {
+      events.unsubscribe()
+    }
+  })
+
+  it('waits for both injected services before registering', async () => {
+    const connection = new ShadowedRpcConnection()
+    const webServer = { register: () => () => undefined }
+    const host = fakeHost({ withInject: true })
+    const events = await subscribe<BoardChannelEventPayload>(BOARD_CHANNEL_EVENT)
+    try {
+      apply(host.ctx)
+      expect(getLastActivation()?.boardChannelRegistered).toBe(false)
+
+      host.bindService('connection', connection)
+      expect(getLastActivation()?.boardChannelRegistered).toBe(false)
+
+      host.bindService('webServer', webServer)
+      expect(connection.routes.map((route) => route.channel)).toEqual(['/aikanban'])
+      expect(getLastActivation()?.boardChannelRegistered).toBe(true)
+      expect(events.received.some((event) => event.registered)).toBe(true)
+    } finally {
+      events.unsubscribe()
+    }
+  })
+
+  it('reports register-failed when neither the public nor the fallback path works', async () => {
+    const broken = {
+      get rpc() {
+        return {
+          handle: () => { throw new Error('connection is closed') },
+        }
+      },
+    }
+    const webServer = { register: () => () => undefined }
+    const host = fakeHost({ withInject: true, services: { connection: broken, webServer } })
+    const events = await subscribe<BoardChannelEventPayload>(BOARD_CHANNEL_EVENT)
+    try {
+      expect(() => { apply(host.ctx) }).not.toThrow()
+      expect(getLastActivation()?.boardChannelRegistered).toBe(false)
+      expect(events.received.some((event) => event.reason === 'register-failed')).toBe(true)
+    } finally {
+      events.unsubscribe()
+    }
+  })
+
+  it('does not throw and reports register-failed when ctx.inject throws', async () => {
+    const host = fakeHost({ withInject: true })
+    ;(host.ctx as unknown as { inject: () => unknown }).inject = () => {
+      throw new Error('inject refused by the host')
+    }
+    const events = await subscribe<BoardChannelEventPayload>(BOARD_CHANNEL_EVENT)
+    try {
+      expect(() => { apply(host.ctx) }).not.toThrow()
+      expect(getLastActivation()?.boardChannelRegistered).toBe(false)
+      expect(getLastActivation()?.boardChannel).toBeNull()
+      expect(events.received.some((event) => event.reason === 'register-failed')).toBe(true)
+    } finally {
+      events.unsubscribe()
+    }
   })
 })

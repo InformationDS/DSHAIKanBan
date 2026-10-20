@@ -49,8 +49,11 @@ F01 §6 共 **7 行验收（5 个 AT 编号）**。下列「覆盖」指**单测
 5. **未确认项**：真实宿主 `workspace.*` 注入、真实 profile 加载与页面渲染、浏览器键盘交互，均无本仓库内的实测证据。
 6. 持久化契约由 `port.ts` 与 `port-parity.test.ts`（5 用例）验证；本机未安装依赖，未重跑。
 
-## 5. 下一步（按最小闭环）
+## 5. 下一步
 
-1. 写 core → `HostBoardPort` 适配（补 `capabilities`/`hints` 合成与 `unknown-project`/`failed` 映射），在 `packages/plugin` 的 `apply()` 中注册 `/aikanban` 通道。
-2. 补 F01 UI：项目选择/切换（调用 `selectProject`）、任务创建表单（`createTask` 的 `keptInput` 错误回显）、标题/目标编辑与草稿（`updateTaskFields`/`saveFieldDraft`）、字段活动历史展示（`readActivity`）。
-3. 按 §6 逐 AT 执行并新建 `verification.md`——**在此之前 F01 验收保持「待执行」，不得引用本文或单测作验收证据**。
+接线与实施顺序以 [S1 接线规格](../../../engineering/s1-wiring.md) 与 [ADR-007](../../../engineering/decisions/ADR-007-s1-wiring-and-current-project.md) 为准，本文不再另立一套「下一步」：
+
+- 切片 A（core → `HostBoardPort` 适配 + `/aikanban` 注册，范围固定为现有 4 端点）的字段映射以规格 §3.2—§3.5 为准：`capabilities` 由适配层合成；**`hints` 恒省略、不得合成占位提示**（F02-R06 的数据来源要等 F04/F06/F13，A/B 期 `hints` 省略）。
+- 切片 B（F01 管理动作：`project/list`、`task/create`、`task/fields.update`、`activity/read` 及对应面板 UI）的端点、控制器与测试清单见规格 §1.2、§9；本文 §4 列出的 UI 缺口在该切片补齐。
+
+按 §6 逐 AT 执行并新建 `verification.md`——**在此之前 F01 验收保持「待执行」，不得引用本文或单测作验收证据**。

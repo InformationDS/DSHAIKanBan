@@ -2,7 +2,7 @@
 
 > **本文是实施前置规格，不是实现记录，也不是验收记录。** 切片 A **尚未开工**：本页只把「已有代码 → 可运行的 S1 接线」的接口、映射、改动面、测试与证据判据写到可直接实施的程度。决策依据是 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（**已定**：设计经用户确认、工程证据待取证）；用户已拍板 **Q1＝B（当前项目每次显式选择、不持久化）**、**Q2＝A（扩展 wire/BoardController 契约，不在适配层弱化 F02-R04/SAVE-05）**。本文回应独立评审指出的接线类前置条件（B1/B2/H1/H2）；评审原文不在仓库，本文只按任务书转述的范围落规格，不替评审定义编号含义。
 >
-> **证据边界**：所有代码引用均来自当前工作区（`main`，HEAD `8fd082a` 起点）的真实文件，行号已逐条核对；未能用仓库内材料证实的点标「**未确认**」。**AT 全部仍是「待执行」**：本文与未来切片 A/B 的单元/集成测试都不能当作 F01/F02 的验收证据；验收按[验收执行规则](acceptance-execution.md)与各功能 `verification.md` 执行。
+> **证据边界**：所有代码引用均来自当前工作区（`main`，HEAD `a1e37df` 起点）的真实文件，行号已逐条核对；未能用仓库内材料证实的点标「**未确认**」。**AT 全部仍是「待执行」**：本文与未来切片 A/B 的单元/集成测试都不能当作 F01/F02 的验收证据；验收按[验收执行规则](acceptance-execution.md)与各功能 `verification.md` 执行。
 
 ## 0. 属性
 
@@ -28,15 +28,15 @@
 | # | 文件 | 改动 | 现状锚点 |
 | --- | --- | --- | --- |
 | A1 | `packages/plugin/src/board-adapter.ts`（**新建**） | `createHostBoardPort(...)`：把 4 端点映射到 core；含项目解析与 `registerProject`、`capabilities` 合成、workScope 摊平、错误映射 | `HostBoardPort` 接口见 `packages/plugin/src/board-channel.ts:109-114` |
-| A2 | `packages/plugin/src/index.ts` | `HostContext` 补 `storageDomain`/`workspaceRegistry`/`connection`；`apply()` 中同步探测并注册通道；`ActivationSnapshot` 补通道字段；新增 `aikanban:board-channel` 诊断事件；再导出适配器 | `HostContext:167-172`；`ActivationSnapshot:102-121`；`apply():305`；通道再导出 `:406-418` |
-| A3 | `packages/plugin/src/board-channel.ts` | 仅按新契约改 payload 提示文案/校验（端点集合不变）；handler 永不全抛 | `createBoardChannelHandler:145-212` |
-| A4 | `packages/plugin/package.json` / `tsconfig.json` | 加 `@aikanban/core` 依赖（`devDependencies`）与 project reference | `packages/plugin/package.json:56-58`；`packages/plugin/tsconfig.json:13` |
-| A5 | `packages/plugin-client/src/wire.ts` | `projectId` 必填；写 payload 携带编码后的基线；读快照补 `undoTarget`/版本字段；解析器收紧 | `ReadBoardPayload:113-117`（注释“Absent means the current project”必须改）；写 payload `:119-146`；快照 `:153-162` |
+| A2 | `packages/plugin/src/index.ts` | `HostContext` 补 `storageDomain`/`workspaceRegistry`/`connection`；`apply()` 中同步探测并注册通道；`ActivationSnapshot` 补通道/数据层字段；**同步扩 `createStatusTool` 的 output schema**（`additionalProperties:false` 下必须把新字段加进 `required` 与 `properties`，`packages/plugin/src/index.ts:226-246`）；新增 `aikanban:board-channel` 诊断事件；再导出适配器 | `HostContext:167-172`；`ActivationSnapshot:102-121`；`apply():305`；通道再导出 `:406-418` |
+| A3 | `packages/plugin/src/board-channel.ts` | 按新契约改 payload 提示文案/校验（端点集合不变）；`registerBoardChannel` 的 `rpc.handle` 包 try/catch，失败返回 `{ok:false, reason:'register-failed'}`（扩展 `BoardChannelRegistration` 的 reason 联合 `'no-connection' \| 'register-failed'`，`:244-246`）；**不改** `HostReadSuccess/HostWriteSuccess.snapshot` 的非空类型（`:67`、`:83`）；handler 永不全抛 | `createBoardChannelHandler:145-212`；`registerBoardChannel:256-275` |
+| A4 | `packages/plugin/package.json` / `tsconfig.json` / `pnpm-lock.yaml` | 加 `@aikanban/core` 依赖（`devDependencies`）与 project reference；**新增依赖后必须在同步盘之外的构建沙盒跑非 frozen 的 `pnpm install`，更新并提交 `pnpm-lock.yaml`**；此后 `--frozen-lockfile` 基线才成立（步骤见本行说明与 §7.3 A-G0） | `packages/plugin/package.json:56-58`；`packages/plugin/tsconfig.json:13`；[tools/COMMANDS.md](../../tools/COMMANDS.md) §10.2 `:196-233` |
+| A5 | `packages/plugin-client/src/wire.ts` | `projectId` 必填；写 payload 携带编码后的基线；读快照补 `undoTarget`/版本字段；解析器收紧（`parseReadBoardPayload` 必须拒绝缺省，`:447-460` 的旧注释删除） | `ReadBoardPayload:113-117`（注释“Absent means the current project”必须改）；写 payload `:119-146`；快照 `:153-162` |
 | A6 | `packages/plugin-client/src/source.ts` | `BoardSource.readBoard(projectId)`；写输入补 `expectedStatusVersion` 必填与 `appliedUpdateId`；`UndoToken` 语义 | `BoardSource:153-172`；输入 `:36-68` |
-| A7 | `packages/plugin-client/src/channel-source.ts` | `projectId` 构造参数必填；payload 组装；无选择时拒绝调用 | 选项 `:114-120`；`readBoard:136-155`；写 `:195-223` |
-| A8 | `packages/plugin-client/src/controller.ts` | 新增 `selection-required` 读状态；`load()` 无选择不调用 source；状态/排序/撤销发送基线；`UndoToken` 带 `{statusVersion, appliedUpdateId}` | 读状态联合 `:94-117`；`load:542-598`；变更输入 `:521-527`、`:684-691`；撤销 `:731-740`；token `:80-83` |
-| A9 | `packages/plugin-client/src/model.ts` / `board.tsx` | 模型补 `statusVersion`/`undoTarget`；面板渲染选择空态、按 `undoTarget` 显示撤销 | `model.ts:119-146`；`board.tsx:403-483` |
-| A10 | `packages/plugin-client/src/runtime.ts` / `index.tsx` | 选择不持久化（内存变量，刷新即丢）；每次挂载进入选择空态 | `runtime.ts:30`、`:58-71`；`index.tsx:199-214` |
+| A7 | `packages/plugin-client/src/channel-source.ts` | **唯一签名**：`BoardSource.readBoard(projectId: string)` 每次传参（source 构造不再接收 `projectId`）；payload 每次组装；无选择由 controller 拦截、source 不接受空 id | 旧构造选项 `:114-120`；`readBoard:136-155`；写 `:195-223` |
+| A8 | `packages/plugin-client/src/controller.ts` | 新增 `selection-required` 读状态与 `resetSelection()`；`load(projectId)` 语义改为“由 state 的选择驱动”；状态/排序/撤销发送基线；`UndoToken` 带 `{statusVersion, appliedUpdateId}` 且**只从写后快照取**；删除 `BoardState.selectedProjectId` 旧注释与 `BoardControllerOptions.projectId`（选择唯一真相源＝state） | 读状态联合 `:94-117`；`BoardState.selectedProjectId:148-149`；`BoardControllerOptions.projectId:223`；`load:542-598`；变更输入 `:521-527`、`:684-691`；撤销 `:731-740`；token `:80-83` |
+| A9 | `packages/plugin-client/src/model.ts` / `board.tsx` | 模型补 `statusVersion`/`undoTarget`；`BoardPanel` 挂载时先 `controller.resetSelection()` 再决定是否 load（无选择不读）；面板渲染选择空态、按 `undoTarget` 显示撤销 | `model.ts:119-146`；`board.tsx:403-483`；`BoardPanel` 挂载 `:492-505` |
+| A10 | `packages/plugin-client/src/runtime.ts` / `index.tsx` | 选择**不持久化**且**唯一真相源＝`BoardController.state`**：删除 `runtime.selectedProjectId` 与 `setSelectedProject`；`getBoardController()` 以无选择状态创建；每次面板挂载由 `resetSelection()` 归零；`apply()` 装配 source 时不需要项目 | `runtime.ts:28-30`、`:52-61`、`:68-71`；`index.tsx:199-214` |
 | A11 | 测试 | 新增 core↔handler 集成测试；扩既有测试（清单见 §4.5、§7.1） | 见 §7 |
 | A12 | `tools/probe-host.mjs` | 新增「`registerBoardChannel` 实际被调用」断言 | 观察者生成 `:353-359`；第 4 检查 `:445-463` |
 
@@ -61,13 +61,14 @@ B 的扩展清单（端点 payload、`HostBoardPort` 方法、`BoardSource` 方�
 
 - 项目列表的权威来源是宿主 `ctx.workspaceRegistry`：`get(id)`/`list()`/`resolveByPath`/`status`，见 [ADR-003](decisions/ADR-003-project-mapping-and-context-injection.md) W1（:27）、W2（:28）、W6（:32），实测 `list()` 返回 3 个 workspace（ADR-003 :119）。
 - core 侧没有“当前项目”概念：`listProjects()` 只列**已登记**项目（`planning.ts:928`），`registerProject` 承担登记（`planning.ts:862`）；`readBoard` 必须带 `projectId`（`types.ts:574-577`、`planning.ts:1059-1060`）。
-- 浏览器半当前没有任何持久化：全 `packages/plugin-client/src` 无 `localStorage`/`sessionStorage`/`cookie`/`indexedDB`（已 grep 核对，`NONE`）；`runtime.ts:30` 的 `selectedProjectId` 只在内存，`runtime.ts:86-90` 可重置。这符合 Q1=B，不需要“移除旧持久化”。
+- 浏览器半当前没有任何持久化：全 `packages/plugin-client/src` 无 `localStorage`/`sessionStorage`/`cookie`/`indexedDB`（已 grep 核对，`NONE`）；`runtime.ts:30` 现在还有一份 `selectedProjectId` 内存副本，**A10 会删除它**（见 §2.2 的唯一真相源规则）。这符合 Q1=B，不需要“移除旧持久化”。
+- **`workspace.status()` 的真实形状**（安装包声明，已确证）：`status(): Promise<'ok' | 'missing-dir'>`——**只有两个值、且返回 Promise**。证据：`~/.dsh/profiles/node_modules/@deepseek-ai/dsh-workspace/lib/types/entity.d.ts:73`、同目录 `lib/types/types.d.ts:98`；实现 `lib/index.js:154-160` 的 `async status()` 返回 `'ok'|'missing-dir'`。ADR-003 W6（`:32`）只记录了“目录缺失时返回 `'missing-dir'`、记录仍保留”的语义，**没有记录 Promise 形状，也没有 `unknown` 值**。本规格中“未观测”是**我们自己的展示状态**（映射到 core 的 `WorkScopeAvailability.unknown`），不是宿主返回值。
 - **不得**把选择塞进已有的位置保存：core 的 `saveBoardPosition`（`planning.ts:1012`）与 `ProjectFields.position`（`types.ts:312-316`、`:341-358`）是**每个项目自己的看板内位置**，不是“哪一个项目处于打开状态”；`readBoard` 的 `boardToken` 也把 position 计入（`planning.ts:1098`）。把选择写进去会让“进入即恢复上次项目”，直接违反 Q1=B。
 
 ### 2.2 规则
 
 1. **每次进入看板都必须显式选择项目**：面板挂载时初始 `read` 状态为 `selection-required`（新增状态，见 §4.4），**不发 `board/read`**；选择来自 B 的 `project/list` UI。
-2. **选择只保存在本次页面会话的内存**（`runtime.ts` 的 `selectedProjectId` 即可）；刷新、重开页面、重进座位一律回到 `selection-required`。不写 profile、不写 core、不写浏览器存储、不记忆“上次选择”。
+2. **选择只存在本次页面会话的内存，唯一真相源＝`BoardController.state.selectedProjectId`**；`runtime` 不得再保存第二份（A10 删除 `runtime.selectedProjectId`/`setSelectedProject`）。刷新、重开页面、重进座位一律回到 `selection-required`：`BoardPanel` 每次挂载先调 `controller.resetSelection()`（清空选择/旧视图，不读 source），然后等待用户显式选择（B 的选择器）或测试调用 `selectProject(id)`。不写 profile、不写 core、不写浏览器存储、不记忆“上次选择”。
 3. **不默认第一个、不按最近使用、不按标题猜**：`board/read` 的 `projectId` 缺失时，宿主一律返回失败（`invalid-payload`，见 §6），**绝不** fallback 到 `list()` 的第一项或 `readProject()` 的任何结果。
 4. **空态文案**（建议，实施时可改措辞但不能含默认选择暗示）：
    - 标题：`请选择项目`
@@ -90,11 +91,21 @@ B 的扩展清单（端点 payload、`HostBoardPort` 方法、`BoardSource` 方�
 **收敛方案（A5/A7/A8 一起改）**：
 
 1. `ReadBoardPayload` 改为 `{ readonly projectId: string }`（必填，非空字符串）；删除“current project”注释；`parseReadBoardPayload` 对缺省/空串返回 `null` → host handler 返回 `invalid-payload`（`board-channel.ts:151` 的失败分支已存在）。
-2. `BoardSource.readBoard(projectId: string)`：类型上强制显式项目；`createChannelBoardSource` 的选项改为必填 `projectId`（或在每次 `readBoard` 时传，推荐后者，见 §3.4 的 runtime 处理）。
+2. **唯一最终签名：`BoardSource.readBoard(projectId: string)` 每次传参**。删除“`createChannelBoardSource` 构造参数必填”的方案（二选一已收敛为此方案）：source 的构造只接收 channel/transport，不再持有“当前项目”；`channel-source` 每次 `readBoard` 时组装 `{ projectId }`。`apply()` 装配 source 时尚无项目可选是**正常状态**（source 存在、尚无读取）；任何读取都必须由用户选择后经 controller 传 id，缺 id 属编程错误，host 侧以 `invalid-payload` 拒绝（不猜项目）。
 3. controller 的 `selection-required` 状态发生在调用 source **之前**；`load()` 在没有选择时只切状态，不发请求。
-4. 该改动是**破坏性契约变更**：会改到的既有测试见 §4.5。
+4. 该改动是**破坏性契约变更**：会改到的既有测试见 §4.5；旧语义清理清单见 §2.4。
 
-### 2.4 对切片 A 的直接后果
+### 2.4 旧语义清理清单（实施 A8/A10 时逐条删除或改写）
+
+| 位置 | 现状（旧语义） | A 后 |
+| --- | --- | --- |
+| `packages/plugin-client/src/controller.ts:148-149` | `BoardState.selectedProjectId` 注释「null means the data layer's current one」 | 改为「null＝尚未选择（selection-required）」；这是**唯一真相源** |
+| `packages/plugin-client/src/controller.ts:223` | `BoardControllerOptions.projectId`：「null/absent asks the data layer for its current project」 | **删除该选项**（面板每次挂载归零；测试改用 `selectProject`） |
+| `packages/plugin-client/src/runtime.ts:52-61` | `setSelectedProject` + `selectedProjectId`：「The host resolves the current project when this is null」 | 删除函数与变量；runtime 只持有 source/controller |
+| `packages/plugin-client/src/wire.ts:447-449` | `parseReadBoardPayload` JSDoc：「An omitted payload is legal (the host resolves the current project)」 | 改为：payload 必须带非空 `projectId`，缺省/空串返回 `null`（host → `invalid-payload`） |
+| `packages/plugin-client/src/wire.ts:113-117` | `ReadBoardPayload.projectId` 注释「Absent means "the current project"」 | 改为必填字段；删除“current project”语义 |
+
+### 2.5 对切片 A 的直接后果
 
 A 没有 `project/list`，所以 A 的面板只能停在 §2.2 的第 4 条空态；**A 的集成测试显式传 `projectId` 驱动 handler**，不通过 UI 选择。演示“选择项目 → 看板”必须等 B。这是评审 B1 里“切片顺序”的硬约束，不得在 A 里提前造一个假的列表或默认项目。
 
@@ -108,7 +119,7 @@ core `readBoard` 三态：`ok`/`unknown-project`/`failed`（`types.ts:441-463`�
 2. 用宿主 `ctx.workspaceRegistry.get(projectId)` 解析 workspace（ADR-003 W1）；取不到 → 返回 `HostReadFailure{code:'unknown-project', message:'项目不存在或尚未在此工作区登记'}`（**不是空看板**）。
 3. `workspace.path` 为空 → `unknown-project`（core `registerProject` 拒绝空 path，`planning.ts:867-871`）。
 4. 调 `core.registerProject({projectId: workspace.id, title: workspace.title, path: workspace.path})`（`planning.ts:862`）：`registered`/`refreshed`/`unchanged` 继续；`rejected` → `unknown-project`（invalid-input）或 `read-failed`（其余）。
-5. 调 `core.readBoard({projectId, workScope: hint})`（`types.ts:574-577`）；`hint.availability` 来自 `workspace.status()`：`'ok'`→`ok`、`'missing-dir'`→`missing-dir`、其他/未观测→`unknown`（ADR-003 W6 :32；host-capabilities HOST-01 :14）。**只作为本次展示提示，不落库、不调用 `observeWorkScope`**（读取不写；`planning.ts:389-390` 已支持 display hint）。
+5. 调 `core.readBoard({projectId, workScope: hint})`（`types.ts:574-577`）。`hint` 必须来自**真实观测**：`await workspace.status()` 返回 `Promise<'ok'|'missing-dir'>`（§2.1 已确证），把 `'ok'→ok`、`'missing-dir'→missing-dir` 写入 `hint.availability`；**只有拿不到观测时**（workspaceRegistry 服务缺失，或 `status()` 调用 reject/超时）才用 core 的第三值 `unknown` 表达「未观测」——这是本适配层的显示状态，**不是宿主返回值**，不得写成“宿主返回 unknown”。**只作为本次展示提示，不落库、不调用 `observeWorkScope`**（读取不写；`planning.ts:389-390` 已支持 display hint）。
 6. `ok` → 映射快照（§3.2）；`unknown-project` → 同码失败；`failed` → `read-failed`。
 
 ### 3.2 快照字段映射（core → `BoardSnapshotValue`）
@@ -119,7 +130,7 @@ core `readBoard` 三态：`ok`/`unknown-project`/`failed`（`types.ts:441-463`�
 | --- | --- | --- |
 | `project.projectId` / `title` | `ProjectView.projectId/title` | 原样 |
 | `project.path` | `ProjectView.path` | 原样（项目路径，非“范围可用性”） |
-| `project.workScopeAvailability` | `ProjectView.workScope.availability`（`types.ts:408-416`） | 三值原样；`unknown` 不得当“无范围” |
+| `project.workScopeAvailability` | 适配层从 `await workspace.status()` 推导后传入 core，再读 `ProjectView.workScope.availability`（core 三值 `types.ts:408-416`） | `'ok'→ok`、`'missing-dir'→missing-dir`；观测失败才用 `unknown`（**未观测**，非宿主值）；`unknown` 不得当“无范围” |
 | `project.workScopeAllowed` | `ProjectView.workScope.allowed` | 原样；false 只表示真实文件动作会被拒绝 |
 | `project.workScopeReason` | `ProjectView.workScope.reason` | **`null` → 省略字段**（wire `isOptionalString` 不接受 null，`wire.ts:191`、解析 `:383-384`） |
 | `tasks` | `BoardReadResult.tasks`（已排除归档、按列内顺序，`planning.ts:1076-1077`） | 每个 `TaskView` 按 §3.3 映射 |
@@ -167,7 +178,8 @@ core 没有 capabilities 字段（`BoardReadResult` 仅上述四项，`types.ts:
 
 ### 4.2 编码与解析规则（版本号过 wire）
 
-- **统一编码**：`statusVersion = 'ver1:' + statusRevision.toString()`，只允许非负整数（例：`ver1:0`、`ver1:7`）。解析用严格正则 `^ver1:(0|[1-9]\d*)$`；不合法/缺失 → 视为**协议违规**，host 返回 `invalid-payload`（不猜基线、不当作 0）。
+- **统一编码**：`statusVersion = 'ver1:' + statusRevision.toString()`，只允许非负整数（例：`ver1:0`、`ver1:7`）。解析用严格正则 `^ver1:(0|[1-9]\d*)$`。
+- **校验位置（定稿）**：**host 适配层负责解码 + 校验**（wire 的 `parse*` 只做 JSON 形状校验，不做版本语义）；不合法/缺失的 `expectedStatusVersion` 不是“默认 0”，适配器直接返回 host 协议失败码 `invalid-payload`（不猜基线）。浏览器侧把不认识的 host 码按既有规则归为 `save-failed`（`channel-source.ts:173-180`），因此**用户可见结果为 save-failed、正式值不变**；不得新增第 9 个浏览器失败码来区分它。
 - 为什么用字符串：wire 已有 `FormalStatusValueWire.statusVersion: string`（`wire.ts:176-180`），失败详情用它回显正式值（`detailsOf`，`board-channel.ts:135-137`）；写 payload 用同一编码即可全链路一致，也避免 JSON number 与“缺省”混淆。
 - 快照中的任务同时保留 **数值** `statusRevision`（供 UI 读）与按需编码（UI 用 `ver1:` 前缀构造 payload）；两者不得出现第二个版本事实源。B 的 `fieldsRevision` 同理（编码建议 `fver1:<n>`，在 B 定稿）。
 
@@ -186,23 +198,24 @@ core 没有 capabilities 字段（`BoardReadResult` 仅上述四项，`types.ts:
 1. `BoardTask` 增 `undoTarget: {statusVersion, appliedUpdateId} | null`（由 `TaskView.undoTarget` 映射）；`statusRevision` 改必填（见 §3.3）。
 2. controller：`StatusChangeInput`/`ReorderInput` 的 `expectedStatusVersion` 改必填；`UndoInput` 改为 `{taskId, operationId, expectedStatusVersion, appliedUpdateId}`；`UndoToken` 改为 `{taskId, expectedStatusVersion, appliedUpdateId}`（不是两次操作的 operationId）。
 3. controller 在**每次写前**从当前视图的任务取 `statusRevision` 编码为 `expectedStatusVersion`；任务不在视图/无 `statusRevision` → 拒绝并提示需重读（不发送无基线请求）。
-4. **撤销入口扩展**：成功横幅撤销保留；详情/卡片在 `task.undoTarget !== null` 时显示撤销（由 `undoTarget` 驱动，刷新后仍可撤销）。撤销发送 `undoTarget.statusVersion` 与 `undoTarget.appliedUpdateId`。
-5. **新增读状态** `selection-required`（§2）：`BoardReadState` 增 `{kind:'selection-required', message}`；`load()` 无选择 → 设置该状态并返回；`selectProject(id)` 记录内存选择并读取；`selectProject(null)` 回到该状态。
-6. `runtime`：`selectedProjectId` 仍为内存；`setSelectedProject` 保持“换源/重建 controller”的现有语义（`runtime.ts:58-61`）；**不得**新增任何持久化。
+4. **撤销入口与 token 基线来源**：成功横幅撤销保留；详情/卡片在 `task.undoTarget !== null` 时显示撤销（由 `undoTarget` 驱动，刷新后仍可撤销）。**`UndoToken` 只能由写后返回的快照构造**（`snapshot.tasks` 中该任务的 `undoTarget`），不得由写前值或本次输入拼装；快照中没有该任务或 `undoTarget === null` → 不显示撤销。撤销发送 `undoTarget.statusVersion` 与 `undoTarget.appliedUpdateId`；`operationId` 为本次撤销**新铸**（重试复用同一个）。
+5. **新增读状态** `selection-required`（§2）：`BoardReadState` 增 `{kind:'selection-required', message}`；新增 `resetSelection()`（清空选择/视图/对话框，置 `selection-required`，**不读 source**）；`load()` 无选择 → 设置该状态并返回；`selectProject(id)` 记录内存选择并读取；`selectProject(null)` 回到该状态。**选择唯一真相源＝`BoardState.selectedProjectId`**。
+6. `runtime`：**删除** `selectedProjectId` 与 `setSelectedProject`（旧语义清理见 §2.4）；`getBoardController()` 以无选择状态创建 controller；`setBoardSource` 仍负责丢弃旧 controller（换源＝换世界）。**不得**新增任何持久化。
+7. `BoardPanel` 挂载规则：每次挂载先 `controller.resetSelection()`（A9），因此缓存的 controller 也不会沿用上次项目/旧看板；随后若仍无选择就停在 `selection-required`，不自动 load（现有“仅 `read.kind === 'idle'` 时 load”的行为被替换，`board.tsx:502-504`）。B 的选择器负责调用 `selectProject(id)`。
 
 ### 4.5 要改的文件与受影响的既有测试
 
-改文件见 §1.1 A5—A10。**会被破坏、必须同步修改的既有测试**（实施 A 时逐个跑）：
+改文件见 §1.1 A5—A10。**计数定稿：4 个必改 + 2 个仅回归确认**（`packages/core/test/*` 66 用例另作“不改 core 语义”的回归基线）。根因：A5/§3.3 把 `BoardTask.statusRevision` 改为必填、并新增 `undoTarget` 后，**任何缺 `statusRevision` 的固定快照都无法通过 wire 解析**，因此 `channel-roundtrip.test.ts`（经真实适配器解析固定快照）与 `controller.test.ts`（fake source 直接喂快照、且写前要取基线）会**先红**；`model.test.ts` 的 `task()` helper 返回 `BoardTask` 字面量，类型变必填后编译即红；`host.test.ts` 因 `ActivationSnapshot` 新字段与诊断事件断言而红。另两个文件只做回归确认，不预期需要改逻辑。
 
-| 测试文件 | 受影响点 |
-| --- | --- |
-| `packages/plugin/test/channel-roundtrip.test.ts`（12 用例） | 固定快照没有 `statusRevision`/`undoTarget`（fixtures `:51-85`）；适配器 `createChannelBoardSource` 构造需显式 `projectId`（`:209`、读用例 `:215`）；写 payload 断言新增必填基线 |
-| `packages/plugin/test/host.test.ts`（19 用例） | `ActivationSnapshot` 新字段使手写字面量需补（`:173-183`、`:262-264`、`:294-296`）；新增“通道注册”事件断言 |
-| `packages/plugin/test/client-bundle.test.ts`（7 用例） | 若 bundle 导出面变化（新增/改名导出）需同步；否则仅回归 |
-| `packages/plugin-client/test/controller.test.ts`（19 用例） | fake source 的 `readBoard` 无参（`:97-100`）、change input 无基线断言（多处）；新增 `selection-required` 与新撤销输入的用例 |
-| `packages/plugin-client/test/model.test.ts`（19 用例） | 任务 fixture 是否需要补 `statusRevision`/`undoTarget`（`model.ts` 类型变必填时） |
-| `packages/plugin-client/test/slots.test.ts`（7 用例） | 预期不受影响（座位注册），仅回归 |
-| `packages/core/test/*`（66 用例） | 不受影响；作为“不改 core 语义”的回归基线 |
+| 测试文件 | 类别 | 受影响点 |
+| --- | --- | --- |
+| `packages/plugin/test/channel-roundtrip.test.ts`（12 用例） | **必改** | 固定快照没有 `statusRevision`/`undoTarget`（fixtures `:51-85`），真实适配器解析会失败；source 构造不再带 `projectId`（`:209`），读取改为每次传 id（`:215`）；写 payload 断言新增必填基线 |
+| `packages/plugin-client/test/controller.test.ts`（19 用例） | **必改** | fake source 的 `readBoard` 无参（`:97-100`）、`controllerFor` 传 `projectId` 选项（`:120-127`，选项将删除）；fixture 任务缺 `statusRevision`（`:43-54`）导致写前取基线失败；新增 `selection-required`/挂载重置/撤销凭据用例 |
+| `packages/plugin-client/test/model.test.ts`（19 用例） | **必改** | `task()` helper 返回 `BoardTask` 字面量（`:40-51`），`statusRevision` 改必填后类型错误；补 `statusRevision`/`undoTarget` 断言 |
+| `packages/plugin/test/host.test.ts`（19 用例） | **必改** | `ActivationSnapshot` 新字段使手写字面量需补（`:173-183`、`:255-265`、`:286-297`）；`createStatusTool` output schema 的 required/properties 必须同步（schema 子集测试 `:285-...`）；新增“通道注册”事件断言 |
+| `packages/plugin/test/client-bundle.test.ts`（7 用例） | 仅回归确认 | 预期不改逻辑；若 bundle 导出面变化需同步，否则只跑绿 |
+| `packages/plugin-client/test/slots.test.ts`（7 用例） | 仅回归确认 | 座位注册不受影响，只跑绿 |
+| `packages/core/test/*`（66 用例） | 回归基线 | 不受影响；作为“不改 core 语义”的回归基线 |
 
 **新增测试**（至少）：
 - `packages/plugin/test/board-adapter.test.ts`（新）：真实 `createKanbanCore` + `createMemoryStoragePort(createMemoryMedium())`（`packages/core/src/index.ts:16`、`port.ts:101-121`）经真实 `createBoardChannelHandler` 打通四端点；覆盖成功/失败/未知结果/不抛异常（§7.1）。
@@ -216,18 +229,24 @@ core 没有 capabilities 字段（`BoardReadResult` 仅上述四项，`types.ts:
 1. **`apply(ctx)` 同步阶段**（不得改动现有加载链语义；`verify-host-import.mjs:292-321` 依赖 `apply` 同步发布激活信号）：
    1. 现有：logger 标记（`packages/plugin/src/index.ts:334`）、探测 `tools`/`systemPrompt`（`:337-373`）、`internal/service` 重试（`:379-382`）。
    2. **新增探测**：`connection`、`storageDomain`、`workspaceRegistry`，各自 `ctx.reflect?.get(name,false)`；与现有 `internal/service` 重试同构（不新增 `inject`，避免缺服务把 fiber 卡死——与 `packages/plugin/src/index.ts:280` 及 `packages/plugin-client/src/index.tsx:99-105` 的既有理由一致）。
-   3. **`connection` 就绪 → 立即 `registerBoardChannel(connection, port)`**（`board-channel.ts:256-275`）。`port` 是**延迟就绪适配器**：数据层未好时每个方法返回 `{ok:false,...}`（`unavailable`/`read-failed`），绝不抛；因此通道可以先注册。
-   4. 注册结果写入 `ActivationSnapshot.boardChannelRegistered/boardChannel`（§5.4），并发布 `aikanban:board-channel` 诊断事件（§7.2）。然后发布激活信号（沿用 `:384-392`）。
-   5. **异步引导**（`void bootstrap()`，不阻塞 apply）：`storageDomain.open(spec)` → `createKanbanCore({port: createStorageDomainPort(domain)})` → 数据层 ready。失败：记录原因、保持 `dataLayerReady=false`，所有读取返回 `read-failed`（消息含原因）；不得让 apply 抛错、不得伪造空看板。
+   3. **`connection` 就绪 → 立即 `registerBoardChannel(connection, port)`**（`board-channel.ts:256-275`）。两条健壮性规则：
+      - `registerBoardChannel` 内部的 `connection.rpc.handle(...)` 必须包 **try/catch**；抛错时返回 `{ok:false, reason:'register-failed'}`（A3 扩展 `BoardChannelRegistration` 的 reason 联合 `'no-connection' | 'register-failed'`，`board-channel.ts:244-246`），**不得**让异常冒到 apply。
+      - `port` 是**延迟就绪适配器**：数据层未好时每个方法返回显式失败（`unavailable`/`read-failed`），绝不抛；因此通道可以先注册。
+   4. 注册结果写入 `ActivationSnapshot.boardChannelRegistered/boardChannel`，并发布 `aikanban:board-channel` 诊断事件（payload reason 只用 `'no-connection'|'register-failed'|null`，§5.5/§7.2）。然后发布激活信号（沿用 `:384-392`）。
+   5. **异步引导**：`void bootstrap().catch(...)`（**必须 catch**：未处理的 Promise rejection 可能杀进程/被宿主当作崩溃）：
+      - 已在运行则不重复启动；`storageDomain` 服务**晚到**时在 `internal/service`（`name==='storageDomain'`）上重试启动（与 `tools`/`systemPrompt` 同构，`packages/plugin/src/index.ts:379-382`）。
+      - `ctx.storageDomain.open(spec)` → `createKanbanCore({port: createStorageDomainPort(domain)})` → 置 `dataLayerReady=true` 并重发激活信号/事件。
+      - 任一失败：记录原因、保持 `dataLayerReady=false`，所有读取返回 `read-failed`（消息含原因）；不得让 apply 抛错、不得伪造空看板。
 2. **每个 `board/read` 前的项目登记**：按 §3.1 第 2—4 步 `registerProject`（一次写；同项目后续为 `unchanged` 不写，`planning.ts:874-878`）。
 3. **关闭**：宿主卸载时若可取得 disposer，关闭 domain 并注销通道（`registerBoardChannel` 返回的 `dispose`，`board-channel.ts:244-275`）。cordis 的销毁钩子形态**未确认**；先按“进程级生命周期不主动关闭 domain”实现并在 A 的探针里观察卸载行为，记录为已知局限。
 
 ### 5.2 core 域规格的构造（zod 依赖问题）
 
 - core 要求宿主用**自己的** validator 构造 spec：`buildDomainSpec(zod: ZodLike)`（`domainSpec.ts:249-288`；`DomainSpecLike` `:259-265`），域层实际只调用 `valueSchema.parse`（ADR-002 实验把它写成 `{ parse: value => value }`，`packages/core/experiments/storage-domain-atomicity.mjs:77-78`）。
-- host 半**不能** import `zod` 或 `@deepseek-ai/dsh-storage-domain`（裸 specifier 会让 `verify-host-import.mjs:265-276` 失败；当前 host 半的导入图只有相对路径与 `node:` 内建）。
+- host 半**不能** import `zod` 或 `@deepseek-ai/dsh-storage-domain`（裸 specifier 会让 `verify-host-import.mjs:265-276` 失败）。注意措辞：**源码层** `board-channel.ts:42-58`（specifier 在 `:58`）import 了 `@aikanban/plugin-client/wire`，只有 tsdown 的 `alwaysBundle`（`tsdown.config.ts:42`）把它内联后，**打包产物 `lib/index.js` 的导入图**才只剩相对路径与 `node:` 内建。门禁检查的是**打包产物**，不是源码。
 - **A 的实现选择**：在 host 半内部实现一个**结构校验器 shim**（仅 `custom(check) → { parse(value){ if(!check(value)) throw …; return value } }`）传给 `buildDomainSpec`，再调 `ctx.storageDomain.open(spec)`。core 的校验函数本身已导出（`isScopeStateRecord`/`isDraftRecord`，`domainSpec.ts:212/239`）。
-- **未确认**：`ctx.storageDomain.open()` 是否接受**未经 DSH `defineDomain()` 包装**的 `DomainSpecLike`。S0 实验用的是 `defineDomain(...)`（实验 `:41`、`:98`），但 `defineDomain` 可能只是类型/形状辅助；host 半无法导入它。**取证方式**：切片 A 的隔离探针/集成测试第一步就打开域并做一次 `getDraft` 读；若 open 拒绝，则不改产品语义，记录为阻塞并在 ADR-007 修订里选替代（例如由宿主侧注入 defineDomain 能力，或申请允许一个受控的 peer import——但**不得**静默引入裸 specifier）。
+- **spec 形状：已由安装包源码佐证（不再是「未确认」）**。`defineDomain` 只是 descriptor 校验/规范化，`open` 消费 descriptor 并在读写时用 `valueSchema.parse` 校验记录——S0 实验的执行路径是 `defineDomain(...)`（`packages/core/experiments/storage-domain-atomicity.mjs:41`）与 `facility.open(spec)`（`packages/core/experiments/storage-domain-atomicity.mjs:98`），且它直接用一个只有 `parse` 的鸭子类型 validator（同文件 `:77-78`）就能打开真实域。因此 `buildDomainSpec(schemaShim)` 生成的裸 `DomainSpecLike` **按形状可被接受**；host 半不需要 import `defineDomain`。
+- **仍保留的未实测项**：真实插件上下文里的 `ctx.storageDomain.open()` 未被实测（服务是否以同一形状暴露 `open`、失败时如何报错）。**取证方式**：切片 A 的隔离探针/集成测试第一步打开域并做一次 `getDraft` 读；若上下文行为不符，不改产品语义，记录为阻塞并在 ADR-007 修订里选替代（例如宿主侧注入 defineDomain 能力），但**不得**静默引入裸 specifier。
 
 ### 5.3 构建依赖边（必须保持 `verify-host-import` 11/11）
 
@@ -243,7 +262,7 @@ core 没有 capabilities 字段（`BoardReadResult` 仅上述四项，`types.ts:
 | --- | --- | --- | --- |
 | `connection?` | `{ rpc: { handle(channel, handler): unknown } }` | 注册 `/aikanban` | 已有结构类型 `HostConnectionLike`，`board-channel.ts:224-241` |
 | `storageDomain?` | `{ open(spec: DomainSpecLike\|unknown): Promise<DomainLike> }` | 打开域 | **新增**（core 的 `DomainLike` 见 `port.ts:294-298`） |
-| `workspaceRegistry?` | `{ get(id): WorkspaceLike \| undefined; list(): readonly WorkspaceLike[] }`；`WorkspaceLike` 至少 `{ id, title, path, status(): 'ok'\|'missing-dir'\|unknown }` | 项目解析/列表 | **新增**（ADR-003 W1 只给了方法名，精确返回类型**未确认**） |
+| `workspaceRegistry?` | `{ get(id): WorkspaceLike \| undefined; list(): readonly WorkspaceLike[] }`；`WorkspaceLike` 至少 `{ id, title, path, status(): Promise<'ok' \| 'missing-dir'> }` | 项目解析/列表 | **新增**；`status()` 的 Promise/两值形状已由安装包声明确证（`dsh-workspace/lib/types/entity.d.ts:73`、`lib/types/types.d.ts:98`）；`get/list` 的精确返回字段仍**未确认** |
 | `effect?` / `on('dispose')` | cordis 生命周期 | 关闭 domain/注销通道 | **未确认**，按 §5.1 第 3 步处理 |
 
 `HostContext` 当前只有 `logger/reflect/on`（`packages/plugin/src/index.ts:167-172`）；以上全部**可选**，缺失时按失败可见处理，不得让 apply 抛错。
@@ -251,7 +270,8 @@ core 没有 capabilities 字段（`BoardReadResult` 仅上述四项，`types.ts:
 ### 5.5 激活快照与诊断事件（供探针断言）
 
 - `ActivationSnapshot`（`packages/plugin/src/index.ts:102-121`）增：`boardChannelRegistered: boolean`、`boardChannel: string | null`、`dataLayerReady: boolean`（数据层异步就绪后更新快照并重发激活信号；现有 `snapshot()` 闭包 `:316-327` 与 `getLastActivation():291` 的模式可复用）。
-- 新增诊断事件 `aikanban:board-channel`（常量导出，`node:diagnostics_channel`，与 `ACTIVATION_CHANNEL` `:60` 同风格；命名带 `[aikanban]` 前缀避免遮蔽 DSH 通道）。payload：`{ channel, registered, reason?: 'no-connection'|'register-failed', at }`；`registerBoardChannel` 返回 `{ok:true}` 后发布 `registered:true`。
+- **`createStatusTool` 的 output schema 必须同步**：它的 `output.schema` 是 `additionalProperties:false` 加一个显式 `required` 数组与 `properties` 表（`packages/plugin/src/index.ts:226-246`）。新增快照字段**必须同时加入 `required` 与 `properties`**（并遵守宿主支持的 schema 子集：单 `type` 字符串、`required` 为对象级数组、无 `format`/`examples`）。漏加字段会让真实宿主在工具注册时抛 `ToolOutputError`、整次加载失败——`host.test.ts` 的 schema 子集测试（`:285` 起）与 `:173-183` 的手写字面量会同时红。
+- 新增诊断事件 `aikanban:board-channel`（常量导出，`node:diagnostics_channel`，与 `ACTIVATION_CHANNEL` `:60` 同风格；命名带 `[aikanban]` 前缀避免遮蔽 DSH 通道）。payload：`{ channel, registered, reason: 'no-connection' | 'register-failed' | null, at }`；`registerBoardChannel` 返回 `{ok:true}` 后发布 `registered:true, reason:null`。**`register-failed` 只存在于该诊断事件与 `BoardChannelRegistration` 的 reason 联合（A3 新增），不是浏览器失败码**。
 - 现有测试/脚本影响：`verify-host-import` 的无服务上下文仍能发布激活（新字段为 false，不影响 `:292-321`）；`probe-host.mjs` 的观察者需订阅新通道（§7.2）。
 
 ## 6. 错误码映射表
@@ -266,16 +286,21 @@ wire 的浏览器侧失败码集合固定为 8 个（`wire.ts:58-67`）；host h
 | `unknown-project`（未登记/未在 registry/空 path） | `unknown-project` | UI 显示“项目信息不可用”，不显示空看板（`source.ts:109-120`） |
 | `failed`（code `read-failed`） | `read-failed` | 保留已知数据+重试（REC-05） |
 | 数据层未就绪/引导失败 | `unavailable` | 显式“数据层不可用”，**不是**空看板 |
+| `connection` 存在但 `registerBoardChannel` 的 `rpc.handle` 抛错（A3 `register-failed`） | `unavailable`（无通道时的等价可见失败） | **不新增浏览器失败码**；`register-failed` 只出现在诊断事件/`BoardChannelRegistration`，浏览器仍走既有 `unavailable`/读失败路径 |
 | payload 缺 `projectId`/协议违规 | `invalid-payload`（host 码）→ 浏览器 `read-failed` | A5 收紧后这是调用方 bug，仍不猜项目 |
 
 ### 6.2 写（`setTaskStatus` / `reorderTask` / `undoStatusChange`）
 
-| core 结果 | 细节 | wire code |
+**统一回读策略（定稿）**：所有写端点成功后，适配器都**重读一次看板快照**再返回；`HostWriteSuccess.snapshot` 是**非空** `BoardSnapshotValue`（`board-channel.ts:83`），因此成功响应不可能返回 `{snapshot:null}`（wire 层的 null 容忍保留给未来宿主，A 不产生；A1/A3 均不改该非空类型）。`undoable` 一律由**写后快照**里该任务的 `undoTarget !== null` 计算（`TaskView.undoTarget` 见 `types.ts:385-391`；推导见 `planning.ts:274/289-292`），不由输入或写前值推断。
+
+| core 结果 | 细节 | wire code / 成功值 |
 | --- | --- | --- |
-| `saved` | 重读快照成功 | 成功 `{snapshot, undoable}` |
-| `saved` 但服务端重读失败 | 写已生效、快照未取到 | 成功 `{snapshot:null, undoable:…}`（wire `BoardWriteValue.snapshot` 允许 null，`wire.ts:164-174`；浏览器按“未知结果”提示，`channel-source.ts:186-188`） |
-| `no-change` | 0 次写 | 成功（快照重读；`undoable:false`） |
-| `already-applied` | 同 requestId 重试 | 成功（快照重读；`undoable` 取 `undoTarget!==null`） |
+| `saved` + 重读成功 | 写已落地 | 成功 `{snapshot, undoable}` |
+| `saved` + 重读失败 | 写已生效、快照未取到 | **`unknown-result`（不带 snapshot）**：按“结果未知、先核对”提示，不重发（`channel-source.ts:186-188`）；**删除旧 `{snapshot:null}` 行** |
+| `no-change` | 0 次写（`planning.ts:1240-1241`） | 成功（重读快照）；`undoable`＝快照中该任务 `undoTarget !== null`。**不是 false**：core 的撤销目标仍在（`planning.ts:274/289-292`），撤销依然有效 |
+| `no-change` + 重读失败 | 正式值未变 | `read-failed`（浏览器保留旧视图+重试；不显示假成功） |
+| `already-applied` | 同 requestId 重试（`planning.ts:1210-1213`） | 同 `no-change` 规则（成功 + `undoable` 取快照） |
+| `already-applied` + 重读失败 | 结果已知已生效 | `read-failed`（保留旧视图+重试，不报假成功） |
 | `baseline-changed` | `actual` 给当前基线 | `stale-baseline` + `details.current:{status,statusVersion}`（`board-channel.ts:135-137`、`source.ts:89-95`） |
 | `rejected/unknown-task` | 任务不存在 | `not-found` |
 | `rejected/unknown-project`（reorder） | 项目未登记 | `unknown-project` |
@@ -283,9 +308,13 @@ wire 的浏览器侧失败码集合固定为 8 个（`wire.ts:58-67`）；host h
 | `rejected/invalid-status`、`invalid-input` | 协议/输入错误 | `save-failed`（不可映射为产品语义；message 原样带出） |
 | `failed/write-failed`（核心写失败） | 正式值未变 | `save-failed` + `current` |
 | 适配器/数据层异常（未确认结果） | 写可能已落地 | `unknown-result`（不重发） |
-| 撤销 `cannot-undo/nothing-to-undo` | 当前无可撤销流转 | `stale-baseline` + `current`（UI 在 undo 分支显示当前值，`controller.ts:398-411`） |
-| 撤销 `cannot-undo/superseded` | 竞争/撤销已生效 | `stale-baseline` + `current`（core 已给 `currentStatusRevision`，`planning.ts:1428-1436`、`:1439-1456`） |
-| 撤销 `undone` | 成功 | 成功（快照；`undoable:false`） |
+| 非法/缺失 `ver1:` 基线 | 适配层拒绝（§4.2） | host `invalid-payload` → 浏览器 `save-failed`；正式值不变 |
+| 撤销 `undone` | 成功（`planning.ts:1496` 起） | 成功（重读快照）；`undoable` 取快照 `undoTarget!==null`（撤销后通常为 null） |
+| 撤销 `cannot-undo/nothing-to-undo` | 当前无可撤销流转（`planning.ts:1442`） | `stale-baseline` + `current`（UI undo 分支显示当前值，`controller.ts:398-411`） |
+| 撤销 `cannot-undo/superseded` | ①**同 undoId 重试**（`planning.ts:1438-1439`）；②竞争/已撤销/基线过期（`:1444/1446/1452`） | **先预检再映射**：适配器调用 core 前 `core.readTask(taskId)`；若 `task.lastStatusUpdateId === 本撤销的 operationId`（撤销成功后写入，`planning.ts:1484-1485`）→ 视为**已生效**，返回成功（快照 + `undoable` 规则），不把重试误报为竞争失败；否则走 core，`superseded` → `stale-baseline` + `current` |
+| 撤销 `rejected/unknown-task` | 任务不存在（`planning.ts:1421-1423`） | `not-found` |
+| 撤销 `rejected/invalid-input` | 输入错误（`planning.ts:1417-1418`） | `save-failed` |
+| 撤销 `failed/write-failed` | 正式值未变 | `save-failed` + `current` |
 
 ### 6.3 切片 B 的错误码扩展（B 再定稿）
 
@@ -299,12 +328,13 @@ B 需要区分“输入被拒绝”的一类（标题空白、字段非法），
 
 1. `board/read` 成功：`capabilities` 三分量、`workScope` 摊平（null→省略）、`hints` 缺省、`statusRevision`/`undoTarget` 在（§3.2/3.3）。
 2. `board/read` 未登记项目 → `unknown-project`（不是空看板）；payload 缺 `projectId` → `invalid-payload`，且无任何项目被猜中。
-3. `task/status.set` 成功、阻塞无原因被拒（无写）、`baseline-changed` → `stale-baseline`+current、同 operationId 重试 → `already-applied`。
+3. `task/status.set` 成功、阻塞无原因被拒（无写）、`baseline-changed` → `stale-baseline`+current、同 operationId 重试 → `already-applied`；**`no-change` → 成功且 `undoable` 取快照 `undoTarget!==null`（不得为 false）**；非法 `ver1:` → `save-failed` 且无写。
 4. `task/reorder` 成功与 `status` 不符 → `stale-baseline`。
-5. `task/status.undo` 用 `undoTarget` 成功；竞争/已撤销 → `stale-baseline`+current。
-6. 故障注入（内存 port 的 `beforeWrite`，选项定义见 `port.ts:82`、注入点 `:185`；属测试代码，不进入正式构建，符合 Q3 政策）：写失败 → `save-failed` 且正式值不变；适配器异常 → handler 返回 `unknown-result`，**handler 永不抛**。
+5. `task/status.undo` 用 `undoTarget` 成功；竞争 → `stale-baseline`+current；**同 undoId 重试 → 已生效的成功（预检命中，不误报竞争）**；`nothing-to-undo` → `stale-baseline`+current；`unknown-task` → `not-found`。
+6. 故障注入（内存 port 的 `beforeWrite`，选项定义见 `port.ts:82`、注入点 `:185`；属测试代码，不进入正式构建，符合 Q3 政策）：写失败 → `save-failed` 且正式值不变；适配器异常 → handler 返回 `unknown-result`，**handler 永不抛**；**`saved` 但重读失败 → `unknown-result`（不带 snapshot）**；`no-change/already-applied/undone` 但重读失败 → `read-failed`。
 7. 未知端点 → `unknown-endpoint`（`board-channel.ts:210`）。
 8. 快照读：`readBoard` 返回的 `boardToken` 与 core 一致、迟到响应比较仍成立（controller 侧）。
+9. host 半装配：`connection` 缺失 / `rpc.handle` 抛错（`register-failed`）时 `apply()` 不抛、诊断事件 reason 正确；`ActivationSnapshot` 新字段存在且 `createStatusTool().output.schema` 的 `required`/`properties` 包含它们（schema 子集断言，见 `host.test.ts:285` 起）。
 
 切片 B 再加：`project/list`（不猜、不写）、`task/create` 幂等与 `keptInput`、`task/fields.update` 基线/草稿、`activity/read` 排序与 scope 隔离。
 
@@ -319,27 +349,37 @@ B 需要区分“输入被拒绝”的一类（标题空白、字段非法），
 
 ### 7.3 门禁（A 的定义性完成判据，全部要贴原始输出）
 
+**前置（A-G0，缺一则后续门禁无意义）**：A4 新增 `@aikanban/core` 依赖后，必须先在**同步盘之外的构建沙盒**（worktree，见 [tools/COMMANDS.md](../../tools/COMMANDS.md) §10.2 `:196-233`）跑**非 frozen** 的 `pnpm install`，把更新后的 `pnpm-lock.yaml` **提交**；之后基线的 `pnpm install --frozen-lockfile` 才成立。禁止在同步盘仓库根直接安装（`node_modules`/`.pnpm-store` 会被同步，见 COMMANDS `:196-216`）。
+
 | # | 判据 | 命令/方式 |
 | --- | --- | --- |
-| A-G1 | typecheck/build 通过 | `pnpm run typecheck`、`pnpm run build`（根 README 命令） |
-| A-G2 | 测试全绿且新增集成测试在列 | `pnpm -r --if-present run test`；记录 core/plugin/plugin-client 用例数（当前 66/38/45=149，更新后据实） |
+| A-G0 | lockfile 已更新并提交；沙盒 `--frozen-lockfile` 可复现 | 盘外 worktree：`pnpm install`（非 frozen）→ `git add pnpm-lock.yaml`；再 `pnpm install --frozen-lockfile` 成功（COMMANDS `:196-233`） |
+| A-G1 | typecheck/build 通过 | 沙盒内 `pnpm run typecheck`、`pnpm run build`（根 README 命令） |
+| A-G2 | 测试全绿且新增集成测试在列；含工具 output schema 子集断言 | `pnpm -r --if-present run test`；记录 core/plugin/plugin-client 用例数（当前 66/38/45=149，更新后据实） |
 | A-G3 | `verify-host-import` **11/11 不退化** | `node tools/verify-host-import.mjs`（`:225-335`） |
 | A-G4 | 探针新增断言通过 | `node tools/probe-host.mjs`（§7.2；输出含新检查 PASS） |
-| A-G5 | 代码事实核对 | `git status` 只含本切片改动；未改 `docs/prd/**`、未改产品语义 |
+| A-G5 | 代码事实核对与记录分工 | `git status` 只含本切片改动；**未改 `docs/prd/**`、未改产品语义**；切片 A 的实施记录按 §7.4 写 `docs/engineering/s1-wiring-implementation.md`（不写进 features 目录） |
 
 **A 完成 ≠ F01/F02 验收**：AT 全部「待执行」；`implementation.md`/`verification.md` 的更新与 AT 执行按[验收执行规则](acceptance-execution.md)另做。A 的测试/探针只能作为档 2/档 3 辅助证据。
+
+### 7.4 S5 分工与实施记录（与 M6 的明确边界）
+
+- 切片 A **不实现任何功能规则**（只做 core→host→browser 的接线）：它的实施记录**不写进 `docs/prd/features/**`**，而是新建 **`docs/engineering/s1-wiring-implementation.md`** 作为工程实施记录；按 [M6 规则](../prd/templates/vibecoding-task.md)（`implementation.md` 首次创建、后续追加章节并注明**日期 + 提交号**）维护。**本规格不创建该文件**，只定规则。
+- 功能自身的实现仍按 M6 写各自 `docs/prd/features/Fxx-slug/implementation.md`；跨功能接线与功能实现的记录地点不同，不互相替代（同 [验收执行规则 §6](acceptance-execution.md) 的 S5 分工）。
+- A-G5 的「未改 `docs/prd/**`」保持不变：这是该分工的直接结果——A 期间不往功能目录写实施记录，也不改 PRD。
 
 ## 8. 未定与风险（需真实 profile / 实施第一步取证）
 
 1. **真实 Connection RPC 网络往返**：本仓库只能做协议级往返（真实构建产物 + 契约信封）；`requestRejection`（Host/Origin/token）与真实页面↔宿主跳转需写 profile 并重启，未验证（ADR-005 `:88-98`，状态仍 `提议`）。A 的探针只能证明“宿主内注册发生”，不能证明网络可用。
 2. **浏览器真实渲染**：无 DOM 环境测试；面板在真实 GUI 的渲染/键盘仍待档 1（ADR-004 仍 `提议`）。
-3. **`ctx.storageDomain.open` 是否接受裸 spec**（§5.2）：未确认；若必须 `defineDomain` 包装，需在 ADR-007 修订里选择替代，不得引入裸 specifier。
+3. **`ctx.storageDomain.open` 的真实插件上下文行为**（§5.2）：spec 形状已由安装包源码佐证（`defineDomain` 只做 descriptor 校验、`open` 用 `valueSchema.parse`；见 `packages/core/experiments/storage-domain-atomicity.mjs:41`、`:77-78`、`:98`），**不再是“裸 spec 是否可接受”的未确认**；仍需实测的是：真实插件上下文里该服务是否以同一形状暴露 `open`、失败时的错误形状。
 4. **`tsc -b` 对 core 源导出引用的解析**（§5.3）：未确认；可能出现 TS6305/TS6059，修法已给。
-5. **`workspaceRegistry` 精确返回形状/lifecycle**（§5.4）：ADR-003 只给了方法名与部分实测；`get`/`list` 返回值字段需实现时核对。
+5. **`workspaceRegistry` 精确返回形状/lifecycle**（§5.4）：`status(): Promise<'ok'|'missing-dir'>` 已确证（安装包声明 §2.1）；`get`/`list` 返回值字段与服务生命周期仍需实现时核对。
 6. **cordis 生命周期钩子**（关闭 domain/注销通道）：未确认；A 先按进程级生命周期，记录局限。
-7. **connection 服务相对 apply 的到达时机**：可能晚于 apply；已按 `internal/service` 重试+重发信号设计，但真实顺序需探针观察（快照里的 `boardChannelRegistered` 可能先 false 后 true，探针必须等最终态）。
+7. **connection / storageDomain 服务相对 apply 的到达时机**：都可能晚于 apply；已按 `internal/service` 重试 + 重发信号设计（含 `storageDomain` 晚到重试与 `void bootstrap().catch(...)`），但真实顺序需探针观察（快照里的 `boardChannelRegistered`/`dataLayerReady` 可能先 false 后 true，探针必须等最终态）。
 8. **同一次状态+排序的两写**：core 对 `setTaskStatus({toIndex})` 先写列偏好再写状态（`planning.ts:1300-1315`）；若第二步失败，卡片位置偏好已变但状态未变。A 按 core 现状映射（失败报 `save-failed`，正式状态不变）；产品可接受性已由 F02-R04 的“保存失败保留正式原状态与顺序”约束（但两者不同写，需在验证时如实记录该边界）。
 9. **切片 A 无项目选择 UI**：A 的界面只能显示选择空态；若评审要求“A 可演示 S1 闭环”，需把 B 的 `project/list` 前移——本规格按任务书“A 固定 4 端点”执行，不擅自扩大。
+10. **工具 output schema 的宿主硬约束**（§5.5）：新增快照字段若不同步 `createStatusTool` 的 `required`/`properties`，真实宿主会以 `ToolOutputError` 拒绝注册；这项由 `host.test.ts` 的 schema 子集断言兜住，但**真实宿主报错形状**仍属未验证。
 
 ## 9. 切片 B 扩展清单（归属：B；A 不实现）
 
@@ -382,4 +422,5 @@ core 映射：
 - 产品规则：[F01 PRD](../prd/features/F01-project-and-tasks/prd.md)、[F02 PRD](../prd/features/F02-task-status-and-cards/prd.md)；现状盘点：[F01 implementation](../prd/features/F01-project-and-tasks/implementation.md)、[F02 implementation](../prd/features/F02-task-status-and-cards/implementation.md)
 - core 契约：[packages/core/README.md](../../packages/core/README.md)（F01 契约 `:177`、F02 契约 `:276`、PRD 对照 `:338-353`）
 - 通道与宿主：[ADR-005](decisions/ADR-005-浏览器半与宿主半的数据通道.md)、[ADR-003](decisions/ADR-003-project-mapping-and-context-injection.md)、[宿主能力合同](host-capabilities.md)
+- 构建/安装沙盒：[tools/COMMANDS.md](../../tools/COMMANDS.md) §10.2（盘外 worktree、`--frozen-lockfile`）
 - 决策与状态：[ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)、[交付状态](../delivery/status.md)、[验收执行规则](acceptance-execution.md)

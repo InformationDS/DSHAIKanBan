@@ -12,7 +12,7 @@ AIKanBan 是面向 Deepseek Harness 桌面版的项目看板与跨对话交接�
 - 未决事项：[未决事项与首版边界](docs/prd/open-questions.md)
 - 需求追溯：[追溯说明](docs/prd/traceability.md)
 - 工程准备：[架构准备](docs/engineering/architecture.md)、[宿主能力合同](docs/engineering/host-capabilities.md)
-- 技术决策：[技术决策记录](docs/engineering/decisions/README.md)（ADR-001—006，状态见索引）
+- 技术决策：[技术决策记录](docs/engineering/decisions/README.md)（ADR-001—007，状态见索引）
 - S0 复核：[S0 复核记录](docs/engineering/s0-reverification-20261019.md)（2026-10-19，DSH 44.7.0；含旧声称更正）
 - 实施代码：`packages/`（回收的 S0/S1 实现）与根构建配置 8 个（`package.json`、`pnpm-workspace.yaml`、`pnpm-lock.yaml`、`tsconfig.json`、`tsconfig.base.json`、`vitest.config.ts`、`.npmrc`、`.gitignore`）
 - 运行与构建：[tools/COMMANDS.md](tools/COMMANDS.md)（`node_modules` 与 `.pnpm-store` 未随仓库提供，先读该页再 `pnpm install`）
@@ -57,7 +57,7 @@ AIKanBan/
    ├─ README.md         # 文档入口、职责与维护规则
    ├─ prd/              # 有效需求、公共规则、20 份小 PRD、历史基线、映射与模板
    ├─ engineering/      # S0 工程记录：架构准备、宿主能力合同、ADR、复核记录
-   │  └─ decisions/     # 技术决策记录（ADR-001—006，状态见索引）
+   │  └─ decisions/     # 技术决策记录（ADR-001—007，状态见索引）
    ├─ delivery/         # 交付状态唯一入口（status.md，实现与验收进度）
    └─ tools/            # 文档校验与基线映射工具
 ```

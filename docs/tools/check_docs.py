@@ -195,13 +195,19 @@ traceability_text = (PRD / 'traceability.md').read_text(encoding='utf-8')
 trace_at = at_ids(traceability_text)
 require(expected_ats <= trace_at, 'Traceability map missing ATs')
 require(trace_at <= expected_ats | {f'AT-{i}' for i in range(107,201)}, 'Traceability map references unknown ATs')
-STATUS_VOCABULARY = {'待执行', '部分执行', '通过', '失败', '结果需核对'}
+# S4=(a) (2026-10-20 user decision): the `status` column of acceptance.csv is
+# FROZEN at '待执行'. The file is an index of definitions, not a status store;
+# real execution status lives in each feature's verification.md (see
+# docs/engineering/acceptance-execution.md). Any other value must fail loudly.
+STATUS_VOCABULARY = {'待执行'}
 for r in acceptance:
     owner = r['primary_owner']
     require(owner in texts, f'{r["at_id"]}: unknown primary owner')
     source = [x.strip() for x in lines[int(r['baseline_line'])-1].strip('|').split('|')]
     require(source[:4] == [r['at_id'],r['scenario'],r['expected'],r['source_fr']], f'{r["at_id"]}: original scenario altered')
-    require(r['status'] in STATUS_VOCABULARY, f'{r["at_id"]}: unknown status {r["status"]!r}')
+    require(r['status'] in STATUS_VOCABULARY,
+            f'{r["at_id"]}: acceptance.csv 的 status 已冻结为「待执行」（S4＝(a)），实际值 {r["status"]!r}；'
+            f'执行状态见各功能 verification.md')
     if owner in texts:
         accept_section = section_body(texts[owner], 6)
         require(r['at_id'] in at_ids(accept_section), f'{r["at_id"]}: primary owner {owner} lacks acceptance reference')
@@ -340,6 +346,36 @@ if len(roadmap_body) == 2:
         require(set(re.findall(r'F\d{2}', cells[2])) == catalog_deps[fid],
                 f'roadmap.md: {fid} dependencies differ from catalog')
     require(roadmap_rows == 20, f'roadmap.md: dependency list has {roadmap_rows} rows, expected 20')
+
+# The verification template must speak the one canonical conclusion vocabulary
+# (S4: real-operation evidence and fault-injected evidence stay distinct at word
+# level). This is a light guard against template/policy drift, not a record check.
+VERIFICATION_VOCABULARY = ('待执行', '通过（真实操作）', '通过（含故障注入）', '部分执行', '失败', '结果需核对')
+verification_template = PRD / 'templates' / 'verification.md'
+require(verification_template.exists(), 'Missing docs/prd/templates/verification.md')
+if verification_template.exists():
+    template_text = verification_template.read_text(encoding='utf-8')
+    for word in VERIFICATION_VOCABULARY:
+        require(word in template_text, f'verification.md template does not declare conclusion word {word!r}')
+    template_lines = template_text.splitlines()
+    header_index = next((i for i, line in enumerate(template_lines)
+                         if line.strip().startswith('|') and 'AT 编号' in line and '结论' in line), None)
+    require(header_index is not None, 'verification.md template: missing AT/结论 table header')
+    if header_index is not None:
+        header = [c.strip() for c in template_lines[header_index].strip().strip('|').split('|')]
+        conclusion_at = header.index('结论')
+        for line in template_lines[header_index+1:]:
+            stripped = line.strip()
+            if not stripped.startswith('|'):
+                break
+            cells = [c.strip() for c in stripped.strip('|').split('|')]
+            if all(re.fullmatch(r'[\s:\-]*', c) for c in cells):
+                continue  # separator row
+            require(len(cells) == len(header), 'verification.md template: row/header column mismatch')
+            if len(cells) == len(header):
+                value = cells[conclusion_at]
+                require(value == '' or value in VERIFICATION_VOCABULARY,
+                        f'verification.md template: conclusion word {value!r} not in the frozen vocabulary')
 
 if ERRORS:
     print('DOCUMENT CHECK FAILED')

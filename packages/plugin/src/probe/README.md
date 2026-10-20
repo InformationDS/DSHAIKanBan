@@ -1,6 +1,6 @@
 # 宿主集成探针（S0-W3 / task-3）
 
-这是一个**一次性可观测探针**，不是要发布的插件代码。它在**隔离宿主**里真实执行三条宿主集成路径，
+这是一个**一次性可观测探针**，不是要发布的插件代码。它在**隔离宿主**里真实执行四道宿主集成检查，
 把结果写成 `evidence/probe-report.json`，供 [ADR-001](../../../../docs/engineering/decisions/ADR-001-session-dispatch-and-consolidation-carrier.md)
 与 [ADR-003](../../../../docs/engineering/decisions/ADR-003-project-mapping-and-context-injection.md) 引用。
 
@@ -59,7 +59,7 @@ S0 期间 `.probe-home` 被 `tools/probe-host.mjs` 的 `rmSync` 整目录删除�
 
 ## 它验证什么
 
-探针共 18 步，全部断言通过才算通过；每步都先检查前置条件，**不允许空过**（例如「没有重复投递」必须在
+探针共 20 步，全部断言通过才算通过；每步都先检查前置条件，**不允许空过**（例如「没有重复投递」必须在
 「首次投递确实落库」的前提下才算证据）。
 
 - **派发**：`sessionController.prompt({requestId,sessionId,mode:'queue',content}, signal)` → `{accepted:true}`，
@@ -76,14 +76,15 @@ S0 期间 `.probe-home` 被 `tools/probe-host.mjs` 的 `rmSync` 整目录删除�
 
 ## 它不验证什么
 
-- **模型回复**：若隔离 home 没有模型凭据（见上「依赖与冲突」），本轮 `turn/end` 的 `reason` 是
-  `{kind:'error', error:{code:'MISSING_CREDENTIAL'}}`。此时「取回 assistant 回复并与投递内容对上」只完成了
-  读回通道（`inspect` / `follow` 快照 / `page` 三条通道一致），回复内容**未验证**。
-- **真实多步**：本轮在 step 1 就因缺凭据结束，没有工具调用，因此「多步只注入一次」只在 `step === 1` 闸门
-  与 step 1 实测上成立，没有真实多步事件序列。
+- **模型回复**：若隔离 home **没有**模型凭据（默认情形，见上「依赖与冲突」），本轮 `turn/end` 的 `reason` 是
+  `{kind:'error', error:{code:'MISSING_CREDENTIAL'}}`；此时只能验证读回通道（`inspect` / `follow` 快照 / `page`
+  三条通道一致），**回复内容未验证**。**2026-10-20 已用启动环境变量注入凭据完成复验**：`turn/end` 为
+  `{kind:'completed'}`、`assistantTurns` 两条、`multiStepObserved=true`——该两项已关闭（见下方链接）。
+- **真实多步**：默认缺凭据时本轮在 step 1 结束、没有工具调用，「多步只注入一次」仅在 step 1 实测上成立；
+  **2026-10-20 真实模型复验**后已取得 step 1 → step 2 的真实事件序列（两次 pre-step、只注入 1 次）。
 - 运行中 `queue` 排队、`steer` 会取消当前轮、冷会话 resume 与 `session/writer-held`：均未实测。
 
-未验证项的完整清单写在两份 ADR 的「尚未验证」一节。
+仍未验证项的完整清单见 [S0 复核记录](../../../../docs/engineering/s0-reverification-20261019.md) 第 9 节与两份 ADR 的「尚未验证」一节。
 
 ## 文件
 

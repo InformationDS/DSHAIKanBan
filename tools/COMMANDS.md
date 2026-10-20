@@ -108,7 +108,7 @@ cd D:\BaiduSyncdisk\dsh-plugin\AIKanBan
 & $NODE tools\probe-host.mjs --timeout 180
 ```
 
-因为 `DSH_HOME` 可覆盖 Harness home，探针在**工作区内**建一个完全隔离的宿主（自己的 `profiles/ sessions/ storages/ node_modules/`），**不碰任何已运行的 profile**，并且 `--port 0` 让 OS 分配端口，绝不会和 19387 的 GUI 抢端口。
+因为 `DSH_HOME` 可覆盖 Harness home，探针在**工作区内**建一个完全隔离的宿主（自己的 `profiles/ sessions/ storages/ node_modules/`），**不碰任何已运行的 profile**，并且 `--port 0` 让 OS 分配端口，**绝不会和正在运行的 GUI 抢端口**。注意 GUI 端口每次启动由系统分配、会变（本机先后观察到 19387 / 7420 / 8748），**不要在任何文档或脚本里写死它**。
 
 **实测**（exit 0，四道检查全 PASS）：
 
@@ -153,7 +153,7 @@ cd D:\BaiduSyncdisk\dsh-plugin\AIKanBan
 
 ## 8. 重启生效（需要用户执行）
 
-DSH 的 loader 层在进程启动时组合；新 bundle 层只有重启该 profile 的 DSH 进程才会加载。**本会话绝不自行重启**（会中断用户 127.0.0.1:19387 的实时会话）。
+DSH 的 loader 层在进程启动时组合；新 bundle 层只有重启该 profile 的 DSH 进程才会加载。**本会话绝不自行重启**（会中断用户正在运行的 GUI 会话；端口每次启动分配，本机先后见过 19387 / 7420 / 8748）。
 
 ```powershell
 # 1) 让新包成为 profile 的一个 bundle 层（官方流程，会自动追加到 dsh.profile.bundles）
@@ -190,7 +190,7 @@ dsh --profile desktop --dump-config | Select-String aikanban
 | pnpm（**推荐这套**） | 同一 runtime 下的 `pnpm\bin\pnpm.mjs`，**11.7.0** | 与 `packageManager: pnpm@11.7.0` 一致 |
 | pnpm（另一处并存） | `D:\dsh\resources\runtime\versions.json` 记 **11.28.5** | 两套都在 11.x，都满足 `>=11.7.0 <12`；**统一用 11.7.0**，避免 lockfile 抖动 |
 | dsh CLI（隔离探针需要） | `C:\Users\InformationDS\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh\lib\bin.js` | `tools/probe-host.mjs` 按 `DSH_CLI` → `%APPDATA%\npm\…` → PATH 查找；找不到会 exit 2 |
-| 当前 GUI | `http://127.0.0.1:7420` | §5.2 与 §8 写的 `19387` 是 2026-10-14 的记录，**已过期** |
+| 当前 GUI | **端口每次启动由系统分配，不要写死**（本机先后观察到 19387 / 7420 / 8748） | §5.2 与 §8 写的 `19387` 是 2026-10-14 的记录，已过期；读实际监听端口即可 |
 | 当前 DSH 版本 | **44.7.0**（nightly 通道） | S0 复核即在此版本完成，见 [S0 复核记录](../docs/engineering/s0-reverification-20261019.md) |
 
 ### 10.2 构建位置：不要在同步盘里装依赖
@@ -232,5 +232,5 @@ git -C $BOX checkout --detach <commit-or-branch>
 
 - **仍然禁止** `pnpm --filter <包名>`（同步盘挂起）；一律用 `pnpm -r` 或 `pnpm -C`。
 - **仍然不要**自行重启用户的 GUI 进程。装进真实 profile 属于要用户确认的动作（见 §7/§8 与 `docs/engineering/architecture.md` 的未决项）；`desktop` profile 由 Electron 独占，CLI 的 `--dump-config` 会被拒绝。
-- 隔离探针**刻意不含模型凭据**，因此「真实模型产生的 assistant 回复」与「真实多步（工具调用）」仍未验证；不要用探针通过来替代这两项。
+- **2026-10-20 已用启动环境变量注入 `DEEPSEEK_API_KEY` 完成复验**（`completed`、2 条 `assistant` 消息、`multiStepObserved=true`），详见 `docs/engineering/s0-reverification-20261019.md` 第 9 节；探针**默认仍不含凭据**，不要用「探针通过」替代真实模型验证。
 - `probe-host` 第 4 项若报 `SKIP … NODE_OPTIONS restricted`，属于**未观察**，不得当作通过。

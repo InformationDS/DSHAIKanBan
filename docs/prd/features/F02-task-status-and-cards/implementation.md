@@ -45,13 +45,16 @@ F02 §6 共 **9 行验收（8 个 AT 编号，AT-03 出现两行）**。覆盖�
 ## 4. 依赖、接线与已知局限
 
 1. **端到端未接通**：`packages/plugin/src/index.ts:396-404` 说明 board channel 未在 `apply()` 注册（缺 core 适配层）；`packages/plugin/src/board-channel.ts:145` 的 handler 依赖 `HostBoardPort`（L109），仓库中没有 `@aikanban/core` → 该端口的实现。浏览器半**没有 connection 时**显示「数据通道未接通」；**有 connection 但路由未注册或适配失败时**表现为 `read-failed` 与数据格式无效提示（`channel-source.ts:136-155`、`board.tsx:433-439`）。两种情况都**不会渲染假数据**。
-2. **协议字段缺口**：wire 要求读快照携带 `capabilities`（`wire.ts:396-397`），core 的 `BoardReadResult` 没有该字段（`packages/core/src/types.ts:441-463`）；`hints`（F02-R06）在 core 也没有数据源。适配层须实现映射，否则读到的是「格式无效」。
+2. **协议字段缺口**：wire 要求读快照携带 `capabilities`（`wire.ts:396-397`），core 的 `BoardReadResult` 没有该字段（`packages/core/src/types.ts:441-463`）；`hints`（F02-R06）在 core 也没有数据源，wire 允许省略、适配层不得合成占位提示（见 §5）。适配层须为 `capabilities` 实现合成映射，否则读到的是「格式无效」。
 3. **构建产物与测试前置**：`channel-roundtrip.test.ts` 与 `client-bundle.test.ts` 读取 `packages/plugin/lib/index.js`、`lib/client.js`；仓库不含 `lib/` 与 `node_modules`，须按 [tools/COMMANDS.md](../../../../tools/COMMANDS.md) 先安装构建才能运行这两组测试（`controller.test.ts`/`model.test.ts`/`slots.test.ts`/core 测试无需构建产物）。
 4. **依赖功能未实现**：F03（正式概况）、F04（对话）、F06（记录）、F13/F14（成果）、F15（行动提示来源）、F17（归档/删除）、F19（键盘全面验收）——相关规则与 AT 只能等其就绪后联合验收。
 5. **未确认项**：真实浏览器渲染、真实键盘交互、真实宿主 Connection RPC 路由（Host/Origin/浏览器 token 校验）均无本仓库内实测证据；ADR-005 仍是「提议」。
 
-## 5. 下一步（按最小闭环）
+## 5. 下一步
 
-1. 实现 core → `HostBoardPort` 适配（`readBoard`/`setTaskStatus`/`reorderTask`/`undoStatusChange` 的结果映射、`capabilities` 与 `hints` 合成、三态读结果映射），并在 `apply()` 注册 `/aikanban` 通道。
-2. 用真实通道跑通看板读、状态变更、阻塞、排序、撤销、失败重试；补齐项目切换入口（`controller.selectProject`）与任务创建/字段编辑（F01）。
-3. 按 §6 逐 AT 执行；跨功能行标注「待联合验收」——在此之前 F02 验收保持「待执行」，不得引用本文或单测作验收证据。
+接线与实施顺序以 [S1 接线规格](../../../engineering/s1-wiring.md) 与 [ADR-007](../../../engineering/decisions/ADR-007-s1-wiring-and-current-project.md) 为准，本文不再另立一套「下一步」：
+
+- 切片 A（core → `HostBoardPort` 适配 + `/aikanban` 注册，范围固定为现有 4 端点）的字段映射以规格 §3.2—§3.5 为准：`capabilities` 由适配层合成；**`hints` 恒省略、不得合成占位提示**（F02-R06 的数据来源要等 F04/F06/F13，A/B 期 `hints` 省略）。
+- 看板读、状态变更、阻塞、排序、撤销、失败重试的端到端验证按规格 §7 的切片 A 完成判据执行（§7.1 集成测试、§7.2 探针新增断言、§7.3 门禁）；项目切换入口与任务创建/字段编辑属切片 B（F01），端点与测试清单见规格 §1.2、§9。
+
+按 §6 逐 AT 执行；跨功能行标注「待联合验收」——在此之前 F02 验收保持「待执行」，不得引用本文或单测作验收证据。

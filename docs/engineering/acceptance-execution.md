@@ -2,7 +2,7 @@
 
 本页规定**功能验收（AT）如何执行、证据如何归档、状态在哪里登记**。它不改变任何产品规则与 PRD；与 [交付状态](../delivery/status.md)、[验收记录模板](../prd/templates/verification.md) 配合使用。
 
-相关已定决策：**Q3＝允许 test-only 注入且承认为 AT 证据**（2026-10-20 用户确认，政策见第 3 节）；Q1（当前项目解析＝每次显式选择）、Q2（扩展 wire）见 `ADR-007` 与 `s1-wiring.md`，不在本页重复。
+相关已定决策：**Q3＝允许 test-only 注入且承认为 AT 证据**（2026-10-20 用户确认，政策见第 3 节）；**S4＝(a)**（2026-10-20 用户决定）：`acceptance.csv` 的 `status` 列**冻结为 `待执行`**、由校验器强制，结论词表必须把真实操作证据与含故障注入的证据在**词层面**区分（见第 1 节）。Q1（当前项目解析＝每次显式选择）、Q2（扩展 wire）见 `ADR-007` 与 `s1-wiring.md`，不在本页重复。
 
 ## 1. AT 状态的唯一权威位置
 
@@ -10,17 +10,42 @@
 
 与[交付状态](../delivery/status.md)的关系（两者不冲突）：交付状态是**功能级「实现/验收」汇总状态**的唯一入口（两列，不逐 AT），本页与各 `verification.md` 是**逐条 AT 结论**的唯一权威；前者是汇总、后者是明细，互相引用而不重复维护同一结论。
 
-- 每个功能在 `docs/prd/features/Fxx-slug/verification.md` 按[模板](../prd/templates/verification.md)记录：AT 编号、步骤、预期、实际结果、证据、结论。
+- 每个功能在 `docs/prd/features/Fxx-slug/verification.md` 按[模板](../prd/templates/verification.md)记录：AT 编号、证据档位、步骤、预期、实际结果、证据、结论。
 - 其他位置的分工：
-  - [交付状态](../delivery/status.md)：只做**功能级**汇总（实现/验收两列），不逐 AT 维护，不复制 AT 结论。
+  - [交付状态](../delivery/status.md)：只做**功能级**汇总（实现/验收两列），不逐 AT 维护，不复制 AT 结论；其「验收」列按本页的**汇总口径**填写。
   - [acceptance.csv](../prd/mapping/acceptance.csv) 与 [acceptance-additions.csv](../prd/mapping/acceptance-additions.csv)：是**验收定义/索引**（场景、预期、主责、协作者），不是状态库；不得向其中写执行状态。
   - [traceability.md](../prd/traceability.md)：需求追溯，不承载执行状态。
 - **禁止另建 AT 状态副本**：同一 AT 不得在 PRD、路线、README 或别的表格里出现另一套结论。需要汇总时链接到 `verification.md` 的具体行。
-- 结论词表只允许 `通过` / `失败` / `待执行` / `结果需核对`；跨功能未就绪时写 `待联合验收` 并注明等待哪个功能/AT。未执行一律 `待执行`，不得预填。
+
+### 1.1 唯一结论词表（全仓库只此一套）
+
+模板、[交付状态](../delivery/status.md)、各功能 `verification.md` 与任何汇报**必须引用本表**，不得另立词表；六个取值的含义如下：
+
+| 结论词 | 含义与使用条件 |
+| --- | --- |
+| `待执行` | 未执行（或跨功能未就绪、尚未具备执行条件）。未执行一律写此值，不得预填结果。 |
+| `通过（真实操作）` | 结论由**档 1 真实操作证据**支撑（见第 2 节）。 |
+| `通过（含故障注入）` | 结论依赖**档 4 受限故障注入证据**；**必须在同一行注明注入方式 + 开关名/钩子名**（格式示例：`注入方式=环境变量 AIKANBAN_FAULT=storage-write；开关名=AIKANBAN_FAULT`），未注明者不得使用该结论词。 |
+| `部分执行` | 只执行了部分场景/分支；已执行部分按其证据写对应结论，未执行部分仍为 `待执行`。 |
+| `失败` | 执行了且结果不符合预期；保留失败证据，不得改写为「通过」。 |
+| `结果需核对` | 执行结果未知或证据不足（含读取失败、跨功能未就绪但已部分执行）；须写明需核对对象。 |
+
+强制规则：
+
+- **`通过（含故障注入）` 不得在汇总/汇报时简写成「通过」**：功能级汇总、阶段结论、聊天汇报都必须保留「含故障注入」字样，或按汇总口径降级为「部分执行」并注明。
+- **联合验收只有主责给出 `通过（真实操作）` 才算通过**：跨功能 AT（`collaborators` 非空 / PRD §6 标注「联合 Fxx」）的最终结论若为主责的 `通过（含故障注入）`、`部分执行`、`结果需核对` 或 `待执行`，该联合 AT **不得**记为通过，按第 4 节裁决。
+- 同一 AT 的结论只有一行有效值（多轮执行时以最新一轮为准，旧轮次保留在记录中，不改写历史）。
+- 跨功能未就绪时结论写 `待执行` 或 `部分执行`，并在「归属」列标注 `待联合验收（联合 Fyy）`——`待联合验收` 是**归属标记，不是结论词**。
+
+### 1.2 `acceptance.csv` 的 `status` 列已冻结
+
+- **S4＝(a)（2026-10-20 用户决定）**：`acceptance.csv` 的 `status` 列**只允许 `待执行`**，由 `docs/tools/check_docs.py` 强制——出现任何其他值即 FAIL。
+- 该列只表示「**映射文件不承载执行状态**」，不是执行进度；真实执行状态只登记在各功能 `verification.md`（本页第 1 节）与[交付状态的汇总列](../delivery/status.md)。
+- 不得把 `acceptance.csv` 当状态库，也不得在 `acceptance-additions.csv` 里新增 status 列。
 
 ## 2. 证据三档：各能证明什么、不能证明什么
 
-一个 AT 的「通过」必须由**能覆盖该 AT 可观察结果**的证据支撑；证据须写明档位。
+一个 AT 判为 `通过（真实操作）` 或 `通过（含故障注入）`，必须由**能覆盖该 AT 可观察结果**的证据支撑；证据须写明档位（档位定义见下表）。
 
 | 档位 | 形态 | 能证明 | 不能证明 |
 | --- | --- | --- | --- |
@@ -38,7 +63,7 @@
 
 ## 3. 故障注入政策（Q3 已定：允许，且承认为 AT 证据）
 
-允许使用 **test-only 构建开关或探针钩子**做故障注入；满足下列全部条件时，注入产生的证据**可作为该 AT 的证据**（结论写「通过（含故障注入）」并在证据列注明），否则只能作辅助证据：
+允许使用 **test-only 构建开关或探针钩子**做故障注入；满足下列全部条件时，注入产生的证据**可作为该 AT 的证据**（结论写 `通过（含故障注入）`，并在**同一行**注明注入方式 + 开关名/钩子名；否则只能作辅助证据）：
 
 1. **不进入正式构建**：仅存在于测试/探针构建或测试代码路径；正式 `build` 产物不得包含这些开关（须有构建断言或测试证明其未进入产物）。
 2. **默认关闭**：必须显式打开（环境变量或测试配置），且只在隔离环境使用（隔离 `DSH_HOME`、`--port 0`、不读写 `~/.dsh`、不触碰用户 GUI）。
@@ -57,7 +82,7 @@
 
 ## 4. 联合 AT 的裁决
 
-- **主责功能**：原始 106 条的 `primary_owner` 列、新增验收（AT-107 起）的 `primary_owner` 列是联合验收的主责方。主责功能负责**汇总并签署**该 AT 的最终结论。
+- **主责功能**：原始 106 条的 `primary_owner` 列、新增验收（AT-107 起）的 `primary_owner` 列是联合验收的主责方。主责功能负责**汇总并签署**该 AT 的最终结论，且必须使用第 1.1 节的唯一结论词表；**只有主责给出 `通过（真实操作）` 时，该联合 AT 才算通过**（主责为 `通过（含故障注入）`、`部分执行`、`结果需核对` 或 `待执行` 均不算）。
 - **协作者**：`acceptance.csv` 的 `collaborators` 列（及 PRD §6 中「联合 Fxx」标注）建立协同关系；协作者在自己 `verification.md` 记录本范围证据与结论，并在主责的记录中可被引用。
 - **结论冲突时的裁决顺序**：
   1. **规则文本优先**：PRD 规则与公共规则（OBJ/SAVE/APP/CTX/REC）对同一行为的规定；
@@ -70,11 +95,12 @@
 
 - [acceptance-additions.csv](../prd/mapping/acceptance-additions.csv) **没有 status 列，也不加**：它是新增验收的**定义索引**（`id / baseline_source / primary_owner / owner_path / kind / steps / expected / source_date`）。
 - 执行状态的登记：在 **owner 功能的 `verification.md`** 中按 AT 编号逐行记录（与原始 AT 相同格式、同一词表）；`owner_path` 指向哪个 PRD，就在该功能目录建/追加 `verification.md`。
-- 汇总：新增验收的进度只通过[交付状态](../delivery/status.md)的功能级「验收」列体现（存在未执行的 additions 时不得标「通过」）；不得在 CSV 里补 status、也不得另建第二份 additions 状态索引。
+- 汇总：新增验收的进度只通过[交付状态](../delivery/status.md)的功能级「验收」列体现（存在未执行或 `通过（含故障注入）` 的 additions 时不得在功能级写「通过」）；不得在 CSV 里补 status、也不得另建第二份 additions 状态索引。
 - 编号与归属规则不变：additions 编号自 AT-107 连续、不可复用；一个新增 AT 只能有一个主责功能，其在 §6 恰好出现一行（由 `docs/tools/check_docs.py` 校验）。
 
 ## 6. 与其他文档的关系
 
-- 执行与记录格式：[verification 模板](../prd/templates/verification.md)；单功能任务流程见 [vibecoding 模板](../prd/templates/vibecoding-task.md)。
-- 状态汇总：[交付状态](../delivery/status.md)（功能级唯一汇总）。
+- 执行与记录格式：[verification 模板](../prd/templates/verification.md)（结论列与证据档位列按本页第 1.1、2 节）；单功能任务流程见 [vibecoding 模板](../prd/templates/vibecoding-task.md)。
+- 状态汇总：[交付状态](../delivery/status.md)（功能级唯一汇总，验收列按本页第 1.1 节的汇总口径）。
 - 决策依据：[技术决策记录](decisions/README.md)；HOST-07 的区分表达与验收条目见 [ADR-006](decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（`已定`，工程证据待取证）。
+- **S5 分工**：跨功能接线（如切片 A）的实现**不写进 `docs/prd/features/**`**，其实现记录写 `docs/engineering/s1-wiring-implementation.md`；功能自身的实现仍按 M6 写各自 `implementation.md`（见 [vibecoding 模板](../prd/templates/vibecoding-task.md)）。

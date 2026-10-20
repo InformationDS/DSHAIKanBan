@@ -36,8 +36,8 @@
 
 | 功能 | 阶段 | 实现 | 验收 | 记录 |
 | --- | --- | --- | --- | --- |
-| [F01 项目隔离与任务创建编辑](../prd/features/F01-project-and-tasks/prd.md) | S1 | 进行中 | 待执行 | [implementation.md](../prd/features/F01-project-and-tasks/implementation.md)（现状盘点；verification 尚无） |
-| [F02 任务状态、卡片与详情](../prd/features/F02-task-status-and-cards/prd.md) | S1 | 进行中 | 待执行 | [implementation.md](../prd/features/F02-task-status-and-cards/implementation.md)（现状盘点；verification 尚无） |
+| [F01 项目隔离与任务创建编辑](../prd/features/F01-project-and-tasks/prd.md) | S1 | 进行中 | 待执行 | [implementation.md](../prd/features/F01-project-and-tasks/implementation.md)（现状盘点）、[s1-wiring.md](../engineering/s1-wiring.md)（切片 A/B 接线规格，依据 [ADR-007](../engineering/decisions/ADR-007-s1-wiring-and-current-project.md)）；verification 尚无 |
+| [F02 任务状态、卡片与详情](../prd/features/F02-task-status-and-cards/prd.md) | S1 | 进行中 | 待执行 | [implementation.md](../prd/features/F02-task-status-and-cards/implementation.md)（现状盘点）、[s1-wiring.md](../engineering/s1-wiring.md)（切片 A/B 接线规格，依据 [ADR-007](../engineering/decisions/ADR-007-s1-wiring-and-current-project.md)）；verification 尚无 |
 | [F03 手动维护任务概况与项目总览](../prd/features/F03-manual-summaries/prd.md) | S1 | 未开始 | 待执行 | 尚无 implementation/verification |
 | [F04 新建、继续与查看工作对话](../prd/features/F04-conversation-entry/prd.md) | S2 | 未开始 | 待执行 | 尚无 implementation/verification |
 | [F05 关联已有对话与固定归属](../prd/features/F05-conversation-binding/prd.md) | S2 | 未开始 | 待执行 | 尚无 implementation/verification |

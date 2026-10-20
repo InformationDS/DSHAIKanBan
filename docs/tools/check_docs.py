@@ -28,6 +28,12 @@ def load_csv(name):
     if not rows:
         return []
     header = rows[0]
+    # Duplicate column names would be silently merged by dict(zip(...)), letting
+    # e.g. a second `status` column override the frozen one and bypass its check.
+    duplicates = sorted({column for column in header if header.count(column) > 1})
+    require(not duplicates,
+            f'{name}: duplicate column name(s) {duplicates}；'
+            f'重复列会被 dict(zip(...)) 覆盖（例如重复 status 可绕过冻结校验）')
     for number, row in enumerate(rows[1:], start=2):
         require(len(row) == len(header),
                 f'{name}:{number}: {len(row)} fields, expected {len(header)}')

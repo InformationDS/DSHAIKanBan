@@ -15,7 +15,7 @@
 | 记录技术决策 | [技术决策记录](engineering/decisions/README.md)（ADR-001—007 索引：001/002/003 采用；004/005 提议；006/007 已定） |
 | 查看 S0 复核结论 | [S0 复核记录](engineering/s0-reverification-20261019.md) → [架构准备](engineering/architecture.md)、[宿主能力合同](engineering/host-capabilities.md) |
 | 运行与构建 | [tools/COMMANDS.md](../tools/COMMANDS.md) → 先 `pnpm install`（`node_modules` 与 `.pnpm-store` 未随仓库提供） |
-| 查看实现与验收进度 | [交付状态](delivery/status.md)（唯一状态入口） |
+| 查看实现与验收进度 | [交付状态](delivery/status.md)（**汇总**状态唯一入口；逐条 AT 结论见各功能 `verification.md`） |
 
 ## 文档职责与有效性
 
@@ -23,7 +23,7 @@
 - `prd/feature-catalog.json` 是功能编号、目录、阶段、直接依赖和 FR 来源的结构化索引，供链接和校验使用，不代替具体规则。
 - `prd/baseline/` 仅保存 v1.17 历史基线；不在日常需求修改时同步改基线，不能要求编码 AI 每次加载整份。
 - `prd/mapping/` 是定位、归属和验收责任索引，不是另一份可独立修改的业务规则正文。
-- `engineering/decisions/` 保存技术决策（约定与索引见其 [README](engineering/decisions/README.md)）；`delivery/status.md` 是[实现与验收进度的唯一入口](delivery/status.md)。实现开始时在该功能目录创建 implementation.md，验收开始时创建 verification.md，记录内容与有效 PRD 分离，状态变化只登记到交付状态页。其中功能级汇总状态看[交付状态](delivery/status.md)，逐条 AT 结论看各功能 `verification.md`（见[验收执行规则](engineering/acceptance-execution.md)）。
+- `engineering/decisions/` 保存技术决策（约定与索引见其 [README](engineering/decisions/README.md)）；`delivery/status.md` 是[实现与验收进度的唯一入口](delivery/status.md)。实现开始时在该功能目录创建 implementation.md，验收开始时创建 verification.md，记录内容与有效 PRD 分离，状态变化只登记到交付状态页。其中功能级汇总状态看[交付状态](delivery/status.md)，逐条 AT 结论看各功能 `verification.md`（见[验收执行规则](engineering/acceptance-execution.md)）。**例外（S5 分工）**：跨功能接线（如切片 A）的实现记录写 `docs/engineering/s1-wiring-implementation.md`（见[验收执行规则](engineering/acceptance-execution.md)与 [s1-wiring](engineering/s1-wiring.md) §7.4），不写进功能目录；功能实现仍写各自 `implementation.md`。
 - `engineering/` 保存 S0 工程记录（架构准备、宿主能力合同、ADR、[复核记录](engineering/s0-reverification-20261019.md)）；这些是从 `bd16535` 复原的先前研究，未复核部分仍是「提议」，不得当作已验证。
 - `packages/` 是 2026-10-19 从 `bd16535` 回收的 S0/S1 实施代码（63 个文件，逐字节复原 + 一处 3 行空值守卫），根目录另有 8 个构建配置文件；`node_modules` 与 `.pnpm-store` 不在仓库内，新克隆先读 [tools/COMMANDS.md](../tools/COMMANDS.md) 再执行 `pnpm install`。**代码在仓库不代表 F01—F20 已实现或已验收**，状态只以[交付状态](delivery/status.md)为准。
 - `tools/` 是 S0 的隔离探针、profile 同步与清理脚本；`docs/tools/` 下的脚本只校验文档结构，不代表产品已实现或已验收。

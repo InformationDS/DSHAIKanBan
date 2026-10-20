@@ -19,24 +19,32 @@
 
 以上实现方式可协商，用户可见行为须符合[产品总览](../prd/overview.md)及公共规则。决定写入[技术决策](decisions/README.md)，不在多个 PRD 中复制具体接口。
 
-## 尚未决定的工程项
+## 工程项状态（已定 / 已关闭 / 仍未决）
 
-1. **插件安装目标 profile**。用户当前 GUI（`http://127.0.0.1:19387`；**注：2026-10-20 当前 GUI 已改为 `http://127.0.0.1:7420`，仍为 `desktop` profile，下列判断不变**）运行的是 **`desktop` profile**，不是
+### 已定（2026-10-20）
+
+- **系统整理对话与工作来源的区分表达**（HOST-07）：已由 [ADR-006](decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（**已定**，2026-10-20 用户确认）确定；按状态词表「已确认、工程证据待取证」，取证前不得写成已验证（实施规格草案见其第 14 节）。
+- **S1 接线与当前项目解析（Q1/Q2）**：见 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（**已定**，2026-10-20 用户确认）。
+  - Q1＝B：**当前项目每次显式选择、不持久化**（`board/read` 的 `projectId` 改为必填，不记上次/默认第一个/最近使用）。
+  - Q2＝A：**扩展 wire/BoardController 契约**（基线 `expectedStatusVersion` 与撤销凭据 `appliedUpdateId`+`statusRevision` 真正过 wire），**不在适配层弱化 F02-R04/SAVE-05**。
+  - 以上两项决策与理由见 `ADR-007`；实施规格入口见 [s1-wiring.md](s1-wiring.md)（工程证据待后补，不得写成已验证）。
+- **Q3 允许 test-only 故障注入且承认其证据**：已定，政策见[验收执行规则](acceptance-execution.md) 第 3 节（不进入正式构建、默认关闭、登记范围仅限进入产品构建或隔离探针的开关/钩子、证据注明注入方式）。
+- 实施规格入口：S1 接线见 [s1-wiring.md](s1-wiring.md)；验收执行与证据档位见 [acceptance-execution.md](acceptance-execution.md)、记录格式见 [verification 模板](../prd/templates/verification.md)。
+
+### 已关闭（2026-10-20 复验）
+
+**模型凭据下的端到端验证**：**2026-10-20 已复验**。方法：把 `DEEPSEEK_API_KEY` 作为**启动环境变量**注入**那一个隔离探针进程**（`DSH_HOME=<隔离目录>`、`--profile web --port 0 --no-open`、DSH 44.7.0），未写任何凭据文件，事后全工作区扫描该 key 字符串 **0 命中**。结果：20 步宿主集成探针 **20/20 `[ok]`**；`readback.turnEnd` 以 `completed` 结束并含两条 `assistant/message`（`assistantTurns=[{seq:17,turn:1,step:1},{seq:22,turn:1,step:2}]`，`lastAssistantText` 经 pwsh 工具调用得到）；`multiStepObserved=true`、`injectedCallCount=1`。因此「真实模型 `assistant` 回复」与「真实多步（含工具调用）」两项成立，[ADR-001](decisions/ADR-001-session-dispatch-and-consolidation-carrier.md)/[ADR-003](decisions/ADR-003-project-mapping-and-context-injection.md) 的「证据分级」与「尚未验证」两节已按此收紧（其余未验证项保留，见[复核记录](s0-reverification-20261019.md)第 9 节）。
+
+### 仍未决
+
+1. **插件安装目标 profile（执行待用户确认，不是设计未定）**。用户当前 GUI（**端口每次启动由系统分配（本机先后观察到 `19387` / `7420` / `8748`），文档与脚本均不得写死**）运行的是 **`desktop` profile**，不是
    `profiles/web`：监听进程 argv 指向 `profiles\desktop`，会话环境为 `DSH_PROFILE=desktop` /
    `DSH_PROFILE_DIR=C:\Users\InformationDS\.dsh\profiles\desktop`，且其实时插件树含 desktop 专属行而**不含**
    `profiles/web` 里的 `insert: aikanban` 与 `file:` 依赖。`desktop` profile 由 Electron 应用独占管理
    （`dsh --profile desktop` 被启动器拒绝），安装进当前 GUI 必须写该 profile 并重启进程。
    因此：**装到哪个 profile、何时重启，需用户确认后执行**；`tools/sync-to-profile.mjs` 按 profile 参数化，**默认 `desktop`**（脚本的 `--profile` 说明与实现均为 desktop）。
-2. **模型凭据下的端到端验证**：**2026-10-20 已复验**。方法：把 `DEEPSEEK_API_KEY` 作为**启动环境变量**注入**那一个隔离探针进程**（`DSH_HOME=<隔离目录>`、`--profile web --port 0 --no-open`、DSH 44.7.0），未写任何凭据文件，事后全工作区扫描该 key 字符串 **0 命中**。结果：20 步宿主集成探针 **20/20 `[ok]`**；`readback.turnEnd` 以 `completed` 结束并含两条 `assistant/message`（`assistantTurns=[{seq:17,turn:1,step:1},{seq:22,turn:1,step:2}]`，`lastAssistantText` 经 pwsh 工具调用得到）；`multiStepObserved=true`、`injectedCallCount=1`。因此「真实模型 `assistant` 回复」与「真实多步（含工具调用）」两项成立，[ADR-001](decisions/ADR-001-session-dispatch-and-consolidation-carrier.md)/[ADR-003](decisions/ADR-003-project-mapping-and-context-injection.md) 的「证据分级」与「尚未验证」两节已按此收紧（其余未验证项保留，见[复核记录](s0-reverification-20261019.md)第 9 节）。
-3. **系统整理对话与工作来源的区分表达**（HOST-07）：已由 [ADR-006](decisions/ADR-006-系统整理对话与工作来源的区分表达.md)（**已定**，2026-10-20 用户确认）确定；按新状态词表「已确认、工程证据待取证」，取证前不得写成已验证（实施规格草案见其第 14 节）。
-
-**已定（2026-10-20，见 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)）：S1 接线与当前项目解析（Q1/Q2）**
-
-- Q1＝B：**当前项目每次显式选择、不持久化**（`board/read` 的 `projectId` 改为必填，不记上次/默认第一个/最近使用）。
-- Q2＝A：**扩展 wire/BoardController 契约**（基线 `expectedStatusVersion` 与撤销凭据 `appliedUpdateId`+`statusRevision` 真正过 wire），**不在适配层弱化 F02-R04/SAVE-05**。
-- 以上两项已定，决策与理由见 `ADR-007`（已定）；实施规格入口见 [s1-wiring.md](s1-wiring.md)（工程证据待后补，不得写成已验证）。
-- Q3 **允许 test-only 故障注入且承认其证据**：已定，政策见[验收执行规则](acceptance-execution.md) 第 3 节（不进入正式构建、默认关闭、开关登记、证据注明注入方式）。
-- 实施规格入口：S1 接线见 [s1-wiring.md](s1-wiring.md)；验收执行与证据档位见 [acceptance-execution.md](acceptance-execution.md)、记录格式见 [verification 模板](../prd/templates/verification.md)。
+2. **界面挂载点与看板形态**（[ADR-004](decisions/ADR-004-界面挂载点与看板形态.md)，提议）：缺**客户端实际渲染证据**，取证前不得写成已验证。
+3. **浏览器半 ↔ 宿主半数据通道**（[ADR-005](decisions/ADR-005-浏览器半与宿主半的数据通道.md)，提议）：缺**真实 Connection RPC 路由证据**，取证前不得写成已验证。
 
 ## 建议职责边界
 

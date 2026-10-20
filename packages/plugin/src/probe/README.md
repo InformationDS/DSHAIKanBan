@@ -19,7 +19,7 @@ pwsh -File packages\plugin\src\probe\harness\run-probe.ps1
 | --- | --- |
 | `DSH_HOME=<workspace>\.probe-home` | `profiles/`、`sessions/`、`storages/`、凭据库全部落在工作区内，不读写 `~/.dsh` |
 | `--profile web` | 宿主会话 API、workspace 注册表、`turnOutline` 投影都由 `dsh-web-app` 挂载；`headless` 模板没有这些行 |
-| `--port 0` | 由操作系统分配临时端口，绝不占用固定端口（历史记录里的 19387；2026-10-20 起 GUI 为 7420） |
+| `--port 0` | 由操作系统分配临时端口，不占用固定端口；GUI 端口每次启动也由系统分配（本机先后观察到 19387 / 7420 / 8748），文档与脚本均不得写死 |
 | `--no-open` | 不启动浏览器 |
 | `--patch <overlay>` | 只挂载探针与一条遥测禁用项，不改任何 profile |
 | 启动器 flag 在前 | 启动器把第一个不认识的 token 交给 app，因此 `--patch` 必须写在 `--port` 之前 |

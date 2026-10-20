@@ -43,7 +43,7 @@ S0 对每项写明自行实现或接入的路径、负责人/模块及验证办�
 
 ## 安装目标的一处事实更正（工程决定，不是产品决定）
 
-用户当前 GUI（`http://127.0.0.1:19387`；**注：2026-10-20 当前 GUI 已改为 `http://127.0.0.1:7420`，仍为 `desktop` profile，下列判断不变**）运行的是 **`desktop` profile**，不是 `web` profile。证据：
+用户当前 GUI（**端口每次启动由系统分配（本机先后观察到 `19387` / `7420` / `8748`），文档与脚本均不得写死**）运行的是 **`desktop` profile**，不是 `web` profile。证据：
 (1) 该端口的监听进程 argv 为 `… dsh-desktop-host/lib/index.js … C:\Users\InformationDS\.dsh\profiles\desktop …`；
 (2) 会话环境变量 `DSH_PROFILE=desktop`、`DSH_PROFILE_DIR=C:\Users\InformationDS\.dsh\profiles\desktop`；
 (3) 该进程的实时插件树含 `@deepseek-ai/dsh-host-product-telemetry-otel`、`office-to-pdf`、`workspace-changes` 等 desktop 专属行，

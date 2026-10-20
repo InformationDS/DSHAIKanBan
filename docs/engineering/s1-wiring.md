@@ -2,7 +2,7 @@
 
 > **本文是实施前置规格，不是实现记录，也不是验收记录。** 切片 A **尚未开工**：本页只把「已有代码 → 可运行的 S1 接线」的接口、映射、改动面、测试与证据判据写到可直接实施的程度。决策依据是 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（**已定**：设计经用户确认、工程证据待取证）；用户已拍板 **Q1＝B（当前项目每次显式选择、不持久化）**、**Q2＝A（扩展 wire/BoardController 契约，不在适配层弱化 F02-R04/SAVE-05）**。本文回应独立评审指出的接线类前置条件（B1/B2/H1/H2）；评审原文不在仓库，本文只按任务书转述的范围落规格，不替评审定义编号含义。
 >
-> **证据边界**：所有代码引用均来自当前工作区（`main`，HEAD `392e693` 起点）的真实文件，行号已逐条核对；未能用仓库内材料证实的点标「**未确认**」。**AT 全部仍是「待执行」**：本文与未来切片 A/B 的单元/集成测试都不能当作 F01/F02 的验收证据；验收按[验收执行规则](acceptance-execution.md)与各功能 `verification.md` 执行。
+> **证据边界**：所有代码引用均来自当前工作区（`main`，HEAD `dce8385` 起点）的真实文件，行号已逐条核对；未能用仓库内材料证实的点标「**未确认**」。**AT 全部仍是「待执行」**：本文与未来切片 A/B 的单元/集成测试都不能当作 F01/F02 的验收证据；验收按[验收执行规则](acceptance-execution.md)与各功能 `verification.md` 执行。
 
 ## 0. 属性
 
@@ -30,7 +30,7 @@
 | A1 | `packages/plugin/src/board-adapter.ts`（**新建**） | `createHostBoardPort(...)`：把 4 端点映射到 core；含项目解析与 `registerProject`、`capabilities` 合成、workScope 摊平、错误映射 | `HostBoardPort` 接口见 `packages/plugin/src/board-channel.ts:109-114` |
 | A2 | `packages/plugin/src/index.ts` | `HostContext` 补 `storageDomain`/`workspaceRegistry`/`connection`；`apply()` 中同步探测并注册通道；`ActivationSnapshot` 补通道/数据层字段；**同步扩 `createStatusTool` 的 output schema**（`additionalProperties:false` 下新字段必须进 `properties`，且 `required` **含全部字段**；nullable 只影响值 schema 用 `oneOf`，`packages/plugin/src/index.ts:226-246`）；新增 `aikanban:board-channel` 诊断事件；再导出适配器 | `HostContext:167-172`；`ActivationSnapshot:102-121`；`apply():305`；通道再导出 `:406-418` |
 | A3 | `packages/plugin/src/board-channel.ts` | 按新契约改 payload 提示文案/校验（端点集合不变）；**`ver1:` 基线由 handler 前置校验**（`BoardRpcResult.error.code` 是 `string`，可返回 `invalid-payload`；`HostWriteFailure.code` 仍是 8 个浏览器码、适配器不返回该码，§4.2/§6.2）；`registerBoardChannel` 的 `rpc.handle` 包 try/catch，失败返回 `{ok:false, reason:'register-failed'}`（扩展 `BoardChannelRegistration` 的 reason 联合 `'no-connection' \| 'register-failed'`，`:244-246`）；**不改** `HostReadSuccess/HostWriteSuccess.snapshot` 的非空类型（`:67`、`:83`）；handler 永不全抛 | `createBoardChannelHandler:145-212`；`registerBoardChannel:256-275` |
-| A4 | `packages/plugin/package.json` / `tsconfig.json` / `pnpm-lock.yaml` | 加 `@aikanban/core` 依赖（`devDependencies`）与 project reference；**新增依赖后必须在同步盘之外的构建沙盒跑非 frozen 的 `pnpm install`（只执行 COMMANDS `:57` 那一条，绝不执行 `:56` 的 `cd` 行——那是同步盘主仓库），把生成的 `pnpm-lock.yaml` 复制回主仓库并提交**；此后 `--frozen-lockfile` 基线才成立（正确命令原文见 §7.3 A-G0） | `packages/plugin/package.json:56-58`；`packages/plugin/tsconfig.json:13`；[tools/COMMANDS.md](../../tools/COMMANDS.md) §10.2 `:196-217`、§2 安装命令 `:56-57` |
+| A4 | `packages/plugin/package.json` / `tsconfig.json` / `pnpm-lock.yaml` | 加 `@aikanban/core` 依赖（`devDependencies`）与 project reference；**新增依赖后必须在同步盘之外的构建沙盒跑非 frozen 的 `pnpm install`（只执行 COMMANDS `:57` 那一条，绝不执行 `:56` 的 `cd` 行——那是同步盘主仓库），把生成的 `pnpm-lock.yaml` 复制回主仓库并提交**；此后 `--frozen-lockfile` 基线才成立（正确命令原文见 §7.3 A-G0） | `packages/plugin/package.json:56-58`；`packages/plugin/tsconfig.json:13`；[tools/COMMANDS.md](../../tools/COMMANDS.md) §10.2 `:196-217`、§2 安装命令 `:57`（不要执行同段的 `:56` cd） |
 | A5 | `packages/plugin-client/src/wire.ts` | `projectId` 必填；写 payload 携带编码后的基线；读快照补 `undoTarget`/版本字段；解析器收紧（`parseReadBoardPayload` 必须拒绝缺省，`:447-460` 的旧注释删除） | `ReadBoardPayload:113-117`（注释“Absent means the current project”必须改）；写 payload `:119-146`；快照 `:153-162` |
 | A6 | `packages/plugin-client/src/source.ts` | `BoardSource.readBoard(projectId)`；写输入补 `expectedStatusVersion` 必填与 `appliedUpdateId`；`UndoToken` 语义；**`readBoard` 旧注释（`:161` “for the current project”）要改** | `BoardSource:153-172`；输入 `:36-68`；旧注释 `:161` |
 | A7 | `packages/plugin-client/src/channel-source.ts` | **唯一签名**：`BoardSource.readBoard(projectId: string)` 每次传参（source 构造不再接收 `projectId`）；payload 每次组装；无选择由 controller 拦截、source 不接受空 id；**未知结果文案不得写“后重试”**（`channel-source.ts:170` 改为“请先核对当前正式状态，不要重复提交”） | 旧构造选项 `:114-120`；`readBoard:136-155`；写 `:195-223`；未知结果文案 `:170` |
@@ -389,27 +389,31 @@ B 需要区分“输入被拒绝”的一类（标题空白、字段非法），
 
 **前置（A-G0，缺一则后续门禁无意义，F11）**：A4 新增 `@aikanban/core` 依赖后，必须在**同步盘之外的构建沙盒**（worktree，[tools/COMMANDS.md](../../tools/COMMANDS.md) §10.2 `:196-217`）里跑**非 frozen** 的 `pnpm install`，再把生成的 `pnpm-lock.yaml` **复制回主仓库并提交**；之后基线的 `pnpm install --frozen-lockfile` 才成立。**具体命令（不要照抄 COMMANDS §2 整段——它的第一行 `cd` 会回到同步盘主仓库）**：
 
-1. `git -C "D:\BaiduSyncdisk\dsh-plugin\AIKanBan" worktree add --detach $BOX <分支/提交>`（COMMANDS `:208`；`$BOX` 必须在同步盘之外，例如 `C:\Users\InformationDS\aikanban-build`）。
-2. 切到沙盒目录后**只执行 COMMANDS `:57` 这一条**：
+1. **先让沙盒里已有 A4 的清单改动**：把 `packages/plugin/package.json` 与 `packages/plugin/tsconfig.json` 的 A4 编辑**先提交**（或在建沙盒之前完成该提交），使沙盒检出的清单已含 `@aikanban/core`。否则非 frozen install 看不到新依赖，`pnpm-lock.yaml` 不会产生新的 importer 条目，回迁就是**空操作**。
+2. 建沙盒：`git -C "D:\BaiduSyncdisk\dsh-plugin\AIKanBan" worktree add --detach $BOX <含 A4 提交的分支/提交>`（COMMANDS `:208`；`$BOX` 必须在同步盘之外，例如 `C:\Users\InformationDS\aikanban-build`）。
+3. **先切到沙盒，再执行 COMMANDS `:57` 这一条**（`git -C … worktree add` **不会**改变当前目录；不写 `Set-Location` 就会在主仓库里装依赖）：
    ```powershell
-   # 当前目录 = $BOX（盘外沙盒）；$NODE/$PNPM 定义见 COMMANDS :203-204
+   Set-Location $BOX        # ← 必须；漏掉这一行 install 会落在同步盘主仓库
+   # $NODE/$PNPM 定义见 COMMANDS :203-204
    & $NODE $PNPM install
    ```
-   **绝对不要执行 COMMANDS §2 的 `:56`：`cd D:\BaiduSyncdisk\dsh-plugin\AIKanBan`**——那会切回同步盘主仓库，照抄就会在明令禁止的位置 install（§10.2 `:196-216`）。install 后沙盒里的 `pnpm-lock.yaml` 被更新。
-3. **lockfile 回迁到主仓库**（沙盒是 detached worktree、不接主分支，**不在沙盒内提交**）：
+   **绝对不要执行 COMMANDS §2 的 `:56`：`cd D:\BaiduSyncdisk\dsh-plugin\AIKanBan`**——那会切回同步盘主仓库，照抄就会在明令禁止的位置 install（§10.2 `:196-217`）。
+4. **确认 lockfile 真的变了**：`pnpm-lock.yaml` 的 `importers` 段里应出现 `packages/plugin` 下的 `@aikanban/core: link:../core`；若没有，说明第 1 步的清单没进沙盒，回到第 1 步。
+5. **lockfile 回迁并提交**（沙盒是 detached worktree、不接主分支，**不在沙盒内提交**）：
    ```powershell
    # 在主仓库侧执行；-Force 覆盖主仓库的旧 lockfile
    Copy-Item "$BOX\pnpm-lock.yaml" "D:\BaiduSyncdisk\dsh-plugin\AIKanBan\pnpm-lock.yaml" -Force
-   git -C "D:\BaiduSyncdisk\dsh-plugin\AIKanBan" add pnpm-lock.yaml
+   # 清单与 lockfile 必须同一个提交，否则会形成「lockfile 引用 manifest 未声明的依赖」
+   git -C "D:\BaiduSyncdisk\dsh-plugin\AIKanBan" add packages/plugin/package.json packages/plugin/tsconfig.json pnpm-lock.yaml
    git -C "D:\BaiduSyncdisk\dsh-plugin\AIKanBan" commit -m "chore: add @aikanban/core dependency and refresh pnpm-lock.yaml"
    ```
-4. 回沙盒 `& $NODE $PNPM install --frozen-lockfile`（COMMANDS `:221`）验证可复现。
+6. **从提交后的干净 worktree 复跑 frozen（自证不算数）**：用该提交另建一个盘外 worktree，跑 `& $NODE $PNPM install --frozen-lockfile`（COMMANDS `:221`），**EXIT 0 才算 A-G0 通过**。
 
 结论：COMMANDS §2 的 install 命令本身没错，错的是整段的 `cd` 行；正确做法是**只取 `:57` 一条、在盘外沙盒的 cwd 下执行**，再把 lockfile 带回主仓库提交。
 
 | # | 判据 | 命令/方式 |
 | --- | --- | --- |
-| A-G0 | lockfile 已更新并提交；沙盒 `--frozen-lockfile` 可复现 | 盘外 worktree（`:208`）里**只执行 COMMANDS `:57` 的 install（不执行 `:56` 的 `cd`）** → `Copy-Item` lockfile 回主仓库 → 主仓库 `git add`/commit → 沙盒 `pnpm install --frozen-lockfile`（`:221`）成功（§10.2 `:196-217`） |
+| A-G0 | lockfile 出现新 importer（`@aikanban/core: link:../core`）、清单与 lockfile 同一提交、**从提交后的干净 worktree** 跑 `--frozen-lockfile` EXIT 0 | 盘外 worktree（`:208`）里先 `Set-Location $BOX` 再**只执行 COMMANDS `:57` 的 install（不执行 `:56` 的 `cd`）** → `Copy-Item` lockfile 回主仓库并连同清单一起提交 → 新建干净 worktree 复跑 frozen |
 | A-G1 | typecheck/build 通过 | 沙盒内 `pnpm run typecheck`、`pnpm run build`（根 README 命令） |
 | A-G2 | 测试全绿且新增集成测试在列；含工具 output schema **字段覆盖哨兵**（§7.1 第 9 条） | `pnpm -r --if-present run test`；记录 core/plugin/plugin-client 用例数（当前 66/38/45=149，更新后据实） |
 | A-G3 | `verify-host-import` **11/11 不退化** | `node tools/verify-host-import.mjs`（`:225-335`） |

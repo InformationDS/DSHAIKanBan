@@ -15,7 +15,7 @@ AIKanBan 是面向 Deepseek Harness 桌面版的项目看板与跨对话交接�
 - 技术决策：[技术决策记录](docs/engineering/decisions/README.md)（ADR-001—007，状态见索引）
 - S0 复核：[S0 复核记录](docs/engineering/s0-reverification-20261019.md)（2026-10-19，DSH 44.7.0；含旧声称更正）
 - 实施代码：`packages/`（回收的 S0/S1 实现）与根构建配置 8 个（`package.json`、`pnpm-workspace.yaml`、`pnpm-lock.yaml`、`tsconfig.json`、`tsconfig.base.json`、`vitest.config.ts`、`.npmrc`、`.gitignore`）
-- 运行与构建：[tools/COMMANDS.md](tools/COMMANDS.md)（`node_modules` 与 `.pnpm-store` 未随仓库提供，先读该页再 `pnpm install`）
+- 运行与构建：[tools/COMMANDS.md](tools/COMMANDS.md)（`node_modules` 与 `.pnpm-store` 未随仓库提供；先在**同步盘之外的沙盒**安装，见该页 §10.2 与 [s1-wiring A-G0](docs/engineering/s1-wiring.md)）
 - 交付进度：[交付状态](docs/delivery/status.md)（实现与验收的唯一状态入口）
 
 ## 从只保留需求到回收 S0/S1 代码

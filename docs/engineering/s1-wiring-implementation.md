@@ -1009,3 +1009,170 @@ ALL DONE FAILED=False
 4. **规格/ADR 修订（需用户/评审同意）**：把 §5.1 的注册机制、§5.4 的 `HostContext` 成员表、§7.2 的第 5 项、§8 的 connection 生命周期/注册语义按 §9.3 与 §9.6 更新；ADR-007 §11 证据补记本档的档 2/档 3 结果（仍不是验收）。
 5. **档 1 证据**：把插件装进真实 profile、在真实 GUI 完成「选择项目→看板→改状态→撤销」——需要用户批准与重启；本档未做。
 
+
+### 9.4.5 推送后干净 worktree 复跑（自证不算数）
+
+上方 9.4.1–9.4.4 都在开发沙盒里跑。推送后另建**干净 worktree** `C:\Users\InformationDS\aikanban-p2-clean`（detached `461e21c`，即 `main` 推送后的 HEAD），先跑 `pnpm install --frozen-lockfile`，再跑全部六项门禁——结果与 9.4.3 相同（164 用例、verify 11/11、probe 5/5、docs PASS）。完整原始输出（仅 URL token 替换为 `<redacted>`）：
+
+~~~text
+
+AIKanBan gates [P2-POST] cwd=C:\Users\InformationDS\aikanban-p2-clean HEAD=461e21c182920caeeba0e623c3621ea734065972
+===== INSTALL-FROZEN =====
+Scope: all 4 workspace projects
+✓ Lockfile passes supply-chain policies (verified 1h ago)
+Lockfile is up to date, resolution step is skipped
+Packages: +89
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 0, reused 1, downloaded 0, added 0
+Progress: resolved 0, reused 89, downloaded 0, added 89, done
+
+Done in 1.9s using pnpm v11.7.0
+===== INSTALL-FROZEN EXIT=0 =====
+===== TYPECHECK =====
+$ tsc -b
+===== TYPECHECK EXIT=0 =====
+===== BUILD =====
+$ tsc -b && pnpm -C packages/plugin run build:bundle
+$ tsdown -c tsdown.config.ts && tsdown -c tsdown.client.config.ts
+ℹ tsdown v0.22.14 powered by rolldown v1.2.13
+ℹ config file: C:\Users\InformationDS\aikanban-p2-clean\packages\plugin\tsdown.config.ts 
+ℹ [@aikanban/dsh-aikanban] entry: src/index.ts
+ℹ [@aikanban/dsh-aikanban] target: node22
+ℹ [@aikanban/dsh-aikanban] tsconfig: tsconfig.json
+ℹ Build start
+ℹ [@aikanban/dsh-aikanban] lib\index.js      159.22 kB │ gzip: 39.77 kB
+ℹ [@aikanban/dsh-aikanban] lib\index.js.map  349.93 kB │ gzip: 82.97 kB
+ℹ [@aikanban/dsh-aikanban] 2 files, total: 509.14 kB
+✔ [@aikanban/dsh-aikanban] Build complete in 70ms
+ℹ tsdown v0.22.14 powered by rolldown v1.2.13
+ℹ config file: C:\Users\InformationDS\aikanban-p2-clean\packages\plugin\tsdown.client.config.ts 
+ℹ [@aikanban/dsh-aikanban/client] entry: src/client.tsx
+ℹ [@aikanban/dsh-aikanban/client] target: es2022
+ℹ [@aikanban/dsh-aikanban/client] tsconfig: tsconfig.json
+ℹ Build start
+ℹ [@aikanban/dsh-aikanban/client] lib\client.js  28.40 kB │ gzip: 9.08 kB
+ℹ [@aikanban/dsh-aikanban/client] 1 files, total: 28.40 kB
+✔ [@aikanban/dsh-aikanban/client] Build complete in 51ms
+===== BUILD EXIT=0 =====
+===== TESTS =====
+Scope: 3 of 4 workspace projects
+packages/core test$ vitest run
+packages/plugin-client test$ vitest run
+packages/core test:  RUN  v3.2.7 C:/Users/InformationDS/aikanban-p2-clean/packages/core
+packages/plugin-client test:  RUN  v3.2.7 C:/Users/InformationDS/aikanban-p2-clean/packages/plugin-client
+packages/plugin-client test:  ✓ test/model.test.ts (19 tests) 13ms
+packages/plugin-client test:  ✓ test/controller.test.ts (19 tests) 21ms
+packages/core test:  ✓ |core| test/port-parity.test.ts (5 tests) 10ms
+packages/plugin-client test:  ✓ test/slots.test.ts (7 tests) 9ms
+packages/plugin-client test:  Test Files  3 passed (3)
+packages/plugin-client test:       Tests  45 passed (45)
+packages/plugin-client test:    Start at  00:54:03
+packages/plugin-client test:    Duration  3.01s (transform 522ms, setup 0ms, collect 946ms, tests 43ms, environment 1ms, prepare 2.65s)
+packages/core test:  ✓ |core| test/restart.test.ts (4 tests) 18ms
+packages/core test:  ✓ |core| test/drafts-and-recheck.test.ts (4 tests) 21ms
+packages/core test:  ✓ |core| test/version-chain.test.ts (3 tests) 24ms
+packages/core test:  ✓ |core| test/paired-confirmation.test.ts (8 tests) 23ms
+packages/core test:  ✓ |core| test/applicability.test.ts (5 tests) 23ms
+packages/core test:  ✓ |core| test/concurrency.test.ts (6 tests) 28ms
+packages/core test:  ✓ |core| test/f01-activity.test.ts (2 tests) 22ms
+packages/plugin-client test: Done
+packages/core test:  ✓ |core| test/f01-project-isolation.test.ts (6 tests) 27ms
+packages/core test:  ✓ |core| test/f01-task-create-edit.test.ts (12 tests) 42ms
+packages/core test:  ✓ |core| test/f02-status-and-order.test.ts (11 tests) 47ms
+packages/core test:  Test Files  11 passed (11)
+packages/core test:       Tests  66 passed (66)
+packages/core test:    Start at  00:54:03
+packages/core test:    Duration  3.85s (transform 1.43s, setup 0ms, collect 6.12s, tests 285ms, environment 3ms, prepare 9.56s)
+packages/core test: Done
+packages/plugin test$ vitest run
+packages/plugin test:  RUN  v3.2.7 C:/Users/InformationDS/aikanban-p2-clean/packages/plugin
+packages/plugin test:  ✓ test/client-bundle.test.ts (7 tests) 17ms
+packages/plugin test:  ✓ test/channel-roundtrip.test.ts (12 tests) 266ms
+packages/plugin test:  ✓ test/host.test.ts (34 tests) 107ms
+packages/plugin test:  Test Files  3 passed (3)
+packages/plugin test:       Tests  53 passed (53)
+packages/plugin test:    Start at  00:54:09
+packages/plugin test:    Duration  2.31s (transform 729ms, setup 0ms, collect 1.04s, tests 391ms, environment 1ms, prepare 1.10s)
+packages/plugin test: Done
+===== TESTS EXIT=0 =====
+===== VERIFY-HOST-IMPORT =====
+
+Host-half import verification — packages/plugin
+
+  PASS  package.json exists                                   packages\plugin\package.json
+  PASS  manifest declares type: module                        module
+  PASS  manifest declares a main entry                        ./lib/index.js
+  PASS  host entry is built                                   packages\plugin\lib\index.js (155.5 KB)
+  PASS  host entry is ESM, not a browser-half bundle          no __ModuleLoader__ banner; ESM statements present
+  PASS  import graph is host-resolvable (no bare specifiers)  1 module(s), only node: builtins
+  PASS  module graph is fully present on disk                 1 file(s) reachable
+  PASS  exports apply() for the loader to call                function apply(ctx)
+  PASS  exports an inject array (cordis activation gate)      []
+  PASS  apply() activates against a service-less context      activation=mvgqvbba-1 pid=38844
+  PASS  diagnostic tool is exported and callable              aikanban_status → [aikanban] active (plugin @aikanban/dsh-aikanban@0.0.0, activation mvgqvbba-1, pid 38844, services seen: none)
+
+OK
+===== VERIFY-HOST-IMPORT EXIT=0 =====
+===== PROBE-HOST =====
+AIKanBan isolated load probe
+
+  workspace        C:\Users\InformationDS\aikanban-p2-clean
+  isolated home    C:\Users\InformationDS\aikanban-p2-clean\.probe-home-scaffold
+  probe profile    C:\Users\InformationDS\aikanban-p2-clean\.probe-home-scaffold\profiles\probe
+  port             0 (OS-assigned — cannot collide with a running GUI)
+  mode             composition + real boot
+
+  dsh cli          C:\Users\InformationDS\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh\lib\bin.js
+  node             C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe
+
+prepared isolated home; @aikanban/dsh-aikanban → C:\Users\InformationDS\aikanban-p2-clean\.probe-home-scaffold\profiles\probe\node_modules\@aikanban\dsh-aikanban
+
+[1/5] composing the probe profile tree (--dump-config)
+  PASS  # == C:\Users\InformationDS\aikanban-p2-clean\.probe-home-scaffold\profiles\probe\cordis.patch.yml | - id: aikanban
+
+[2/5] resolving and activating the host half from the profile directory
+  PASS  packages/plugin/package.json
+        [aikanban] active (host half) plugin=@aikanban/dsh-aikanban version=0.0.0 activation=mvgqvbvd-1
+
+[3/5] booting the probe host; reading its window.__DSH_BOOT__ graph
+  ok    host settled and bound: dsh web: http://127.0.0.1:13289/?token=<redacted>
+  PASS  browser row published: /plugins/??@aikanban/dsh-aikanban/client.js&rev=2eb5b8c433d53878-44
+        served 200 26923B: window.__ModuleLoader__.load({id:`@aikanban/dsh-aikanban`,factory:e=>{var t={exp…
+
+[4/5] waiting for the activation signal from inside the host
+  PASS  the booting host published aikanban:activation:
+        activation=mvgqvh8i-1 pid=30104 tools=false systemPrompt=false
+
+[5/5] waiting for the /aikanban board channel registration from inside the host
+  PASS  the booting host registered the board channel:
+        channel=/aikanban registered=true reason=null dataLayerReady=true
+
+probe host log: .probe-out-scaffold/probe-probe.log
+isolated home removed (pass --keep to inspect it)
+
+summary
+  PASS  composed tree contains the aikanban row
+        # == C:\Users\InformationDS\aikanban-p2-clean\.probe-home-scaffold\profiles\probe\cordis.patch.yml
+  PASS  host half resolves from the profile and apply() activates
+        packages/plugin/package.json → [aikanban] active (host half) plugin=@aikanban/dsh-aikanban version=0.0.0 activation=mvgqvbvd-1
+  PASS  host publishes a window.__DSH_BOOT__ row and serves client.js
+        entry=/plugins/??@aikanban/dsh-aikanban/client.js&rev=2eb5b8c433d53878-44 status=200 bytes=26923
+  PASS  apply() ran inside the booting host
+        activation=mvgqvh8i-1 pid=30104 tools=false systemPrompt=false
+  PASS  host half registered /aikanban inside the booting host
+        channel=/aikanban registered=true reason=null dataLayerReady=true
+
+PROBE OK — the bundle composed, resolved from the profile, activated, and published a browser row.
+===== PROBE-HOST EXIT=0 =====
+===== CHECK-DOCS =====
+PASS: 59 Markdown files; 20 PRDs; 48 common rules; 143 local rules.
+PASS: unchanged baseline; 422 FR source units; 16 UX rules; 106 original ATs + 27 additions, all fully indexed by section 6.
+PASS: local links; unique IDs; acyclic dependencies; no later-stage dependencies; root documentation boundary.
+PASS: FR unit counts and owners agree between traceability.md and requirements.csv; catalog stage/dependencies/FR sources agree with both index tables.
+Scope: document integrity only. Application and product acceptance have not run.
+===== CHECK-DOCS EXIT=0 =====
+ALL DONE FAILED=False
+
+~~~
+
+结论：A-G0 的 frozen 基线与全部门禁在**提交后的干净检出**上成立；本档没有依赖开发沙盒里的未提交状态。

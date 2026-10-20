@@ -1725,3 +1725,36 @@ Scope: document integrity only. Application and product acceptance have not run.
 5. **选择器与 `project/list` 归属决策**：若切片 B 前移，则同时补 `project/list`（不猜、不持久化）与 `selectProject` 接线；否则在验收记录里明确“S1 界面暂不可选择项目”。
 6. **回归门禁**：typecheck/build/用例全绿（本档基线 191）、verify 11/11、probe 5/5（含 `path=compat`）、python docs PASS；不得把 P5b 集成测试写成 F01/F02 验收通过（AT 仍全部「待执行」）。
 
+### 11.9 推送后干净 worktree 复跑（自证不算数）
+
+推送后另建**干净 worktree** `C:\Users\InformationDS\aikanban-p5a-clean`（detached `3a8890c`，即 `main` 推送后的 HEAD），先跑 `pnpm install --frozen-lockfile`，再跑全部六项门禁。结果与 §11.5 相同：**安装 EXIT 0、用例 191（core 66 / plugin 58 / plugin-client 67）、verify 11/11、probe 5/5（`path=compat`）、docs PASS（59 md）**。完整原始输出保存在该 worktree 的 `.gates-clean.log`；关键行：
+
+``text
+AIKanBan gates [P5a-POST] cwd=C:\Users\InformationDS\aikanban-p5a-clean HEAD=3a8890c
+===== INSTALL-FROZEN EXIT=0 =====
+Done in 2.6s using pnpm v11.7.0
+===== TYPECHECK EXIT=0 =====
+===== BUILD EXIT=0 =====
+  lib\index.js      161.56 kB │ gzip: 40.51 kB
+  lib\client.js  31.20 kB │ gzip: 9.71 kB
+packages/plugin-client test:       Tests  67 passed (67)
+packages/core test:       Tests  66 passed (66)
+packages/plugin test:       Tests  58 passed (58)
+===== TESTS EXIT=0 =====
+  PASS  import graph is host-resolvable (no bare specifiers)  1 module(s), only node: builtins
+  PASS  apply() activates against a service-less context      activation=mvgv40m3-1 pid=33020
+  PASS  diagnostic tool is exported and callable              aikanban_status → [aikanban] active …
+OK
+===== VERIFY-HOST-IMPORT EXIT=0 =====
+  PASS  the booting host registered the board channel:
+        channel=/aikanban registered=true path=compat reason=null dataLayerReady=true
+PROBE OK — the bundle composed, resolved from the profile, activated, and published a browser row.
+===== PROBE-HOST EXIT=0 =====
+PASS: 59 Markdown files; 20 PRDs; 48 common rules; 143 local rules.
+Scope: document integrity only. Application and product acceptance have not run.
+===== CHECK-DOCS EXIT=0 =====
+``
+
+结论：本档的六项门禁在**提交后的干净检出**上成立，不依赖开发沙盒里的未提交状态；用例数从 164 基线变为 191（+27），无既有用例被删除（`channel-roundtrip` 的 1 条“省略 payload 合法”是按 Q1=B 语义**替换**，不是丢失覆盖）。
+
+

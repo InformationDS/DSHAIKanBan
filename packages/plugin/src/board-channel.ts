@@ -47,6 +47,7 @@ import {
   parseReadBoardPayload,
   parseReorderPayload,
   parseSetStatusPayload,
+  parseStatusVersion,
   parseUndoStatusPayload,
   type BoardFailureCodeWire,
   type BoardSnapshotValue,
@@ -137,6 +138,18 @@ function detailsOf(current: FormalStatusValueWire | undefined): Record<string, u
 }
 
 /**
+ * Host-side reason for refusing a write whose baseline is missing or not the
+ * canonical `ver1:<n>` encoding.
+ *
+ * This check runs **before** the port: a malformed baseline must never reach
+ * the data layer (a silent default to 0 would weaken SAVE-05). The code is
+ * `invalid-payload`, a host-only protocol code — `HostWriteFailure.code`
+ * stays within the eight browser codes, so an adapter cannot return it.
+ */
+const INVALID_BASELINE_MESSAGE =
+  'expectedStatusVersion 必须是规范的基线编码 "ver1:<非负整数>"；本次未读取或写入任何内容。'
+
+/**
  * Build the channel handler from a data-layer port.
  *
  * @param port - the data layer (core adapter or a test double).
@@ -148,7 +161,9 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
     // rejected anything else with 404/415/400 before reaching us.
     if (endpoint === BOARD_ENDPOINTS.readBoard) {
       const input = parseReadBoardPayload(payload)
-      if (input === null) return failure('invalid-payload', 'board/read payload must be an object with an optional string projectId.')
+      if (input === null) {
+        return failure('invalid-payload', 'board/read payload must carry a non-empty projectId; the host never guesses a project.')
+      }
       try {
         const outcome = await port.readBoard(input, signal)
         return outcome.ok ? success(outcome.snapshot) : failure(outcome.code, outcome.message)
@@ -160,7 +175,11 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
     if (endpoint === BOARD_ENDPOINTS.setStatus) {
       const input = parseSetStatusPayload(payload)
       if (input === null) {
-        return failure('invalid-payload', 'task/status.set payload must carry a non-empty taskId, an operationId and a known status.')
+        return failure('invalid-payload', 'task/status.set payload must carry a non-empty taskId, an operationId, a known status and a status baseline.')
+      }
+      // F5: the baseline grammar is a protocol rule, checked before the port.
+      if (parseStatusVersion(input.expectedStatusVersion) === null) {
+        return failure('invalid-payload', INVALID_BASELINE_MESSAGE)
       }
       if (input.next === 'blocked' && !isBlockedReasonValid(input.reason)) {
         // The product rule, enforced at the wire boundary as well as in core:
@@ -180,7 +199,10 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
     if (endpoint === BOARD_ENDPOINTS.reorder) {
       const input = parseReorderPayload(payload)
       if (input === null) {
-        return failure('invalid-payload', 'task/reorder payload must carry taskId, operationId, a known status and a non-negative integer toIndex.')
+        return failure('invalid-payload', 'task/reorder payload must carry taskId, operationId, a known status, a non-negative integer toIndex and a status baseline.')
+      }
+      if (parseStatusVersion(input.expectedStatusVersion) === null) {
+        return failure('invalid-payload', INVALID_BASELINE_MESSAGE)
       }
       try {
         const outcome = await port.reorder(input, signal)
@@ -195,12 +217,15 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
     if (endpoint === BOARD_ENDPOINTS.undoStatusChange) {
       const input = parseUndoStatusPayload(payload)
       if (input === null) {
-        return failure('invalid-payload', 'task/status.undo payload must carry non-empty taskId and operationId.')
+        return failure('invalid-payload', 'task/status.undo payload must carry non-empty taskId, operationId (this undo), appliedUpdateId (the write being undone) and a status baseline.')
+      }
+      if (parseStatusVersion(input.expectedStatusVersion) === null) {
+        return failure('invalid-payload', INVALID_BASELINE_MESSAGE)
       }
       try {
         const outcome = await port.undoStatusChange(input, signal)
         return outcome.ok
-          ? success({ snapshot: outcome.snapshot, undoable: false })
+          ? success({ snapshot: outcome.snapshot, undoable: outcome.undoable })
           : failure(outcome.code, outcome.message, detailsOf(outcome.current))
       } catch (error) {
         return failure('unknown-result', `撤销结果未知：${messageOf(error)}`)

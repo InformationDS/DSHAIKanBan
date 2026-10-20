@@ -35,6 +35,7 @@ import {
   type BoardColumnInput,
   type BoardProjectView,
   type BoardTask,
+  type BoardUndoTarget,
   type TaskProgressView,
 } from './model.js'
 
@@ -110,13 +111,28 @@ export const BOARD_ENDPOINT_LIST: readonly BoardEndpoint[] = Object.values(BOARD
  * Payloads (browser half → host half)
  * ------------------------------------------------------------------ */
 
-/** `board/read` payload. */
+/**
+ * `board/read` payload.
+ *
+ * `projectId` is **required**: there is no "current project" on the host side
+ * (Q1=B — the user selects a project explicitly on every entry, in memory only).
+ * A missing or empty id is refused by the host handler with `invalid-payload`;
+ * the host never guesses a project.
+ */
 export interface ReadBoardPayload {
-  /** Project key = `workspace.id` (F01). Absent means "the current project". */
-  readonly projectId?: string
+  /** Project key = `workspace.id` (F01). */
+  readonly projectId: string
 }
 
-/** `task/status.set` payload. */
+/**
+ * `task/status.set` payload.
+ *
+ * `expectedStatusVersion` is the write baseline (SAVE-05 / F02-R04): the version
+ * of the formal status the user decided on, encoded as `ver1:<n>` (see
+ * {@link encodeStatusVersion}). The host handler validates the encoding before
+ * the data layer is called and refuses a missing/malformed baseline with
+ * `invalid-payload`; no write happens.
+ */
 export interface SetStatusPayload {
   readonly taskId: string
   readonly next: string
@@ -125,7 +141,8 @@ export interface SetStatusPayload {
   /** Required when `next === 'blocked'`; validated on the host side too. */
   readonly reason?: string
   readonly toIndex?: number
-  readonly expectedStatusVersion?: string
+  /** Required write baseline, encoded by {@link encodeStatusVersion}. */
+  readonly expectedStatusVersion: string
 }
 
 /** `task/reorder` payload. */
@@ -134,15 +151,65 @@ export interface ReorderPayload {
   readonly status: string
   readonly toIndex: number
   readonly operationId: string
-  readonly expectedStatusVersion?: string
+  /** Required write baseline, encoded by {@link encodeStatusVersion}. */
+  readonly expectedStatusVersion: string
 }
 
-/** `task/status.undo` payload. */
+/**
+ * `task/status.undo` payload.
+ *
+ * Two identities travel and they are **not** interchangeable:
+ * - `operationId` — the identity of **this undo** (minted fresh; a retry reuses
+ *   it, REC-02);
+ * - `appliedUpdateId` — the identity of the **write being undone** (core's
+ *   `appliedUpdateId` = that write's `requestId`; taken from the task's
+ *   `undoTarget`, never from this undo's operation id).
+ */
 export interface UndoStatusPayload {
   readonly taskId: string
-  /** The `operationId` of the change being undone. */
+  /** Identity of this undo, not of the change being undone. */
   readonly operationId: string
-  readonly expectedStatusVersion?: string
+  /** Required write baseline, encoded by {@link encodeStatusVersion}. */
+  readonly expectedStatusVersion: string
+  /** The `requestId` of the write being undone (from `undoTarget`). */
+  readonly appliedUpdateId: string
+}
+
+/* ------------------------------------------------------------------ *
+ * Status version encoding (`ver1:<n>`)
+ * ------------------------------------------------------------------ */
+
+/** Prefix of the string encoding a status revision travels as. */
+export const STATUS_VERSION_PREFIX = 'ver1:'
+
+const STATUS_VERSION_PATTERN = /^ver1:(0|[1-9]\d*)$/
+
+/**
+ * Encode a status revision for the wire.
+ *
+ * @param revision - a non-negative integer revision from the data layer.
+ * @returns the canonical `ver1:<n>` string.
+ */
+export function encodeStatusVersion(revision: number): string {
+  if (!Number.isInteger(revision) || revision < 0) {
+    throw new RangeError(`status revision must be a non-negative integer, got ${String(revision)}`)
+  }
+  return `${STATUS_VERSION_PREFIX}${String(revision)}`
+}
+
+/**
+ * Decode a status version read off the wire.
+ *
+ * The grammar is strict on purpose (`0` or a non-zero-leading decimal): a
+ * malformed baseline is a caller bug and must be refused, never defaulted to 0
+ * (that would silently weaken SAVE-05).
+ *
+ * @param value - untrusted wire value.
+ * @returns the revision, or null when it is not a canonical `ver1:<n>`.
+ */
+export function parseStatusVersion(value: unknown): number | null {
+  if (typeof value !== 'string' || !STATUS_VERSION_PATTERN.test(value)) return null
+  return Number(value.slice(STATUS_VERSION_PREFIX.length))
 }
 
 /* ------------------------------------------------------------------ *
@@ -271,8 +338,30 @@ function optionalFiniteNumber(value: unknown): number | undefined | null {
 }
 
 /**
- * Parse one task card. Only the fields the board actually renders are required;
- * the rest are optional so a leaner host response is still legal.
+ * Parse one task's undo credential.
+ *
+ * `undoTarget` is required (nullable): `null` is the data layer's explicit "no
+ * undo available", while a missing or malformed value is a contract violation.
+ *
+ * @param value - untrusted value.
+ * @returns the target, `null` for the explicit none, or {@link MALFORMED}.
+ */
+function parseUndoTarget(value: unknown): BoardUndoTarget | null | typeof MALFORMED {
+  if (value === undefined) return MALFORMED
+  if (value === null) return null
+  if (!isRecord(value)) return MALFORMED
+  const statusVersion = value['statusVersion']
+  const appliedUpdateId = value['appliedUpdateId']
+  if (!isString(statusVersion) || !isString(appliedUpdateId)) return MALFORMED
+  if (parseStatusVersion(statusVersion) === null) return MALFORMED
+  if (appliedUpdateId.length === 0) return MALFORMED
+  return { statusVersion, appliedUpdateId }
+}
+
+/**
+ * Parse one task card. `statusRevision` and `undoTarget` are required because
+ * they are the write baseline and the undo credential; everything else the
+ * board does not render is optional so a leaner host response is still legal.
  *
  * @param value - untrusted value.
  * @returns the task, or null when malformed.
@@ -290,8 +379,10 @@ export function parseBoardTask(value: unknown): BoardTask | null {
   if (archived === null) return null
   const fieldsRevision = optionalFiniteNumber(value['fieldsRevision'])
   if (fieldsRevision === null) return null
-  const statusRevision = optionalFiniteNumber(value['statusRevision'])
-  if (statusRevision === null) return null
+  const statusRevision = value['statusRevision']
+  if (typeof statusRevision !== 'number' || !Number.isInteger(statusRevision) || statusRevision < 0) return null
+  const undoTarget = parseUndoTarget(value['undoTarget'])
+  if (undoTarget === MALFORMED) return null
   const hasSummary = optionalBoolean(value['hasSummary'])
   if (hasSummary === null) return null
   const hasRecord = optionalBoolean(value['hasRecord'])
@@ -320,7 +411,8 @@ export function parseBoardTask(value: unknown): BoardTask | null {
     ...(blockedReason === undefined ? {} : { blockedReason }),
     ...(archived === undefined ? {} : { archived }),
     ...(fieldsRevision === undefined ? {} : { fieldsRevision }),
-    ...(statusRevision === undefined ? {} : { statusRevision }),
+    statusRevision,
+    undoTarget,
     ...(summaryProgress === undefined ? {} : { summaryProgress }),
     ...(hasSummary === undefined ? {} : { hasSummary }),
     ...(hasRecord === undefined ? {} : { hasRecord }),
@@ -445,18 +537,21 @@ export function parseBoardWriteValue(value: unknown): BoardWriteValue | null {
  * ------------------------------------------------------------------ */
 
 /**
- * Parse a `board/read` payload. An omitted payload is legal (the host resolves
- * the current project).
+ * Parse a `board/read` payload.
+ *
+ * `projectId` is required and must be a non-empty string: the host has no
+ * "current project" to fall back to (Q1=B). A missing or empty id returns
+ * `null`, which the handler reports as `invalid-payload`; no project is guessed
+ * and no read happens.
  *
  * @param value - untrusted payload.
  * @returns the payload, or null when malformed.
  */
 export function parseReadBoardPayload(value: unknown): ReadBoardPayload | null {
-  if (value === null || value === undefined) return {}
   if (!isRecord(value)) return null
-  if (!isOptionalString(value['projectId'])) return null
   const projectId = value['projectId']
-  return projectId === undefined ? {} : { projectId }
+  if (!isString(projectId) || projectId.length === 0) return null
+  return { projectId }
 }
 
 function optionalIndex(value: unknown): number | undefined | null {
@@ -468,6 +563,9 @@ function optionalIndex(value: unknown): number | undefined | null {
 /**
  * Parse a `task/status.set` payload.
  *
+ * The baseline is required at the shape level; its `ver1:<n>` grammar is
+ * validated by the host handler before the data layer is called (F5).
+ *
  * @param value - untrusted payload.
  * @returns the payload, or null when malformed.
  */
@@ -478,19 +576,19 @@ export function parseSetStatusPayload(value: unknown): SetStatusPayload | null {
   if (!isString(operationId) || operationId.length === 0) return null
   if (!isStatusId(next)) return null
   if (!isOptionalString(value['reason'])) return null
-  if (!isOptionalString(value['expectedStatusVersion'])) return null
+  const expectedStatusVersion = value['expectedStatusVersion']
+  if (!isString(expectedStatusVersion) || expectedStatusVersion.length === 0) return null
   const toIndex = optionalIndex(value['toIndex'])
   if (toIndex === null) return null
 
   const reason = value['reason']
-  const expectedStatusVersion = value['expectedStatusVersion']
   return {
     taskId,
     next,
     operationId,
+    expectedStatusVersion,
     ...(reason === undefined ? {} : { reason }),
     ...(toIndex === undefined ? {} : { toIndex }),
-    ...(expectedStatusVersion === undefined ? {} : { expectedStatusVersion }),
   }
 }
 
@@ -508,33 +606,38 @@ export function parseReorderPayload(value: unknown): ReorderPayload | null {
   if (!isStatusId(status)) return null
   const toIndex = optionalIndex(value['toIndex'])
   if (toIndex === undefined || toIndex === null) return null
-  if (!isOptionalString(value['expectedStatusVersion'])) return null
   const expectedStatusVersion = value['expectedStatusVersion']
+  if (!isString(expectedStatusVersion) || expectedStatusVersion.length === 0) return null
   return {
     taskId,
     status,
     toIndex,
     operationId,
-    ...(expectedStatusVersion === undefined ? {} : { expectedStatusVersion }),
+    expectedStatusVersion,
   }
 }
 
 /**
  * Parse a `task/status.undo` payload.
  *
+ * Both identities are required: `operationId` (this undo) and `appliedUpdateId`
+ * (the write being undone). They must never be conflated at the boundary.
+ *
  * @param value - untrusted payload.
  * @returns the payload, or null when malformed.
  */
 export function parseUndoStatusPayload(value: unknown): UndoStatusPayload | null {
   if (!isRecord(value)) return null
-  const { taskId, operationId } = value
+  const { taskId, operationId, appliedUpdateId } = value
   if (!isString(taskId) || taskId.length === 0) return null
   if (!isString(operationId) || operationId.length === 0) return null
-  if (!isOptionalString(value['expectedStatusVersion'])) return null
+  if (!isString(appliedUpdateId) || appliedUpdateId.length === 0) return null
   const expectedStatusVersion = value['expectedStatusVersion']
+  if (!isString(expectedStatusVersion) || expectedStatusVersion.length === 0) return null
   return {
     taskId,
     operationId,
-    ...(expectedStatusVersion === undefined ? {} : { expectedStatusVersion }),
+    expectedStatusVersion,
+    appliedUpdateId,
   }
 }

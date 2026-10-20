@@ -49,9 +49,15 @@ function task(taskId: string, status: string, order: number, extra: Record<strin
     status,
     statusLabel: status,
     order,
+    // Required contract fields (Q2=A): a write baseline and an undo credential.
+    statusRevision: 0,
+    undoTarget: null,
     ...extra,
   }
 }
+
+/** An undo credential as the data layer reports it after a status change. */
+const UNDO_TARGET = { statusVersion: 'ver1:2', appliedUpdateId: 'op-prev' }
 
 /** A snapshot with two tasks, as the data layer would report it. */
 function snapshot(overrides: Record<string, unknown> = {}) {
@@ -67,6 +73,8 @@ function snapshot(overrides: Record<string, unknown> = {}) {
 
 interface FakeSource extends BoardSource {
   reads: number
+  /** Project ids the controller asked for, in order (Q1=B: explicit per call). */
+  readProjects: string[]
   statusCalls: StatusChangeInput[]
   reorderCalls: ReorderInput[]
   undoCalls: UndoInput[]
@@ -87,6 +95,7 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
   const source: FakeSource = {
     transport: { kind: 'host', detail: 'test' },
     reads: 0,
+    readProjects: [],
     statusCalls: [],
     reorderCalls: [],
     undoCalls: [],
@@ -94,8 +103,9 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
     nextWrite: options.write ?? { ok: true, snapshot: snapshot() as never, undoable: true },
     holdWrites: false,
     release: () => undefined,
-    async readBoard() {
+    async readBoard(projectId) {
       source.reads += 1
+      source.readProjects.push(projectId)
       return source.nextRead
     },
     async setStatus(input) {
@@ -396,6 +406,14 @@ describe('undo (F02-R04)', () => {
     const controller = controllerFor(source)
     await controller.load()
 
+    // The undo credential comes only from the post-write snapshot.
+    source.nextWrite = {
+      ok: true,
+      snapshot: snapshot({
+        tasks: [task('t1', 'doing', 0, { statusRevision: 3, undoTarget: UNDO_TARGET }), task('t2', 'doing', 1)],
+      }) as never,
+      undoable: true,
+    }
     controller.menuSelectStatus('t1', 'doing')
     await Promise.resolve()
     await Promise.resolve()
@@ -403,12 +421,24 @@ describe('undo (F02-R04)', () => {
     const state = controller.getState()
     expect(state.feedback?.kind).toBe('success')
     if (state.feedback?.kind !== 'success') throw new Error('unreachable')
-    expect(state.feedback.undo).toEqual({ taskId: 't1', operationId: 'op-1' })
+    expect(state.feedback.undo).toEqual({
+      taskId: 't1',
+      expectedStatusVersion: 'ver1:2',
+      appliedUpdateId: 'op-prev',
+    })
+    // The write carried the baseline of the task it was decided on.
+    expect(source.statusCalls[0]?.expectedStatusVersion).toBe('ver1:0')
 
     controller.undoLastChange()
     await Promise.resolve()
     await Promise.resolve()
-    expect(source.undoCalls).toEqual([{ taskId: 't1', operationId: 'op-1' }])
+    expect(source.undoCalls).toEqual([{
+      taskId: 't1',
+      // The undo mints its own identity; appliedUpdateId is the undone write's.
+      operationId: 'op-2',
+      expectedStatusVersion: 'ver1:2',
+      appliedUpdateId: 'op-prev',
+    }])
   })
 
   it('refuses to overwrite later changes and shows the actual current value', async () => {
@@ -416,6 +446,13 @@ describe('undo (F02-R04)', () => {
     const controller = controllerFor(source)
     await controller.load()
 
+    source.nextWrite = {
+      ok: true,
+      snapshot: snapshot({
+        tasks: [task('t1', 'doing', 0, { statusRevision: 3, undoTarget: UNDO_TARGET }), task('t2', 'doing', 1)],
+      }) as never,
+      undoable: true,
+    }
     controller.menuSelectStatus('t1', 'doing')
     await Promise.resolve()
     await Promise.resolve()
@@ -435,7 +472,7 @@ describe('undo (F02-R04)', () => {
     expect(shownStatus(state, 't1')).toBe('blocked')
   })
 
-  it('does not offer undo when the data layer says the change is no longer undoable', async () => {
+  it('does not offer undo when the post-write snapshot carries no undoTarget', async () => {
     const source = fakeSource()
     const controller = controllerFor(source)
     await controller.load()

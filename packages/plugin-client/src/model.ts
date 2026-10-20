@@ -112,6 +112,18 @@ export interface TaskProgressView {
 }
 
 /**
+ * The data layer's undo credential for one task (core: `TaskView.undoTarget`).
+ *
+ * `statusVersion` is the formal status's version and `appliedUpdateId` is the
+ * `requestId` of the write that produced it. Both are needed to undo after a
+ * refresh; neither may be synthesised by the UI (F02-R04, REC-01).
+ */
+export interface BoardUndoTarget {
+  readonly statusVersion: string
+  readonly appliedUpdateId: string
+}
+
+/**
  * A task as the board renders it — the subset of core's `TaskView` the panel
  * needs, and nothing else. `status` is an opaque id and `statusLabel` is the
  * display string core supplied; the client never maps ids to labels itself.
@@ -132,7 +144,18 @@ export interface BoardTask {
   /** Manual order inside its column; the data layer has already sorted by it. */
   readonly order: number
   readonly fieldsRevision?: number
-  readonly statusRevision?: number
+  /**
+   * Version of this task's formal status. Required: it is the write baseline
+   * (SAVE-05) every status change/reorder/undo carries, so a missing value is a
+   * contract violation rather than "version 0".
+   */
+  readonly statusRevision: number
+  /**
+   * What the data layer would undo for this task, or `null` when there is
+   * nothing to undo. Required so "no undo" is an explicit answer, not a missing
+   * field that the UI might fill in.
+   */
+  readonly undoTarget: BoardUndoTarget | null
   /** The official summary line, or `null` ⇒ the card uses `goal`. */
   readonly summaryProgress?: TaskProgressView | null
   readonly hasSummary?: boolean

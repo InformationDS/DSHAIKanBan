@@ -58,6 +58,7 @@ import {
   type UndoInput,
   type WriteResult,
 } from './source.js'
+import { encodeStatusVersion } from './wire.js'
 
 /* ------------------------------------------------------------------ *
  * State
@@ -76,10 +77,18 @@ export type RetryIntent =
   | { readonly kind: 'reorder'; readonly input: ReorderInput }
   | { readonly kind: 'undo'; readonly input: UndoInput }
 
-/** The undo affordance attached to a successful change. */
+/**
+ * The undo affordance attached to a successful change.
+ *
+ * Built **only** from the post-write snapshot's `undoTarget`: `statusVersion`
+ * is the baseline the undo must send, and `appliedUpdateId` identifies the write
+ * being undone. The undo's own `operationId` is minted when the user presses
+ * undo, never here — the two identities are not interchangeable (Q2=A).
+ */
 export interface UndoToken {
   readonly taskId: string
-  readonly operationId: string
+  readonly expectedStatusVersion: string
+  readonly appliedUpdateId: string
 }
 
 /**
@@ -145,7 +154,7 @@ export interface StatusDialogState {
 export interface BoardState {
   readonly read: BoardReadState
   readonly transport: BoardSource['transport']
-  /** The project this controller is showing; `null` means "the data layer's current one". */
+  /** The project this controller is showing; `null` means nothing is selected, so no read is sent (Q1=B). */
   readonly selectedProjectId: string | null
   /** Cancelled column expanded? Collapsed by default (F02 §3.2). */
   readonly cancelledExpanded: boolean
@@ -220,7 +229,7 @@ export function writeFailedText(code: BoardFailureCode): string {
 /** Construction options. */
 export interface BoardControllerOptions {
   readonly source: BoardSource
-  /** Project to read; `null`/absent asks the data layer for its current project. */
+  /** Initial project selection; `null`/absent means nothing is selected (nothing is read until `selectProject`). */
   readonly projectId?: string | null
   /** Operation-id minter; injectable so tests are deterministic. */
   readonly newOperationId?: () => string
@@ -320,6 +329,26 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     emit()
   }
 
+  /**
+   * Build the undo affordance from the authoritative post-write snapshot.
+   *
+   * Never from the input or the pre-write view: only the data layer knows which
+   * write is still undoable (F02-R04). `null`/absent `undoTarget` → no undo.
+   *
+   * @param snapshot - the snapshot the write returned.
+   * @param taskId - the task the write targeted.
+   * @returns the undo token, or undefined when there is nothing to undo.
+   */
+  const undoTokenFrom = (snapshot: BoardSnapshot, taskId: string): UndoToken | undefined => {
+    const task = snapshot.tasks.find((item) => item.taskId === taskId)
+    if (task === undefined || task.undoTarget === null) return undefined
+    return {
+      taskId,
+      expectedStatusVersion: task.undoTarget.statusVersion,
+      appliedUpdateId: task.undoTarget.appliedUpdateId,
+    }
+  }
+
   /** The board currently on screen, whatever the read state is. */
   const currentView = (): BoardView | null => {
     const read = state.read
@@ -386,7 +415,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
 
     if (result.ok) {
       applySnapshot(result.snapshot)
-      const undo: UndoToken | undefined = result.undoable ? { taskId, operationId: operationIdOf(retry) } : undefined
+      const undo = undoTokenFrom(result.snapshot, taskId)
       const text = kind === 'reorder' ? REORDER_SAVED_TEXT : kind === 'undo' ? UNDO_DONE_TEXT : statusTextOf(retry)
       setState({
         busy: null,
@@ -437,17 +466,6 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       capabilities: view.capabilities,
     }
     applySnapshot(snapshot)
-  }
-
-  const operationIdOf = (retry: RetryIntent): string => {
-    switch (retry.kind) {
-      case 'status':
-      case 'reorder':
-      case 'undo':
-        return retry.input.operationId
-      default:
-        return ''
-    }
   }
 
   /** The label to show for a status id: any task already carrying it knows it. */
@@ -523,6 +541,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       next: input.next,
       operationId: mintOperationId(),
       reason: state.statusDialog?.reason ?? reason,
+      // Q2=A: every write carries the baseline it was decided on (SAVE-05).
+      expectedStatusVersion: encodeStatusVersion(task.statusRevision),
       ...(input.toIndex === undefined ? {} : { toIndex: input.toIndex }),
     }
     setState({ statusDialog: null })
@@ -541,12 +561,19 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
 
     async load() {
       const requested = state.selectedProjectId
+      if (requested === null) {
+        // Q1=B: there is no "current project" to read. Do not call the data
+        // layer without an id; boundary B turns this into the explicit
+        // `selection-required` state.
+        setState({ read: { kind: 'idle' }, busy: null })
+        return
+      }
       // Snapshot what is on screen *before* switching to `loading`: a failure
       // must keep showing the last known board (REC-05), not blank the panel.
       const keptBefore = currentView()
       const capabilitiesBefore = currentCapabilities()
       setState({ read: { kind: 'loading', projectId: requested }, busy: { kind: 'read' } })
-      const result: BoardReadResult = await source.readBoard()
+      const result: BoardReadResult = await source.readBoard(requested)
 
       // Late-response guard: a response for another project is dropped, so a
       // switch cannot be shown under the wrong name (F01-R01).
@@ -554,7 +581,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         setState({ busy: null })
         if (result.code === 'unknown-project') {
           setState({
-            read: { kind: 'unknown-project', projectId: requested ?? '', message: result.message.length > 0 ? result.message : UNKNOWN_PROJECT_MESSAGE },
+            read: { kind: 'unknown-project', projectId: requested, message: result.message.length > 0 ? result.message : UNKNOWN_PROJECT_MESSAGE },
             openTaskId: null,
             detail: null,
             feedback: { kind: 'failure', text: result.message.length > 0 ? result.message : UNKNOWN_PROJECT_MESSAGE, code: result.code, retry: null },
@@ -575,7 +602,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         return
       }
 
-      if (requested !== null && result.snapshot.project.projectId !== requested) {
+      if (result.snapshot.project.projectId !== requested) {
         // The data layer answered for a different project than the one asked
         // for: keep it out of the view entirely.
         setState({
@@ -652,6 +679,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
           status: input.toStatus,
           toIndex: input.toIndex,
           operationId: mintOperationId(),
+          // Q2=A: a reorder carries the status baseline it was decided on.
+          expectedStatusVersion: encodeStatusVersion(task.statusRevision),
         }
         void runWrite('reorder', input.taskId, { kind: 'reorder', input: reorder }, () => source.reorder(reorder))
         return
@@ -681,11 +710,22 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         refuseMissingCapability()
         return
       }
+      // The baseline comes from the current view; a task that is no longer there
+      // must be re-read rather than sent without one (Q2=A / SAVE-05).
+      const task = taskById(dialog.taskId)
+      if (task === undefined) {
+        setState({
+          statusDialog: null,
+          feedback: { kind: 'failure', text: writeFailedText('not-found'), code: 'not-found', retry: null },
+        })
+        return
+      }
       const change: StatusChangeInput = {
         taskId: dialog.taskId,
         next: dialog.next,
         reason: dialog.reason,
         operationId: mintOperationId(),
+        expectedStatusVersion: encodeStatusVersion(task.statusRevision),
       }
       setState({ statusDialog: null })
       void runWrite('status', dialog.taskId, { kind: 'status', input: change }, () => source.setStatus(change))
@@ -735,7 +775,15 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         refuseMissingCapability()
         return
       }
-      const undo: UndoInput = { taskId: feedback.undo.taskId, operationId: feedback.undo.operationId }
+      const token = feedback.undo
+      // Two identities: this undo gets a fresh operation id; the write being
+      // undone comes from the post-write snapshot's undoTarget (Q2=A).
+      const undo: UndoInput = {
+        taskId: token.taskId,
+        operationId: mintOperationId(),
+        expectedStatusVersion: token.expectedStatusVersion,
+        appliedUpdateId: token.appliedUpdateId,
+      }
       setState({ feedback: null })
       void runWrite('undo', undo.taskId, { kind: 'undo', input: undo }, () => source.undoStatusChange(undo))
     },

@@ -115,26 +115,36 @@ function currentFromDetails(details: unknown): FormalStatusValue | undefined {
 export interface ChannelBoardSourceOptions {
   /** Channel override; defaults to {@link BOARD_CHANNEL}. */
   readonly channel?: string
-  /** Project key to read; absent means "the host's current project". */
-  readonly projectId?: string
 }
 
 /**
  * Build a {@link BoardSource} that talks to this plugin's own host half.
  *
+ * The source holds **no project selection**: every read carries the id the
+ * caller was given, and there is no "current project" (Q1=B). The controller is
+ * the only owner of the selection.
+ *
  * @param connection - the injected `ctx.connection` service.
- * @param options - channel and project selection.
+ * @param options - channel override.
  * @returns a board source whose every failure is explicit.
  */
 export function createChannelBoardSource(connection: ConnectionLike, options: ChannelBoardSourceOptions = {}): BoardSource {
   const channel = options.channel ?? BOARD_CHANNEL
-  const projectId = options.projectId
 
   const call = async (endpoint: string, payload: unknown): Promise<ConnectionRpcResultLike> =>
     connection.rpc.call(channel, endpoint, payload)
 
-  const readBoard = async (): Promise<BoardReadResult> => {
-    const payload: ReadBoardPayload = projectId === undefined ? {} : { projectId }
+  const readBoard = async (projectId: string): Promise<BoardReadResult> => {
+    // A read without a selection is a caller bug, not a request to guess: refuse
+    // locally and send nothing. Controller state is the only source of the id.
+    if (typeof projectId !== 'string' || projectId.length === 0) {
+      return {
+        ok: false,
+        code: 'read-failed',
+        message: '读取被拒绝：没有显式选择的项目 id；宿主不会猜测项目。',
+      }
+    }
+    const payload: ReadBoardPayload = { projectId }
     let result: ConnectionRpcResultLike
     try {
       result = await call(BOARD_ENDPOINTS.readBoard, payload)
@@ -162,12 +172,12 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
     try {
       result = await call(endpoint, payload)
     } catch (error) {
-      // REC-03: an unconfirmed write is "unknown", so the UI asks the user to
-      // verify instead of offering a blind retry.
+      // REC-03: an unconfirmed write is "unknown". Do not invite a resubmission —
+      // the user must first establish the current formal state.
       return {
         ok: false,
         code: 'unknown-result',
-        message: `写入结果未知，请先核对当前正式状态后重试。（${messageOf(error)}）`,
+        message: `写入结果未知，请先核对当前正式状态，不要重复提交。（${messageOf(error)}）`,
       }
     }
     if (!result.ok) {
@@ -197,9 +207,9 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
         taskId: input.taskId,
         next: input.next,
         operationId: input.operationId,
+        expectedStatusVersion: input.expectedStatusVersion,
         ...(input.reason === undefined ? {} : { reason: input.reason }),
         ...(input.toIndex === undefined ? {} : { toIndex: input.toIndex }),
-        ...(input.expectedStatusVersion === undefined ? {} : { expectedStatusVersion: input.expectedStatusVersion }),
       }
       return write(BOARD_ENDPOINTS.setStatus, payload)
     },
@@ -209,7 +219,7 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
         status: input.status,
         toIndex: input.toIndex,
         operationId: input.operationId,
-        ...(input.expectedStatusVersion === undefined ? {} : { expectedStatusVersion: input.expectedStatusVersion }),
+        expectedStatusVersion: input.expectedStatusVersion,
       }
       return write(BOARD_ENDPOINTS.reorder, payload)
     },
@@ -217,7 +227,8 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
       const payload: UndoStatusPayload = {
         taskId: input.taskId,
         operationId: input.operationId,
-        ...(input.expectedStatusVersion === undefined ? {} : { expectedStatusVersion: input.expectedStatusVersion }),
+        expectedStatusVersion: input.expectedStatusVersion,
+        appliedUpdateId: input.appliedUpdateId,
       }
       return write(BOARD_ENDPOINTS.undoStatusChange, payload)
     },

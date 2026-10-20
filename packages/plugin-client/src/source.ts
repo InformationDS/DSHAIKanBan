@@ -46,8 +46,12 @@ export interface StatusChangeInput {
    * column). Absent means "append at the end of the target column".
    */
   readonly toIndex?: number
-  /** Version of the formal status this change was decided on (SAVE-05 baseline). */
-  readonly expectedStatusVersion?: string
+  /**
+   * Version of the formal status this change was decided on (SAVE-05 baseline),
+   * encoded as `ver1:<n>` from the task's `statusRevision`. Required: a write
+   * without a baseline must not be sent.
+   */
+  readonly expectedStatusVersion: string
 }
 
 /** One manual reorder inside a column (F02-R04). */
@@ -56,15 +60,26 @@ export interface ReorderInput {
   readonly status: StatusId
   readonly toIndex: number
   readonly operationId: string
-  readonly expectedStatusVersion?: string
+  /** Version of the formal status this reorder was decided on (`ver1:<n>`). */
+  readonly expectedStatusVersion: string
 }
 
-/** One undo of a previous status change (F02-R04). */
+/**
+ * One undo of a previous status change (F02-R04).
+ *
+ * The two identities are distinct and both required:
+ * `operationId` is this undo's own identity (fresh; reused by a retry), while
+ * `appliedUpdateId` is the identity of the write being undone (core's
+ * `appliedUpdateId`, taken from the task's `undoTarget`).
+ */
 export interface UndoInput {
   readonly taskId: string
-  /** The `operationId` of the change being undone — the baseline the host checks. */
+  /** Identity of this undo intent; a retry reuses it (REC-02). */
   readonly operationId: string
-  readonly expectedStatusVersion?: string
+  /** Version of the formal status the undo was decided on (`ver1:<n>`). */
+  readonly expectedStatusVersion: string
+  /** `requestId` of the write being undone (from `undoTarget`). */
+  readonly appliedUpdateId: string
 }
 
 /* ------------------------------------------------------------------ *
@@ -158,8 +173,15 @@ export interface BoardSource {
    */
   readonly transport: { readonly kind: 'host' | 'unavailable'; readonly detail: string }
 
-  /** Read the whole board for the current project. */
-  readBoard(): Promise<BoardReadResult>
+  /**
+   * Read the whole board for the **explicitly selected** project.
+   *
+   * The project id is passed on every call: the source holds no selection and
+   * there is no "current project" to fall back to (Q1=B). A controller must not
+   * call this without a selection; the host refuses a missing id with
+   * `invalid-payload` and never guesses a project.
+   */
+  readBoard(projectId: string): Promise<BoardReadResult>
 
   /** Change one task's status (and optionally its position). */
   setStatus(input: StatusChangeInput): Promise<WriteResult>

@@ -29,13 +29,34 @@
  * `root` (single slot: a second entry *shadows* the official frame) and into
  * `sidebar.workspaces` (same shadowing risk); neither is touched.
  *
+ * ## Registration is declaration-aware
+ *
+ * Both seats are declared by *other* UI packages — `main` by
+ * `@deepseek-ai/dsh-client-ui-layout`, `sidebar.panellist` by
+ * `@deepseek-ai/dsh-client-ui-sidebar` — and client entry application order is
+ * loader-driven, so a direct `ctx.slots.register` can run before its seat
+ * exists. The slot service rejects that race
+ * (`slot "…" is not declared (a parent entry's children table must declare
+ * it)`), which the page's boot audit reports as a non-activating entry
+ * (`web boot: N entries did not activate`). Every shipped registrant — the
+ * official `dsh-client-ui-*` bundles and the third-party reference bundles —
+ * therefore waits on the declaration with
+ * `ctx.slots.inject(ownerKey, () => ctx.slots.register(...))`, whose callback
+ * runs when the declaration is committed, is disposed when it collapses, and
+ * runs again if it reappears. {@link registerSlots} prefers that API and keeps
+ * the direct register as the fallback for shells (and unit fakes) without it.
+ *
+ * `dsh.client.inject` in `packages/plugin/package.json` is a *separate*
+ * switch: it only orders boot-graph module arrival, it does not make a
+ * registration legal, and it is not a cordis service `inject`.
+ *
  * ## Why the context is typed structurally
  *
  * A dynamic bundle may only `require()` specifiers the shell's frozen module
  * table answers (`react`, `react/jsx-runtime`, `@deepseek-ai/cordis`, and the
  * static UI libraries). Importing `@deepseek-ai/dsh-client-ui-slots` purely for
  * its `SlotRegistry` type would still add a build-time package dependency for
- * zero runtime benefit, so the two methods actually used are declared locally.
+ * zero runtime benefit, so the few members actually used are declared locally.
  *
  * @module @aikanban/plugin-client
  */
@@ -83,7 +104,30 @@ export interface SlotRegisterOptions {
 /** The slot registry service the client half needs. */
 export interface SlotsLike {
   register(options: SlotRegisterOptions, component: () => ReactNode): () => void
+  /**
+   * Declaration-aware registration (the shell's slots service). Runs
+   * `callback` synchronously when `ownerKey`'s declaration already exists, and
+   * queues it until the declaring `register()` commits when it does not;
+   * collapsing the declaration disposes the callback's registrations and a
+   * later declaration runs it again.
+   *
+   * Optional so a shell without the API (and the unit-test fakes) can still
+   * drive the direct-register fallback. It must be called as a member
+   * expression — `ctx.slots.inject(...)` — because the service proxy binds its
+   * caller context at call time.
+   */
+  inject?(ownerKey: string, callback: () => SlotInjectionEffect): () => void
 }
+
+/**
+ * What a {@link SlotsLike.inject} callback may return: nothing, one disposer,
+ * or an iterable of disposers (the service installs those transactionally and
+ * disposes them in reverse order).
+ */
+export type SlotInjectionEffect = void | SlotDisposer | Iterable<SlotDisposer>
+
+/** One registration disposer. */
+export type SlotDisposer = () => void
 
 /** The layout service: panel navigation. */
 export interface LayoutLike {
@@ -146,7 +190,50 @@ export function paletteIcon(): ReactNode {
  * ------------------------------------------------------------------ */
 
 /**
+ * One ADR-004 seat: the slot declaration whose lifetime gates the
+ * registration, the registration options, and the component factory.
+ */
+interface SlotSeat {
+  /**
+   * `ctx.slots.inject` owner key — the slot whose declaration must exist for
+   * the registration to be legal. Both ADR-004 seats fill the slot they wait
+   * on, which is the shape every shipped registrant uses.
+   */
+  readonly ownerKey: string
+  readonly options: SlotRegisterOptions
+  readonly component: () => ReactNode
+}
+
+/**
+ * The two ADR-004 seats, in registration order.
+ *
+ * Seat 1 — the board itself: a new key on the root `main` slot (the seat's
+ * keyDomain is open, so `aikanban` does not shadow `conversation`).
+ * Seat 2 — the palette icon that selects it: same id as the `main` key, which
+ * is what `ctx.layout.selectPanel` expects.
+ */
+const SLOT_SEATS: readonly SlotSeat[] = [
+  {
+    ownerKey: 'main',
+    options: { name: 'main', key: PANEL_ID, scope: 'root', label: 'AIKanBan' },
+    component: boardPanel,
+  },
+  {
+    ownerKey: 'sidebar.panellist',
+    options: { name: 'sidebar.panellist', id: PANEL_ID, order: 40, label: 'AIKanBan' },
+    component: paletteIcon,
+  },
+]
+
+/**
  * Register both seats and return their combined disposer.
+ *
+ * Registration is declaration-aware when the shell's slot service offers
+ * {@link SlotsLike.inject}: each seat's `register` runs inside the inject
+ * callback for its own slot, so it waits for the declaration instead of
+ * racing it (a direct register before the declaration throws in the slot
+ * service and fails the page boot). The direct-register fallback keeps this
+ * function usable against a shell (or fake) without the API.
  *
  * Kept separate from `apply()` so the unit tests can drive it against a fake
  * slot registry without constructing a cordis context.
@@ -155,20 +242,19 @@ export function paletteIcon(): ReactNode {
  * @returns a disposer that unregisters every seat this half owns.
  */
 export function registerSlots(ctx: ClientContext): () => void {
-  const disposers: (() => void)[] = []
+  const disposers: SlotDisposer[] = []
 
-  // Seat 1 — the board itself: a new key on the root `main` slot.
-  disposers.push(ctx.slots.register(
-    { name: 'main', key: PANEL_ID, scope: 'root', label: 'AIKanBan' },
-    boardPanel,
-  ))
+  for (const seat of SLOT_SEATS) {
+    // A member call on purpose: the slot service proxy binds the caller's
+    // fiber context at call time, which routes disposal into this plugin.
+    const register = (): SlotDisposer => ctx.slots.register(seat.options, seat.component)
 
-  // Seat 2 — the entry point that selects it. Same id as the `main` key, which
-  // is what `ctx.layout.selectPanel` expects.
-  disposers.push(ctx.slots.register(
-    { name: 'sidebar.panellist', id: PANEL_ID, order: 40, label: 'AIKanBan' },
-    paletteIcon,
-  ))
+    if (typeof ctx.slots.inject === 'function') {
+      disposers.push(ctx.slots.inject(seat.ownerKey, register))
+    } else {
+      disposers.push(register())
+    }
+  }
 
   return () => {
     for (const dispose of disposers) dispose()
@@ -193,24 +279,38 @@ export const inject: string[] = ['slots']
  * it still mounts a panel that explains itself (REC-05) instead of parking the
  * fiber.
  *
+ * The whole body is wrapped in try/catch purely as a diagnostic aid: the DSH
+ * Desktop crash report captures the page's error-level `console` output, so
+ * the log line below is where the stack for a failed activation ends up. The
+ * error is rethrown rather than swallowed — a swallowed failure would leave
+ * the fiber ACTIVE with no panel mounted, which the boot audit would not name
+ * and the user would see as a silently missing icon. Rethrowing keeps the
+ * failure attributed to this entry (`@aikanban/dsh-aikanban: failed`).
+ *
  * @param ctx - the browser plugin context.
  * @returns a disposer that unregisters every seat this half owns.
  */
 export function apply(ctx: ClientContext): () => void {
-  const connection = ctx.reflect?.get('connection', false) ?? ctx.get?.('connection')
-  if (isConnectionLike(connection)) {
-    setBoardSource(createChannelBoardSource(connection))
-    ctx.logger?.info(`[aikanban] active (client half) transport=connection channel=${BOARD_CHANNEL}`)
-  } else {
-    setBoardSource(createUnavailableBoardSource(NO_CONNECTION_DETAIL))
-    ctx.logger?.info(`[aikanban] active (client half) transport=unavailable (${NO_CONNECTION_DETAIL})`)
-  }
+  console.info('[aikanban] client apply entered')
+  try {
+    const connection = ctx.reflect?.get('connection', false) ?? ctx.get?.('connection')
+    if (isConnectionLike(connection)) {
+      setBoardSource(createChannelBoardSource(connection))
+      ctx.logger?.info(`[aikanban] active (client half) transport=connection channel=${BOARD_CHANNEL}`)
+    } else {
+      setBoardSource(createUnavailableBoardSource(NO_CONNECTION_DETAIL))
+      ctx.logger?.info(`[aikanban] active (client half) transport=unavailable (${NO_CONNECTION_DETAIL})`)
+    }
 
-  const dispose = registerSlots(ctx)
-  ctx.logger?.info(
-    `[aikanban] active (client half) plugin=${PLUGIN_ID} slots=main:${PANEL_ID},sidebar.panellist:${PANEL_ID}`,
-  )
-  return dispose
+    const dispose = registerSlots(ctx)
+    ctx.logger?.info(
+      `[aikanban] active (client half) plugin=${PLUGIN_ID} slots=main:${PANEL_ID},sidebar.panellist:${PANEL_ID}`,
+    )
+    return dispose
+  } catch (error) {
+    console.error('[aikanban] client apply failed', error)
+    throw error
+  }
 }
 
 /* ------------------------------------------------------------------ *

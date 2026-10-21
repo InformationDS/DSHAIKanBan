@@ -18,6 +18,7 @@
     "probe": "node tools/probe-host.mjs",
     "probe:keep": "node tools/probe-host.mjs --keep",
     "sync": "node tools/sync-to-profile.mjs",
+    "install:profile": "node tools/install-to-profile.mjs",
     "clean": "node tools/clean.mjs"
   },
   "comment:scripts": "`pnpm -r` and `pnpm -C <dir>` are used on purpose. `pnpm --filter <name> run <script>` was measured hanging indefinitely on this workspace's synchronised drive (S0-W2 hit the same thing), while -r and -C return immediately. Keep --filter out of these scripts and out of the docs.",

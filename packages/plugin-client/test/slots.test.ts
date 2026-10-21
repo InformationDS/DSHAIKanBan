@@ -5,21 +5,38 @@
  * problem to the registration logic rather than to the packaging. The bundle's
  * own load-chain test lives in `packages/plugin/test/client-bundle.test.ts`.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { PANEL_ID, apply, inject, registerSlots, type SlotRegisterOptions, type SlotsLike } from '../src/index.js'
 
-/** A fake slot registry that records the registrations it receives. */
-function fakeSlots() {
+/**
+ * A fake slot registry that records the registrations it receives.
+ *
+ * @param options - `withInject` adds the declaration-aware `inject` API the
+ *   real shell provides; omitting it models a shell (or an older fake) where
+ *   the direct-register fallback must be used.
+ */
+function fakeSlots(options: { withInject?: boolean } = {}) {
   const calls: { options: SlotRegisterOptions; component: () => unknown }[] = []
   const released: SlotRegisterOptions[] = []
+  const injections: { ownerKey: string; isDisposed: () => boolean }[] = []
   const slots: SlotsLike = {
     register(options, component) {
       calls.push({ options, component })
       return () => { released.push(options) }
     },
   }
-  return { slots, calls, released }
+  if (options.withInject === true) {
+    slots.inject = (ownerKey, callback) => {
+      // The real service runs the callback synchronously when the declaration
+      // already exists; doing the same here keeps the recorded calls comparable.
+      callback()
+      let disposed = false
+      injections.push({ ownerKey, isDisposed: () => disposed })
+      return () => { disposed = true }
+    }
+  }
+  return { slots, calls, released, injections }
 }
 
 describe('plugin-client: seats', () => {
@@ -81,5 +98,42 @@ describe('plugin-client: seats', () => {
     expect(dispose).toBeTypeOf('function')
     dispose()
     expect(released).toHaveLength(2)
+  })
+
+  it('waits for each seat declaration through slots.inject when the shell offers it', () => {
+    const { slots, calls, injections } = fakeSlots({ withInject: true })
+    registerSlots({ slots })
+    // Each seat waits on its own slot's declaration; entry application order is
+    // loader-driven, so a direct register can run before the seat exists.
+    expect(injections.map((injection) => injection.ownerKey)).toEqual(['main', 'sidebar.panellist'])
+    expect(calls.map((c) => c.options.name).sort()).toEqual(['main', 'sidebar.panellist'])
+  })
+
+  it('falls back to a direct register when the shell has no inject()', () => {
+    const { slots, calls, injections } = fakeSlots()
+    registerSlots({ slots })
+    expect(injections).toHaveLength(0)
+    expect(calls).toHaveLength(2)
+  })
+
+  it('releases inject-managed registrations through the returned disposer', () => {
+    const { slots, injections } = fakeSlots({ withInject: true })
+    const dispose = registerSlots({ slots })
+    expect(injections.map((injection) => injection.isDisposed())).toEqual([false, false])
+    dispose()
+    expect(injections.map((injection) => injection.isDisposed())).toEqual([true, true])
+  })
+
+  it('logs and rethrows an apply() failure instead of swallowing it', () => {
+    const failure = new Error('slot "main" is not declared')
+    const slots: SlotsLike = {
+      register() { throw failure },
+    }
+    const loggedError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const loggedInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+
+    expect(() => apply({ slots })).toThrow(failure)
+    expect(loggedInfo).toHaveBeenCalledWith('[aikanban] client apply entered')
+    expect(loggedError).toHaveBeenCalledWith('[aikanban] client apply failed', failure)
   })
 })

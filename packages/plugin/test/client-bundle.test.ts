@@ -13,7 +13,9 @@
  * 4. Materialize the factory with a `require` bound to the platform module
  *    table, assert the exports carry `apply`/`inject`, then activate against a
  *    fake slot registry and assert both ADR-004 seats were requested with the
- *    right shape (`main` keyed, `sidebar.panellist` listed).
+ *    right shape (`main` keyed, `sidebar.panellist` listed) — both through the
+ *    declaration-aware `slots.inject` path and through the direct-register
+ *    fallback a shell without that API takes.
  *
  * Steps 3–4 are precisely the two things that break in production when the
  * packaging is wrong: a bundle that runs its body eagerly, and a bundle whose
@@ -84,25 +86,45 @@ const fakeReact = {
   },
 }
 
+/** The slot registry face the fake shell exposes. */
+interface FakeSlotService {
+  register(options: SlotCall['options'], component: unknown): () => void
+  inject?(ownerKey: string, callback: () => void): () => void
+}
+
 /**
  * A fake slot registry that records registration shape.
  *
+ * @param options - `withInject` adds the declaration-aware `inject` API of the
+ *   real shell; without it the bundle must take its direct-register fallback.
  * @returns the recorded calls plus the fake `ctx`.
  */
-function fakeSlots() {
+function fakeSlots(options: { withInject?: boolean } = {}) {
   const calls: SlotCall[] = []
   const disposed: SlotCall[] = []
-  const ctx = {
-    slots: {
-      register(options: SlotCall['options'], component: unknown) {
-        const call = { options, component }
-        calls.push(call)
-        return () => { disposed.push(call) }
-      },
+  const injections: { ownerKey: string; isDisposed: () => boolean }[] = []
+  const slots: FakeSlotService = {
+    register(options, component) {
+      const call = { options: options as SlotCall['options'], component }
+      calls.push(call)
+      return () => { disposed.push(call) }
     },
+  }
+  if (options.withInject === true) {
+    slots.inject = (ownerKey, callback) => {
+      // The real service runs the callback synchronously when the declaration
+      // already exists; the fake does the same.
+      callback()
+      let isDisposed = false
+      injections.push({ ownerKey, isDisposed: () => isDisposed })
+      return () => { isDisposed = true }
+    }
+  }
+  const ctx = {
+    slots,
     logger: { info: () => undefined },
   }
-  return { ctx, calls, disposed }
+  return { ctx, calls, disposed, injections }
 }
 
 describe('client bundle: registration protocol', () => {
@@ -186,5 +208,17 @@ describe('client bundle: slot mounts (ADR-004)', () => {
     const exports = materialize() as { boardPanel: () => unknown; paletteIcon: () => unknown }
     expect(exports.boardPanel()).toBeDefined()
     expect(exports.paletteIcon()).toBeDefined()
+  })
+
+  it('waits for each seat declaration through slots.inject when the shell offers it', () => {
+    const { materialize } = executeBundle({ react: fakeReact, 'react/jsx-runtime': fakeReact })
+    const exports = materialize() as { apply: (ctx: unknown) => () => void }
+    const { ctx, calls, injections } = fakeSlots({ withInject: true })
+
+    exports.apply(ctx)
+
+    // Declaration-aware: one inject per seat, keyed by that seat's own slot.
+    expect(injections.map((injection) => injection.ownerKey)).toEqual(['main', 'sidebar.panellist'])
+    expect(calls.map((call) => call.options.name).sort()).toEqual(['main', 'sidebar.panellist'])
   })
 })

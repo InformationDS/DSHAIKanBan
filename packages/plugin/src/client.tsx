@@ -19,7 +19,7 @@
  */
 
 export { apply, inject, boardPanel, paletteIcon, registerSlots, PANEL_ID } from '@aikanban/plugin-client'
-export type { ClientContext, LayoutLike, SlotRegisterOptions, SlotScope, SlotsLike } from '@aikanban/plugin-client'
+export type { ClientContext, LayoutLike, SlotDisposer, SlotInjectionEffect, SlotRegisterOptions, SlotScope, SlotsLike } from '@aikanban/plugin-client'
 
 /* ------------------------------------------------------------------ *
  * Board layer (F02)

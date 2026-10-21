@@ -11,6 +11,7 @@ declares `dsh.bundle` / `dsh.client`.
 | `exports["./client"]` | `./lib/client.js` | Browser half. The client module system *requires* this subpath to exist whenever `dsh.client` is declared; its string/`{default}` form is read to locate the served bundle. |
 | `dsh.bundle.patch` | `./cordis.patch.yml` | Makes the package usable as a profile **bundle layer**. |
 | `dsh.client.platform` | `web` | Any other value and the client module system skips the row entirely. |
+| `dsh.client.inject` | `["@deepseek-ai/dsh-client-ui-renderer", "@deepseek-ai/dsh-client-ui-sidebar"]` | Orders **boot-graph module arrival** only (mirrors the official `dsh-client-ui-brand-official` sidebar occupant); it is not a cordis service inject, and it does not by itself make a slot registration legal — that is `ctx.slots.inject` inside the client half. |
 
 ## Two halves, two output contracts
 

@@ -31,10 +31,11 @@
 | A2 | `packages/plugin/src/index.ts` | `HostContext` 补 `storageDomain`/`workspaceRegistry`/`connection`；`apply()` 中同步探测并注册通道；`ActivationSnapshot` 补通道/数据层字段；**同步扩 `createStatusTool` 的 output schema**（`additionalProperties:false` 下新字段必须进 `properties`，且 `required` **含全部字段**；nullable 只影响值 schema 用 `oneOf`，`packages/plugin/src/index.ts:226-246`）；新增 `aikanban:board-channel` 诊断事件；再导出适配器 | `HostContext:167-172`；`ActivationSnapshot:102-121`；`apply():305`；通道再导出 `:406-418` |
 | A3 | `packages/plugin/src/board-channel.ts` | 按新契约改 payload 提示文案/校验（端点集合不变）；**`ver1:` 基线由 handler 前置校验**（`BoardRpcResult.error.code` 是 `string`，可返回 `invalid-payload`；`HostWriteFailure.code` 仍是 8 个浏览器码、适配器不返回该码，§4.2/§6.2）；`registerBoardChannel` 的 `rpc.handle` 包 try/catch，失败返回 `{ok:false, reason:'register-failed'}`（扩展 `BoardChannelRegistration` 的 reason 联合 `'no-connection' \| 'register-failed'`，`:244-246`）；**不改** `HostReadSuccess/HostWriteSuccess.snapshot` 的非空类型（`:67`、`:83`）；handler 永不全抛 | `createBoardChannelHandler:145-212`；`registerBoardChannel:256-275` |
 | A4 | `packages/plugin/package.json` / `tsconfig.json` / `pnpm-lock.yaml` | 加 `@aikanban/core` 依赖（`devDependencies`）与 project reference；**新增依赖后必须在同步盘之外的构建沙盒跑非 frozen 的 `pnpm install`（只执行 COMMANDS `:57` 那一条，绝不执行 `:56` 的 `cd` 行——那是同步盘主仓库），把生成的 `pnpm-lock.yaml` 复制回主仓库并提交**；此后 `--frozen-lockfile` 基线才成立（正确命令原文见 §7.3 A-G0） | `packages/plugin/package.json:56-58`；`packages/plugin/tsconfig.json:13`；[tools/COMMANDS.md](../../tools/COMMANDS.md) §10.2 `:196-217`、§2 安装命令 `:57`（不要执行同段的 `:56` cd） |
-| A5 | `packages/plugin-client/src/wire.ts` | `projectId` 必填；写 payload 携带编码后的基线；读快照补 `undoTarget`/版本字段；解析器收紧（`parseReadBoardPayload` 必须拒绝缺省，`:447-460` 的旧注释删除） | `ReadBoardPayload:113-117`（注释“Absent means the current project”必须改）；写 payload `:119-146`；快照 `:153-162` |
+| A5 | `packages/plugin-client/src/wire.ts` | `projectId` 必填；写 payload 携带编码后的基线；读快照补 `undoTarget`/版本字段；解析器收紧（`parseReadBoardPayload` 必须拒绝缺省，`:447-460` 的旧注释删除）；**快照字段必填性定稿**：`statusRevision` 非负整数、`undoTarget` 为对象或显式 `null`，缺失/畸形即解析失败 → `read-failed`（§3.3） | `ReadBoardPayload:113-117`（注释“Absent means the current project”必须改）；写 payload `:119-146`；快照 `:153-162` |
 | A6 | `packages/plugin-client/src/source.ts` | `BoardSource.readBoard(projectId)`；写输入补 `expectedStatusVersion` 必填与 `appliedUpdateId`；`UndoToken` 语义；**`readBoard` 旧注释（`:161` “for the current project”）要改** | `BoardSource:153-172`；输入 `:36-68`；旧注释 `:161` |
 | A7 | `packages/plugin-client/src/channel-source.ts` | **唯一签名**：`BoardSource.readBoard(projectId: string)` 每次传参（source 构造不再接收 `projectId`）；payload 每次组装；无选择由 controller 拦截、source 不接受空 id；**未知结果文案不得写“后重试”**（`channel-source.ts:170` 改为“请先核对当前正式状态，不要重复提交”） | 旧构造选项 `:114-120`；`readBoard:136-155`；写 `:195-223`；未知结果文案 `:170` |
-| A8 | `packages/plugin-client/src/controller.ts` | 新增 `selection-required` 读状态与 `resetSelection()`；**`load()`**（无参，由 state 的选择驱动）语义；状态/排序/撤销发送基线；`UndoToken` 带 `{statusVersion, appliedUpdateId}` 且**只从写后快照取**；**写后失败（`unknown-result` **与**写后 `read-failed`）一律不保留写重试意图，改 `retry:{kind:'read'}`**（§4.4 第 8/9 条）；删除 `BoardState.selectedProjectId` 旧注释与 `BoardControllerOptions.projectId`（选择唯一真相源＝state） | 读状态联合 `:94-117`；`BoardState.selectedProjectId:148-149`；`BoardControllerOptions.projectId:223`；`load:542-598`；变更输入 `:521-527`、`:684-691`；撤销 `:731-740`；token `:80-83`；重试意图 `:72-77`、`retryPending:709-729` |
+| A8a | `packages/plugin-client/src/controller.ts` | **写基线与撤销凭据的最小对齐**（被 `tsc` 强制，随契约层同提交）：状态/排序/撤销发送前从当前视图任务取 `statusRevision` 编码为 `expectedStatusVersion`（任务不在视图/无基线 → 拒绝并提示重读，不发无基线请求）；`UndoToken` 改为 `{taskId, expectedStatusVersion, appliedUpdateId}` 且**只从写后快照的 `undoTarget` 构造**；撤销 `operationId` 为本次**新铸**（重试复用同一个） | 变更输入 `:521-527`、`:684-691`；撤销 `:731-740`；token `:80-83` |
+| A8b | `packages/plugin-client/src/controller.ts` | **选择状态机与 UI 空态**（独立于写基线，可在契约层之后单独提交）：新增 `selection-required` 读状态与 `resetSelection()`；**`load()`**（无参，由 state 的选择驱动）语义；**写后失败（`unknown-result` **与**写后 `read-failed`）一律不保留写重试意图，改 `retry:{kind:'read'}`**（§4.4 第 8/9 条）；删除 `BoardState.selectedProjectId` 旧注释与 `BoardControllerOptions.projectId`（选择唯一真相源＝state） | 读状态联合 `:94-117`；`BoardState.selectedProjectId:148-149`；`BoardControllerOptions.projectId:223`；`load:542-598`；重试意图 `:72-77`、`retryPending:709-729` |
 | A9 | `packages/plugin-client/src/model.ts` / `board.tsx` | 模型补 `statusVersion`/`undoTarget`；`BoardPanel` 挂载时先 `controller.resetSelection()` 再决定是否 load（无选择不读）；面板渲染选择空态、按 `undoTarget` 显示撤销；**`retry.kind==='read'` 的按钮文案为「重新读取」**（未知结果只允许重读，不自动重发写） | `model.ts:119-146`；`board.tsx:403-483`；`BoardPanel` 挂载 `:492-505`；重试按钮 `:373-381` |
 | A10 | `packages/plugin-client/src/runtime.ts` / `index.tsx` | 选择**不持久化**且**唯一真相源＝`BoardController.state`**：删除 `runtime.selectedProjectId` 与 `setSelectedProject`；`getBoardController()` 以无选择状态创建；每次面板挂载由 `resetSelection()` 归零；`apply()` 装配 source 时不需要项目 | `runtime.ts:28-30`、`:52-61`、`:68-71`；`index.tsx:199-214` |
 | A11 | 测试 | 新增 core↔handler 集成测试；扩既有测试（清单见 §4.5、§7.1） | 见 §7 |
@@ -70,10 +71,11 @@ B 的扩展清单（端点 payload、`HostBoardPort` 方法、`BoardSource` 方�
 1. **每次进入看板都必须显式选择项目**：面板挂载时初始 `read` 状态为 `selection-required`（新增状态，见 §4.4），**不发 `board/read`**；选择来自 B 的 `project/list` UI。
 2. **选择只存在本次页面会话的内存，唯一真相源＝`BoardController.state.selectedProjectId`**；`runtime` 不得再保存第二份（A10 删除 `runtime.selectedProjectId`/`setSelectedProject`）。刷新、重开页面、重进座位一律回到 `selection-required`：`BoardPanel` 每次挂载先调 `controller.resetSelection()`（清空选择/旧视图，不读 source），然后等待用户显式选择（B 的选择器）或测试调用 `selectProject(id)`。不写 profile、不写 core、不写浏览器存储、不记忆“上次选择”。
 3. **不默认第一个、不按最近使用、不按标题猜**：`board/read` 的 `projectId` 缺失时，宿主一律返回失败（`invalid-payload`，见 §6），**绝不** fallback 到 `list()` 的第一项或 `readProject()` 的任何结果。
-4. **空态文案**（建议，实施时可改措辞但不能含默认选择暗示）：
+4. **空态文案（定稿，实施不得改写）**：
    - 标题：`请选择项目`
    - 说明：`看板不会记住上次的项目；每次进入都需要显式选择。`
    - 未接通/读取失败仍按 REC-05 显示失败与重试（`source.ts:178-200`）。
+   - 说明句标点只用中文分号「；」；P5a 已按此原文落地为 `controller.ts` 的 `SELECTION_REQUIRED_TITLE` / `SELECTION_REQUIRED_DESCRIPTION` 常量。
 5. **选择后的读取**：`readBoard(projectId)`；打开另一个项目 = 换 `projectId` 重新读取；旧项目的迟到响应继续由 controller 按 `projectId` 丢弃（`controller.ts:578-593`），该保护保留。
 6. **`project/list` 自身不写任何持久状态**；也不调用 core（core 没有“所有 workspace”的权威列表，只有已登记项目）。列表项至少含 `projectId`、`title`、`path`；同名项目用 `path` 辨识（F01 §3、ADR-003 W2）。
 
@@ -109,7 +111,9 @@ B 的扩展清单（端点 payload、`HostBoardPort` 方法、`BoardSource` 方�
 
 ### 2.5 对切片 A 的直接后果
 
-A 没有 `project/list`，所以 A 的面板只能停在 §2.2 的第 4 条空态；**A 的集成测试显式传 `projectId` 驱动 handler**，不通过 UI 选择。演示“选择项目 → 看板”必须等 B。这是评审 B1 里“切片顺序”的硬约束，不得在 A 里提前造一个假的列表或默认项目。
+A 没有 `project/list`，所以 A 的面板只能停在 §2.2 的第 4 条空态；**A 的集成测试显式传 `projectId` 驱动 handler**，不通过 UI 选择。演示“选择项目 → 看板”必须等切片 B（当前排期记为 P5c）。这是评审 B1 里“切片顺序”的硬约束，不得在 A 里提前造一个假的列表或默认项目。
+
+**显式承认（P5a 之后、`project/list` 与选择器（P5c）落地之前）**：界面只显示选择空态，**无法在 UI 中完成选择**；`selectProject` 仅测试可调。因此本阶段的完成判据只能是集成测试与探针，不得描述为「S1 界面已可用」。
 
 ## 3. 协议字段映射（host 适配层；A1 的准绳）
 
@@ -151,10 +155,10 @@ wire 解析器要求/可选的字段见 `wire.ts:280-331`；core 字段见 `type
 | `blockedReason` | `TaskView.blockedReason` | `null`→省略（wire 同 §3.2 的 null 限制）；非阻塞态通常为 null |
 | `archived` | `TaskView.archived` | S1 恒 false，仍下发 |
 | `fieldsRevision` | `TaskView.fieldsRevision` | A 阶段下发（B 的字段编辑基线用） |
-| `statusRevision` | `TaskView.statusRevision` | **改为必填**（Q2=A 的基线来源；当前 wire 解析可选，`wire.ts:293-294`） |
+| `statusRevision` | `TaskView.statusRevision` | **必填非负整数**（Q2=A 的基线来源）；缺失/非整数/负数 = 协议违规 → 解析失败 → `read-failed`（**不默认 0**，P5a 已定） |
 | `summaryProgress` | `TaskView.summaryProgress` | 原样（`null` 可下发，wire 已区分 null/absent，`wire.ts:233-239`） |
 | `hasSummary` / `hasRecord` / `needsRecheck` / `recheckCodes` | 同名 | 原样 |
-| `undoTarget`（**新增**） | `TaskView.undoTarget`（`types.ts:385-391`，`{statusRevision, appliedUpdateId}\|null`） | 过 wire 为 `{ statusVersion, appliedUpdateId } \| null`；用于刷新后仍可撤销（§4.2） |
+| `undoTarget`（**新增**） | `TaskView.undoTarget`（`types.ts:385-391`，`{statusRevision, appliedUpdateId}\|null`） | 过 wire 为 `{ statusVersion, appliedUpdateId } \| null`；**必填键**：对象或显式 `null`，缺失/畸形 = 协议违规 → `read-failed`（不得由 UI 补、不默认“不可撤销”）；用于刷新后仍可撤销（§4.2） |
 | `hints` | — | 省略（§3.5） |
 
 ### 3.4 `capabilities` 合成（适配层，Q2 的一部分）
@@ -213,19 +217,24 @@ core 没有 capabilities 字段（`BoardReadResult` 仅上述四项，`types.ts:
 
 ### 4.5 要改的文件与受影响的既有测试
 
-改文件见 §1.1 A5—A10。**计数与红/绿判据（定稿，F12）**：
+改文件见 §1.1 A5—A10。**计数与红/绿判据（定稿，F12）——按提交边界分别列**：
 
-- **当前门禁下真正会红的 2 个**：`channel-roundtrip.test.ts`（经真实构建产物解析固定快照，`statusRevision` 缺失即解析失败）与 `controller.test.ts`（fake source 直接喂快照、写前取基线时拿不到 `statusRevision`）。
-- **类型层必改的 2 个**：`model.test.ts`（`task()` helper 返回 `BoardTask` 字面量，`statusRevision` 改必填后**类型错误**）与 `host.test.ts`（`ActivationSnapshot` 新字段使字面量/快照类型错误，且要**新增** schema 哨兵与通道注册用例）。**测试文件不被 `tsc -b` 检查**（各包 tsconfig 只 include `src/**`），所以当前门禁不会因此变红，但**若未来 CI 把测试纳入 typecheck，必改集合扩到 4**。
+- **契约层（P5a 边界 A：wire/model 的必填字段与写基线）会红 2 个，必须随契约同提交改 fixture/断言**：
+  - `channel-roundtrip.test.ts`：经真实构建产物解析固定快照，`statusRevision`/`undoTarget` 缺失即解析失败；写 payload 断言随之新增必填基线。
+  - `controller.test.ts`：fixture 任务缺 `statusRevision`、写前取基线拿不到基线值（`tsc` 对输入形状的强制）。
+- **浏览器半（P5a 边界 B：选择状态机与 UI 空态）**：契约层之后单独提交，改动/新增集中在这里：
+  - `model.test.ts`（**类型层**）：`task()` helper 返回 `BoardTask` 字面量，`statusRevision`/`undoTarget` 改必填后**类型错误**；补断言。
+  - `host.test.ts`（**类型层 + 新增用例**）：`ActivationSnapshot` 新字段使手写字面量需补，且要**新增** output schema 哨兵与通道注册事件用例。
+  - **测试文件不被 `tsc -b` 检查**（各包 tsconfig 只 include `src/**`），所以“类型层”两项不会让当前门禁在执行期变红；**若未来 CI 把测试纳入 typecheck，它们必须随契约层同批修**。
 - **仅回归确认**：`client-bundle.test.ts`、`slots.test.ts`。
 - **回归基线**：`packages/core/test/*`（66 用例，不改 core 语义）。
 
 | 测试文件 | 类别 | 受影响点 |
 | --- | --- | --- |
-| `packages/plugin/test/channel-roundtrip.test.ts`（12 用例） | **必改（当前会红）** | 固定快照没有 `statusRevision`/`undoTarget`（fixtures `:51-85`），真实适配器解析会失败；source 构造不再带 `projectId`（`:209`），读取改为每次传 id（`:215`）；写 payload 断言新增必填基线 |
-| `packages/plugin-client/test/controller.test.ts`（19 用例） | **必改（当前会红）** | fake source 的 `readBoard` 无参（`:97-100`）、`controllerFor` 传 `projectId` 选项（`:120-127`，选项将删除）；fixture 任务缺 `statusRevision`（`:43-54`）导致写前取基线失败；新增 `selection-required`/挂载重置/撤销凭据/**未知结果只重读**用例 |
-| `packages/plugin-client/test/model.test.ts`（19 用例） | **必改（类型层，当前不红）** | `task()` helper 返回 `BoardTask` 字面量（`:40-51`），`statusRevision` 改必填后类型错误；补 `statusRevision`/`undoTarget` 断言 |
-| `packages/plugin/test/host.test.ts`（19 用例） | **必改（类型层 + 新增用例）** | `ActivationSnapshot` 新字段使手写字面量需补（`:173-183`、`:255-265`、`:286-297`）；**新增** output schema 哨兵（字段覆盖，§7.1 第 9 条）与通道注册事件用例；既有 `checkSchema` 用例本身不因缺字段而红 |
+| `packages/plugin/test/channel-roundtrip.test.ts`（12 用例） | **契约层必改（会红）** | 固定快照没有 `statusRevision`/`undoTarget`（fixtures `:51-85`），真实适配器解析会失败；source 构造不再带 `projectId`（`:209`），读取改为每次传 id（`:215`）；写 payload 断言新增必填基线 |
+| `packages/plugin-client/test/controller.test.ts`（19 用例） | **契约层必改（会红）** | fake source 的 `readBoard` 无参（`:97-100`）、`controllerFor` 传 `projectId` 选项（`:120-127`，选项将删除）；fixture 任务缺 `statusRevision`（`:43-54`）导致写前取基线失败；新增 `selection-required`/挂载重置/撤销凭据/**未知结果只重读**用例（其中选择状态机部分属边界 B） |
+| `packages/plugin-client/test/model.test.ts`（19 用例） | **浏览器半必改（类型层，执行期不红）** | `task()` helper 返回 `BoardTask` 字面量（`:40-51`），`statusRevision` 改必填后类型错误；补 `statusRevision`/`undoTarget` 断言 |
+| `packages/plugin/test/host.test.ts`（19 用例） | **浏览器半必改（类型层 + 新增用例）** | `ActivationSnapshot` 新字段使手写字面量需补（`:173-183`、`:255-265`、`:286-297`）；**新增** output schema 哨兵（字段覆盖，§7.1 第 9 条）与通道注册事件用例；既有 `checkSchema` 用例本身不因缺字段而红 |
 | `packages/plugin/test/client-bundle.test.ts`（7 用例） | 仅回归确认 | 预期不改逻辑；若 bundle 导出面变化需同步，否则只跑绿 |
 | `packages/plugin-client/test/slots.test.ts`（7 用例） | 仅回归确认 | 座位注册不受影响，只跑绿 |
 | `packages/core/test/*`（66 用例） | 回归基线 | 不受影响；作为“不改 core 语义”的回归基线 |
@@ -311,12 +320,13 @@ wire 的浏览器侧失败码集合固定为 8 个（`wire.ts:58-67`）；host h
 
 **统一回读策略（定稿）**：所有写端点成功后，适配器都**重读一次看板快照**再返回；`HostWriteSuccess.snapshot` 是**非空** `BoardSnapshotValue`（`board-channel.ts:83`），因此成功响应不可能返回 `{snapshot:null}`（wire 层的 null 容忍保留给未来宿主，A 不产生；A1/A3 均不改该非空类型）。`undoable` 一律由**写后快照**里该任务的 `undoTarget !== null` 计算（`TaskView.undoTarget` 见 `types.ts:385-391`；推导见 `planning.ts:274/289-292`），不由输入或写前值推断。
 
-**四条定稿规则**（与 §4.4 第 8/9 条一致）：
+**五条定稿规则**（与 §4.4 第 8/9 条一致）：
 
 1. **重读失败的分类与 message 分级（F3）**：`saved`/`already-applied`（已生效）→ `unknown-result`（不带 snapshot），message 写“**已保存、视图未刷新**”；`undone`（撤销已生效）→ `unknown-result`，message 写“**撤销已生效、视图未刷新**”；`no-change`（确实无变化）→ `read-failed`。均不得用 `read-failed` 的“未做任何修改”描述已生效的操作（违反 REC-01）。
 2. **写后失败不自动重发（F9/F10/D6，含 `read-failed`）**：`unknown-result` **与写后 `read-failed`** 都不保留写重试意图，controller 只给 `{kind:'read'}`（按钮文案「重新读取」）；读回后由用户重新发起。**reorder 尤其如此**：它有 `requestId` 与 `statusRevision` 校验（`planning.ts:1355-1357`、`:1376-1383`），但没有 order 级基线（§8 第 11 条），重发可能覆盖别人顺序。
 3. **基线格式错误由 handler 前置拒绝（F5）**：非法/缺失 `ver1:` **不进入 port**，handler 返回 `invalid-payload`（host 码；`BoardRpcResult.error.code` 是 `string`）；`HostWriteFailure.code` 仍是 8 个浏览器码，适配器不得返回 `invalid-payload`。浏览器按未知写码归 `save-failed`（`channel-source.ts:173-180`）。
 4. **`save-failed + current` 的 current 合成（F6）**：core 的 `failed` 变体**不带 current**；适配器在映射 `save-failed` 时必须 `core.readTask(taskId)` 取当前 `status` 与 `statusRevision`，编码 `statusVersion='ver1:<n>'` 后作为 host failure 的 `details.current` 返回（handler 的 `detailsOf` 原样透传，`board-channel.ts:135-137`），否则浏览器只能显示无当前值的失败。
+5. **undo 成功分支的 `undoable` 必须透传 port（代码点，P5a 已修）**：`createBoardChannelHandler` 的 `task/status.undo` 成功分支不得硬编码 `undoable`——P3 脚手架曾固定为 `false`；A 起一律把 port 返回的 `undoable` 原样放进成功值（`success({ snapshot, undoable })`），适配器再按写后快照的 `undoTarget !== null` 计算（规则 1 同源），handler 不自行推断、也不得固定为 `true`。
 
 | 端点 | core 结果 | wire 码 / 成功值 |
 | --- | --- | --- |
@@ -380,8 +390,8 @@ B 需要区分“输入被拒绝”的一类（标题空白、字段非法），
 
 现状：`tools/probe-host.mjs` 只断言 4 件事——合成树含 aikanban 行（`:275-286`）、profile 解析并激活（`:288-333`）、宿主发布 `window.__DSH_BOOT__` 行并服务 client.js（`:343-443`）、宿主进程内发布 `aikanban:activation`（`:445-463`）；**没有任何断言证明 `registerBoardChannel` 被调用**。A 完成后必须新增：
 
-1. `tools/probe-host.mjs` 生成的观察者（`:353-359`）同时订阅 `aikanban:board-channel`，把 payload 写成 `[probe] BOARD-CHANNEL <json>` 行（与 ACTIVATION 同模式）。
-2. 第 4 步增加第 5 项检查：等到 `[probe] BOARD-CHANNEL` 行且 `registered===true && channel==='/aikanban'` → `record('host half registered /aikanban via registerBoardChannel', true, …)`；超时/失败 → `false`（不是 SKIP）。
+1. `tools/probe-host.mjs` 生成的观察者（`:353-359`）同时订阅 `aikanban:board-channel`，把 payload 写成 `[probe] BOARD-CHANNEL <json>` 行（与 ACTIVATION 同模式）。payload 含 `channel` / `registered` / `reason` / `path`，`path` 如实输出（44.7.0 实测为 `compat`）。
+2. 第 4 步增加第 5 项检查：等到 `[probe] BOARD-CHANNEL` 行且 `registered===true && channel==='/aikanban'` → `record('观察到 /aikanban 已被注册（不声称走的是公开入口）', true, …)`；超时/失败 → `false`（不是 SKIP）。输出同时呈现 `path`，**不把 `registered:true` 解释成“公开入口可用”**；`path` 为 `compat` 时也不写“通过公开 `registerBoardChannel` 注册”。
 3. 若观察者 preload 被宿主拒绝（现有 `observerUnavailable` 分支 `:456-459`）：写 `observations`「未观察」并保持“不冒充已验证”，不得写 PASS。
 4. 现有 4 项检查与退出码语义不变（`:443-489`）；新增检查通过后 README/验收记录引用的是**新增后的探针输出**。
 

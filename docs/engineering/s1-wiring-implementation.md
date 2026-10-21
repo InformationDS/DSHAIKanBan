@@ -3235,3 +3235,390 @@ ROUNDTRIP EXIT=0
 ### 14.9 记录追加后的文档门禁
 
 本记录追加只改 `docs/engineering/s1-wiring-implementation.md` 与 `docs/engineering/decisions/ADR-005-浏览器半与宿主半的数据通道.md`（均为既有文件，未新增 md 文件数）；追加后复跑 `python docs/tools/check_docs.py`：`PASS: 59 Markdown files; 20 PRDs; 48 common rules; 143 local rules.`（四项 PASS + `EXIT=0`；文档完整性，不涉及应用/产品验收）。
+
+## 15. P6b 安装剧本（待用户授权执行）
+
+> **本剧本尚未执行，也不由本档执行。** 本档只做安装前准备与「页面内自检」工具：`~/.dsh/profiles/desktop` **未被写入**、GUI **未被重启**、当前会话**未被中断**、没有任何插件被安装到用户 profile。
+>
+> **本剧本由用户明确授权后才执行；执行会重启 GUI，并中断当前正在运行的会话。**
+
+### 15.1 前置检查（全部只读）
+
+```powershell
+$NODE   = "C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
+$PNPM   = "C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.mjs"
+$repo   = "D:\BaiduSyncdisk\dsh-plugin\AIKanBan"
+$home   = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $env:USERPROFILE '.dsh' }
+$profileDir = Join-Path $home 'profiles\desktop'   # 本机 = C:\Users\InformationDS\.dsh\profiles\desktop
+
+# 1. profile 现状（只读）
+Get-Content "$profileDir\package.json"          # dsh.profile.bundles 列表 + dependencies
+Get-Content "$profileDir\cordis.patch.yml"      # 用户 patch 层
+Get-ChildItem "$profileDir" -Name
+
+# 2. 插件当前「未安装」的确认方法：三个位置都不应出现 aikanban
+Test-Path "$profileDir\node_modules\@aikanban\dsh-aikanban"                 # 期望 False
+Select-String -Path "$profileDir\package.json" -Pattern 'aikanban'          # 期望无输出（bundles/dependencies 都没有）
+Select-String -Path "$profileDir\cordis.patch.yml" -Pattern 'aikanban'      # 期望无输出（没有 insert 条目）
+Select-String -Path "$profileDir\cordis.yml" -Pattern 'aikanban'            # 期望无输出
+
+# 3. 在「要安装的那份 checkout」里构建，并核对载荷（见 15.2 的 exit 3/4/5）
+& $NODE $PNPM -C $repo run build
+$payload = @('package.json', 'README.md', 'cordis.patch.yml', 'lib', 'dist')
+foreach ($entry in $payload) { Test-Path (Join-Path "$repo\packages\plugin" $entry) }  # 期望全 True
+Test-Path "$repo\packages\plugin\lib\index.js"    # 宿主半构建产物（脚本 exit 4 显式检查）
+Test-Path "$repo\packages\plugin\lib\client.js"   # 浏览器半构建产物（脚本不单查，装前自查）
+
+# 4. 安全预演：只打印解析出的绝对路径与载荷，什么都不写
+& $NODE "$repo\tools\sync-to-profile.mjs" --dry-run
+
+# 5. 仓库干净、门禁在本次安装前已通过（失败可归因到安装，而不是代码）
+git -C $repo status --short --branch
+```
+
+**本档观察到的现状（2026-10-22，只读检查；未做任何修改）**：
+
+| 位置 | 观察值 | 结论 |
+| --- | --- | --- |
+| `profiles/desktop/package.json` | `dependencies: {}`；`dsh.profile.bundles` 为 10 个官方 bundle（base/web-app/experimental…），**无** `@aikanban/dsh-aikanban` | 未安装 |
+| `profiles/desktop/cordis.patch.yml` | 只有 `ui-settings-account`、`ui-chat`、`ui-settings`、`agent-default-model`、`cot-translation`、`llm-pi-ai`、`plugin-market`、`ui-theme` 等配置覆盖，**无** `insert: aikanban` | 未安装 |
+| `profiles/desktop/node_modules/@aikanban` | 不存在 | 未安装 |
+| `profiles/desktop` 目录 | `node_modules`、`cordis.patch.yml`、`cordis.yml`、`package.json`、`pnpm-workspace.yaml` | 由 Electron 独占管理 |
+| `packages/plugin/lib/`（主仓库工作树） | 本档未在主仓库构建；构建发生在盘外沙盒 `C:\Users\InformationDS\aikanban-p6b` | 安装前需在**要安装的那份 checkout** 里重新 `pnpm run build` |
+
+### 15.2 安装方式与**实际会写入的路径**（读 `tools/sync-to-profile.mjs` 得出，不是猜）
+
+**脚本本身**（`node tools/sync-to-profile.mjs`，默认 `--profile desktop`、`--mode link`）执行时只写两处：
+
+1. **工作区内暂存目录**：`<repo>/.probe-out-scaffold/sync-desktop/@aikanban/dsh-aikanban/`
+   —— 把 `packages/plugin` 的载荷（`PAYLOAD = ['package.json','README.md','cordis.patch.yml','lib','dist']`）完整复制一份，供安装前肉眼检查。该目录在 `.gitignore` 覆盖的 `.probe-out-scaffold/` 下，**不属于产品**，可随时删除。
+2. **profile 内安装点**：`<profile>\node_modules\@aikanban\dsh-aikanban`
+   —— `link` 模式建成 **junction**，指向 `<repo>\packages\plugin`（绝对路径）；`copy` 模式则把上述载荷复制到该目录（冻结快照）。
+   —— 若该路径已存在且**不是** junction，**link 模式**下脚本会拒绝覆盖（exit 5），不会删真实目录。
+
+**脚本不做**：不改 `<profile>\cordis.patch.yml`、不改 `<profile>\package.json`、不重启任何进程、不运行 `dsh plugin add`。
+
+**脚本的退出码（读 `tools/sync-to-profile.mjs` 代码，不猜）**：`0` 成功；`2` 参数错误；`3` `<profile>\package.json` 不存在（拒绝隐式创建 profile，`:197-205`）；`4` 载荷缺失（`PAYLOAD` 五项）或 `lib/index.js` 缺失（`:207-216`；注意它**不单独检查** `lib/client.js`）；`5` **link 模式**下安装点已存在且不是 junction（`:238-248`；`copy` 模式则会删除并重建该目录，`:253-258`）。
+
+**让插件成为 profile 的一个层**（由用户执行）：
+
+> ⚠️ `tools/sync-to-profile.mjs` 会打印 `dsh plugin --profile desktop add "<repo>\packages\plugin"` 作为「官方流程」，但**该命令对 desktop 不可用**：CLI 对 Electron 独占 profile 有统一拒绝（本机 `@deepseek-ai/dsh/lib/bin.js` 的 `rejectElectronProfile`，`--profile` 启动参数与 `plugin` 子命令都会走到它，见该文件 `:28-29`、`:92`、`:109`），实测报 `error: profile "desktop" is managed exclusively by the Electron application`。因此 desktop 只能走**手工路径**；脚本打印的官方流程只适用于非 Electron profile（如 `web`）。
+
+手工路径（**推荐 A**。A 是 `tools/probe-host.mjs` 在隔离 profile 上验证过的同一形状：junction + patch insert → 宿主发布 `window.__DSH_BOOT__` 行并激活）：
+
+A. 把下面条目追加到 `<profile>\cordis.patch.yml`（包名由 15.2 已建好的 junction 解析）：
+
+```yaml
+- insert:
+    - id: aikanban
+      name: '@aikanban/dsh-aikanban'
+```
+
+B. 或把包名加进 `<profile>\package.json` 的 `dsh.profile.bundles` 数组。**注意**：这一条依赖 profile 内 pnpm 依赖解析（`dependencies` 也要能解析到该包），本档未验证；若选 B，需自行确认解析失败时 loader 会显式报错而不是静默跳过。
+
+**若改用 `dsh plugin … add`（仅非 desktop profile，如 `web`）**：按脚本注释，它会在 profile 内转发给 pnpm 并追加 `dsh.profile.bundles`，因此会在该 profile 内写 `node_modules/` 与 `package.json`（可能还有该 profile 的锁文件，以实际输出为准）。**任何路径执行前都先备份**：
+
+```powershell
+$backup = Join-Path $env:USERPROFILE ("profile-desktop-backup-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+New-Item -ItemType Directory -Force -Path $backup | Out-Null
+Copy-Item "$profileDir\package.json"       "$backup\package.json"
+Copy-Item "$profileDir\cordis.patch.yml"   "$backup\cordis.patch.yml"
+Copy-Item "$profileDir\cordis.yml"         "$backup\cordis.yml"
+Copy-Item "$profileDir\pnpm-workspace.yaml" "$backup\pnpm-workspace.yaml"
+Get-ChildItem "$profileDir" -Filter '*lock*' -File -ErrorAction SilentlyContinue | Copy-Item -Destination $backup
+```
+
+**重启**：`profiles/desktop` 由 Electron 应用独占，新 bundle 层只在进程启动时组合，**必须关闭并重新启动 GUI**（CLI 对 desktop 的 `--dump-config` 会被拒绝：`profile "desktop" is managed exclusively by the Electron application`）。重启会中断当前会话，必须由用户在场执行。
+
+### 15.3 回滚（完整撤销清单，按顺序）
+
+1. **恢复 profile 清单**（最稳）：用 15.2 的备份覆盖回 `<profile>\package.json`、`cordis.patch.yml`、`cordis.yml`、`pnpm-workspace.yaml` 及可能生成的锁文件。
+   —— 若不用整份恢复，至少删掉两处：`package.json` 的 `dependencies` 里 `@aikanban/dsh-aikanban` 条目，与 `dsh.profile.bundles` 里的同名条目。
+2. **删安装点**：`<profile>\node_modules\@aikanban\dsh-aikanban`。
+   —— 若它是 junction（link 模式）：只删链接，**不要**递归进入目标；用 `cmd /c rmdir "<路径>"`，随后若 `@aikanban` 目录已空再删该空目录。
+   —— 若是真实目录（copy 模式）：`Remove-Item -Recurse -Force` 只作用于 profile 内副本。
+   —— **永远不要**对 junction 目标 `<repo>\packages\plugin` 执行删除。
+3. **删手工 patch 条目**：若曾按 15.2 手工往 `cordis.patch.yml` 追加 `insert: aikanban`，删掉该块（或用备份恢复）。
+4. **删暂存目录**（可选，工作区内、gitignored）：`<repo>\.probe-out-scaffold\sync-desktop\`。
+5. **再次重启 GUI**：回滚与安装一样，只有重启才会让 loader 重新组合、真正卸载该 bundle 层。
+6. **回滚后确认**：重跑 15.1 的第 2 组命令（三处都不应再出现 aikanban）；页面 Console 里 `window.__DSH_BOOT__.entries.map(e => e.id)` 不应包含 `@aikanban/dsh-aikanban`；应用内工具列表不应再有 `aikanban_status`。
+
+### 15.4 重启后的验证顺序
+
+**第一步（页面内证据，P6b）：在 GUI 页面里跑 [`tools/browser-check.js`](../../tools/browser-check.js)** —— F12 → Console → 整段粘贴。期望：
+
+- `B1 PASS`：`window.__DSH_BOOT__` 出现 `@aikanban/dsh-aikanban` 行（打印 `entry`/`rev`；`rev` 优先取 boot 行的 `row.rev`）；
+- `B2 PASS`：页面内 `POST /aikanban/project/list` → HTTP 200 + 合法信封 + `result.ok=true` + 候选集；本机预期非空，但**空集也是合法答案**（脚本不把它判失败，只是 B3 无项目可读而 `NOT-RUN`）；
+- `B3 PASS`：用 B2 的 `projectId` 调 `board/read` → 200 + 快照字段（`project`/`tasks`/`columns`/`boardToken`/`capabilities`）；
+- `B4 PASS`：页面 DOM 命中 `[data-aikanban-panel="aikanban"]` 等面板标记；若面板还没打开，脚本报 `NOT-MOUNTED`（「面板未渲染」，**不算失败**）——打开侧栏 AIKanBan 面板后重跑即可；
+- 末行 `BROWSER-CHECK RESULT: PASS`。
+- 若 `B2` 读到 `unavailable`：数据层服务晚绑定，等几秒重跑（脚本自身对 `unavailable` 有 10×500ms 轮询并如实打印尝试次数）。
+- 若 `B1 FAIL`：bundle 层没有生效（安装/重启问题），**不要**继续下结论。
+
+**第二步（回归证据）：`& $NODE "$repo\tools\verify-rpc-roundtrip.mjs"`** ——「若适用」：它需要 `packages/plugin/lib/index.js` 与可定位的 `dsh` CLI（`DSH_CLI` 可覆盖）。它启动的是**隔离宿主**（自己的 `DSH_HOME`、`--port 0`、`--no-open`），**不读取也不使用 desktop profile**；作用是在安装后的同一份构建上复证 carrier/信封（期望 17/17、exit 0），与第一步互补，不能互相替代。
+
+**补充观察（可选）**：应用内工具列表出现 `aikanban_status`；宿主日志 `[aikanban] active`；`& $NODE "$repo\tools\probe-host.mjs"` 5/5 且打印 `path=public|compat`（宿主升级后这个字段会变，安装/回滚结论要带上它）。记录端口时从实际输出读取，**不要写死**。
+
+### 15.5 风险与已知限制
+
+1. **DSH 44.7.0 的 `rpc.handle` 缺陷 → 走 compat**：公开 `ctx.connection.rpc.handle` 在本插件形态下抛错，兼容层改走宿主内部 `register(owner=注入子上下文, …)`（见 [ADR-005「宿主缺陷与兼容层」](decisions/ADR-005-浏览器半与宿主半的数据通道.md)）。安装后预期 `path=compat`；宿主升级后若兼容分支失效会以 `path=failed` + 探针第 5 项 FAIL 显式暴露，不会静默成功。
+2. **服务晚绑定 → 首次列表可能 `unavailable`**：数据层未就绪时 `project/list` 返回 `unavailable`；browser-check 会轮询并打印尝试次数，UI 侧是可见失败 + 重试（REC-05），不要把它当成「空看板」。
+3. **真实 Workspace 字段形状未验证**：现有证据的 workspace 来自探针设施写入隔离 home 的 durable 记录；产品自己的 Workspace 创建入口（GUI/宿主 API）未经过。真实 profile 里 `project/list` 读的是宿主 `workspaceRegistry`，`board/read` 的 project 登记由适配层在同一请求内触发——若真实字段形状不同，可能表现为 `unknown-project`/`read-failed`；以 browser-check 的 `actual` 为准记录，不猜测。
+4. **重启即中断**：安装和回滚都要重启 GUI；执行会中断当前会话。需要用户在场，agent 不得自行重启或结束 Electron 进程。
+5. **junction 的耦合**：link 模式让 profile 直接指向 `<repo>\packages\plugin`；仓库移动/删除、或换 worktree，都会让 profile 失效；反过来，`pnpm run build` 会立刻改变 profile 内行为（无需再 sync）。copy 模式是冻结快照，但没有这个热更新。
+6. **`dsh plugin add` 对 desktop 会被拒，且会在 profile 内跑 pnpm**：desktop 由 Electron 独占，CLI 的 `plugin` 子命令与 `--dump-config` 一样直接报错（见 15.2，本机已实测后者、代码同源检查前者）；对 `profiles/web` 等其他 profile，该命令会在 profile 内转发给 pnpm——尤其不要手跑裸 `pnpm install`（web 的 `package.json` 有失效的 `file:` 依赖）。执行任何 profile 写入前先备份清单，并以实际输出为准。
+7. **desktop 由 Electron 独占**：CLI 的 `--dump-config` 与 `plugin` 子命令都会被拒绝，验证必须在应用内做；不要用 CLI 参数假设 profile 状态。
+8. **不是验收证据，也不等于 `rpc.call` 证据**：browser-check 证明的是「真实页面会话 + 页面 cookie + 同一 URL/信封」的 200 + 合法信封；它**直接调用页面 `fetch`**，不证明客户端半 `ctx.connection.rpc.call` 适配器执行过（脚本头部已写明）。ADR-005「页面内 `rpc.call` 未观察」一项的关闭条件是**客户端半自身请求的证据**——例如 DevTools → Network 过滤 `/aikanban/`，由面板的「选择项目 / 读取看板」操作触发请求并看到 200；或面板实际加载到真实数据的可观察链路。本剧本不据此翻转 ADR 状态。安装/自检 PASS 也不代表任何 AT 通过：`acceptance.csv` 保持不动、全部 AT 仍「待执行」。
+
+### 15.6 本档门禁原始输出（2026-10-22，盘外沙盒 `C:\Users\InformationDS\aikanban-p6b`）
+
+运行于提交前的工作树（内容 = `5809c8c` + 本档改动；产品代码零改动，故代码门禁与基线一致）。端口一律由系统分配；输出中的 token 已脱敏。
+
+```powershell
+$NODE = "C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
+$PNPM = "C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.mjs"
+Set-Location C:\Users\InformationDS\aikanban-p6b
+& $NODE $PNPM install --frozen-lockfile
+& $NODE $PNPM run typecheck
+& $NODE $PNPM run build
+& $NODE $PNPM -r --if-present run test
+& $NODE $PNPM run verify
+& $NODE tools\probe-host.mjs
+& $NODE tools\verify-rpc-roundtrip.mjs
+python docs\tools\check_docs.py
+# 新增工具的语法与 stub 自测（不启动浏览器；stub 工装为临时文件，未提交）
+& $NODE --check tools\browser-check.js
+& $NODE .\.tmp-browser-check-selftest.mjs
+```
+
+**① typecheck / install**
+
+```text
+Scope: all 4 workspace projects
+✓ Lockfile passes supply-chain policies (verified 1d ago)
+Lockfile is up to date, resolution step is skipped
+Packages: +89
+Done in 2s using pnpm v11.7.0
+
+$ tsc -b
+TYPECHECK EXIT=0
+```
+
+**② build**
+
+```text
+$ tsc -b && pnpm -C packages/plugin run build:bundle
+$ tsdown -c tsdown.config.ts && tsdown -c tsdown.client.config.ts
+ℹ [@aikanban/dsh-aikanban] lib\index.js      182.58 kB │ gzip: 45.26 kB
+ℹ [@aikanban/dsh-aikanban] 2 files, total: 587.60 kB
+✔ [@aikanban/dsh-aikanban] Build complete in 144ms
+ℹ [@aikanban/dsh-aikanban/client] lib\client.js  34.54 kB │ gzip: 10.39 kB
+✔ [@aikanban/dsh-aikanban/client] Build complete in 49ms
+BUILD EXIT=0
+```
+
+**③ 用例 252（66 / 106 / 80）**
+
+```text
+packages/plugin-client test:  ✓ test/model.test.ts (20 tests)
+packages/plugin-client test:  ✓ test/wire.test.ts (12 tests)
+packages/plugin-client test:  ✓ test/controller.test.ts (35 tests)
+packages/plugin-client test:  ✓ test/board.test.ts (6 tests)
+packages/plugin-client test:  ✓ test/slots.test.ts (7 tests)
+packages/plugin-client test:  Test Files  5 passed (5)
+packages/plugin-client test:       Tests  80 passed (80)
+
+packages/core test:  Test Files  11 passed (11)
+packages/core test:       Tests  66 passed (66)
+
+packages/plugin test:  ✓ test/client-bundle.test.ts (7 tests)
+packages/plugin test:  ✓ test/channel-roundtrip.test.ts (19 tests)
+packages/plugin test:  ✓ test/board-adapter.test.ts (46 tests)
+packages/plugin test:  ✓ test/host.test.ts (34 tests)
+packages/plugin test:  Test Files  4 passed (4)
+packages/plugin test:       Tests  106 passed (106)
+
+TEST EXIT=0    # 合计 252 = 66 + 106 + 80，与基线一致
+```
+
+**④ verify 11/11**
+
+```text
+Host-half import verification — packages/plugin
+
+  PASS  package.json exists                                   packages\plugin\package.json
+  PASS  manifest declares type: module                        module
+  PASS  manifest declares a main entry                        ./lib/index.js
+  PASS  host entry is built                                   packages\plugin\lib\index.js (178.3 KB)
+  PASS  host entry is ESM, not a browser-half bundle          no __ModuleLoader__ banner; ESM statements present
+  PASS  import graph is host-resolvable (no bare specifiers)  1 module(s), only node: builtins
+  PASS  module graph is fully present on disk                 1 file(s) reachable
+  PASS  exports apply() for the loader to call                function apply(ctx)
+  PASS  exports an inject array (cordis activation gate)      []
+  PASS  apply() activates against a service-less context      activation=mvi7t1to-1 pid=44940
+  PASS  diagnostic tool is exported and callable              aikanban_status → [aikanban] active (plugin @aikanban/dsh-aikanban@0.0.0, activation mvi7t1to-1, pid 44940, services seen: none)
+
+OK
+VERIFY EXIT=0
+```
+
+**⑤ probe 5/5**
+
+```text
+[3/5] booting the probe host; reading its window.__DSH_BOOT__ graph
+  ok    host settled and bound: dsh web: http://127.0.0.1:12329/?token=<redacted>
+  PASS  browser row published: /plugins/??@aikanban/dsh-aikanban/client.js&rev=c91d1dcd59582b8c-44
+        served 200 32704B: window.__ModuleLoader__.load({id:`@aikanban/dsh-aikanban`,factory:e=>{var t={exp…
+[4/5] waiting for the activation signal from inside the host
+  PASS  the booting host published aikanban:activation:
+        activation=mvi7t7m6-1 pid=43120 tools=false systemPrompt=false
+[5/5] waiting for the /aikanban board channel registration from inside the host
+  PASS  the booting host registered the board channel:
+        channel=/aikanban registered=true path=compat reason=null dataLayerReady=true
+
+summary
+  PASS  composed tree contains the aikanban row
+  PASS  host half resolves from the profile and apply() activates
+        packages/plugin/package.json → [aikanban] active (host half) plugin=@aikanban/dsh-aikanban version=0.0.0 activation=mvi7t2cw-1
+  PASS  host publishes a window.__DSH_BOOT__ row and serves client.js
+        entry=/plugins/??@aikanban/dsh-aikanban/client.js&rev=c91d1dcd59582b8c-44 status=200 bytes=32704
+  PASS  apply() ran inside the booting host
+        activation=mvi7t7m6-1 pid=43120 tools=false systemPrompt=false
+  PASS  host half registered /aikanban inside the booting host
+        channel=/aikanban registered=true path=compat reason=null dataLayerReady=true
+
+PROBE OK — the bundle composed, resolved from the profile, activated, and published a browser row.
+PROBE EXIT=0
+```
+
+**⑥ roundtrip 17/17（端口由系统分配：本次 12346）**
+
+```text
+AIKanBan real-HTTP RPC roundtrip verification
+
+  isolated home    C:\Users\InformationDS\aikanban-p6b\.probe-home-scaffold\rpc-roundtrip
+  port             0 (OS-assigned — never hardcode a GUI port)
+  channel          /aikanban (5 endpoints: board/read, project/list, task/status.set, task/reorder, task/status.undo)
+  failure codes    8 (unchanged): unknown-endpoint, invalid-payload, invalid-reason, read-failed, not-found, save-failed, stale-baseline, unknown-result
+
+prepared isolated home; workspace fixture: 2 workspace(s)
+
+[1/6] booting the isolated host (own DSH_HOME, --port 0, --no-open)
+  ok    isolated host settled and bound: dsh web: http://127.0.0.1:12346/?token=<redacted>
+  ok    request origin (OS-assigned): http://127.0.0.1:12346
+[2/6] exchanging the launch token for the signed session cookie
+[3/6] positive: POST /aikanban/project/list over real HTTP
+[4/6] positive: POST /aikanban/board/read over real HTTP
+[5/6] negative: carrier fence and authentication
+[6/6] supplementary: contract-level failures over real HTTP (not fence evidence)
+
+[setup / authentication]
+  PASS  AUTH-1 HTTP  303  launch token → signed session cookie exchange
+  PASS  AUTH-2 HTTP  200  the exchanged cookie authenticates the app shell
+        actual:   200 (27899B, __DSH_BOOT__ present: true)
+
+[positive: real HTTP RPC roundtrip]
+  PASS  POS-1  HTTP  200  project/list answers HTTP 200 (after data-layer readiness, if needed)
+        actual:   HTTP 200 after 1 attempt(s)
+  PASS  POS-2  HTTP  200  project/list response is a valid RPC envelope (type/rpcId echo/result.ok)
+        actual:   type=server-response rpcId-echo=true result.ok=true
+  PASS  POS-3  HTTP  200  project/list value carries the candidate set from the host workspaceRegistry
+        actual:   2 projects: 03696d17…(AIKanBan), 455306c1…(dsh-plugin（旧）)
+  PASS  POS-4  HTTP  200  board/read answers HTTP 200
+        actual:   HTTP 200 for projectId=03696d17-12c2-4d78-9b3e-ff3bdf9e6f10
+  PASS  POS-5  HTTP  200  board/read response is a valid RPC envelope (type/rpcId echo/result.ok)
+        actual:   type=server-response rpcId-echo=true result.ok=true
+  PASS  POS-6  HTTP  200  board/read value is a board snapshot for the explicitly selected project
+        actual:   project=03696d17-12c2-4d78-9b3e-ff3bdf9e6f10 tasks=0 columns=[todo:未开始, doing:进行中, blocked:已阻塞, done:已完成, cancelled:已取消] boardToken=e06486e0cf66… capabilities={"statusChange":true,"reorder":true,"undo":true}
+
+[negative: carrier fence and authentication]
+  PASS  FEN-1  HTTP  401  no session cookie → 401
+        actual:   HTTP 401 body="unauthorized"
+  PASS  FEN-2  HTTP  403  valid cookie but cross-site Origin → 403
+        actual:   HTTP 403 body="forbidden"
+  PASS  FEN-3  HTTP  415  cookie valid but content-type is not application/json → 415
+        actual:   HTTP 415 body="content type must be application/json"
+  PASS  FEN-4  HTTP  404  non-POST method (GET) → 404
+        actual:   HTTP 404 body="not found"
+  PASS  FEN-5  HTTP  404  POST without an endpoint segment (path /aikanban) → 404
+        actual:   HTTP 404 body="not found"
+  PASS  FEN-6  HTTP  403  cookie valid but Host names a non-loopback authority → 403
+        actual:   HTTP 403 body="forbidden"
+  PASS  FEN-7  HTTP  200  control: the same cookie still succeeds after the negative batch
+        actual:   HTTP 200 result.ok=true
+
+[supplementary: contract-level failures over real HTTP]
+  PASS  CON-1  HTTP  200  endpoint outside the five-endpoint contract returns a failure envelope, not a throw
+        actual:   HTTP 200 code="unknown-endpoint"
+  PASS  CON-2  HTTP  200  board/read for an unregistered projectId returns a failure envelope, not an empty board
+        actual:   HTTP 200 code="unknown-project"
+
+[process-internal registration evidence — diagnostics channel, NOT HTTP]
+  observed      aikanban:board-channel channel=/aikanban registered=true path=compat
+  dataLayer     dataLayerReady=true (from the last aikanban:activation payload)
+
+[verdict]
+  assertions: 17/17 passed (required groups failed: 0)
+  exit code:  0 (all assertions passed)
+ROUNDTRIP EXIT=0
+```
+
+**⑦ check_docs**
+
+```text
+PASS: 59 Markdown files; 20 PRDs; 48 common rules; 143 local rules.
+PASS: unchanged baseline; 422 FR source units; 16 UX rules; 106 original ATs + 27 additions, all fully indexed by section 6.
+PASS: local links; unique IDs; acyclic dependencies; no later-stage dependencies; root documentation boundary.
+PASS: FR unit counts and owners agree between traceability.md and requirements.csv; catalog stage/dependencies/FR sources agree with both index tables.
+Scope: document integrity only. Application and product acceptance have not run.
+CHECK_DOCS EXIT=0
+```
+
+**⑧ 新增工具的语法与 stub 自测（不启动浏览器、不碰 profile；stub 工装是复核用临时文件，用完即删、未提交，避免把测试工装混进 `tools/` 的产品工具集）**
+
+```text
+$ node --check tools\browser-check.js
+NODE_CHECK EXIT=0
+
+### happy
+  last:  BROWSER-CHECK RESULT: PASS
+  pass:  [browser-check]   PASS 4/4
+### pre-install
+  last:  BROWSER-CHECK RESULT: FAIL
+  pass:  [browser-check]   PASS 0/4
+### empty-set
+  last:  BROWSER-CHECK RESULT: PASS
+  pass:  [browser-check]   PASS 2/4
+### malformed-snapshot
+  last:  BROWSER-CHECK RESULT: FAIL
+  pass:  [browser-check]   PASS 3/4
+### late-bind
+  last:  BROWSER-CHECK RESULT: PASS
+  pass:  [browser-check]   PASS 4/4
+### redaction
+  last:  BROWSER-CHECK RESULT: PASS
+  pass:  [browser-check]   PASS 4/4
+### boot-row-rev
+  last:  BROWSER-CHECK RESULT: PASS
+  pass:  [browser-check]   PASS 4/4
+### envelope-negative
+  last:  BROWSER-CHECK RESULT: FAIL
+  pass:  [browser-check]   PASS 1/4
+### http-500
+  last:  BROWSER-CHECK RESULT: FAIL
+  pass:  [browser-check]   PASS 1/4
+### body-text-false-positive
+  last:  BROWSER-CHECK RESULT: PASS
+  pass:  [browser-check]   PASS 3/4
+
+SELFTEST OK — 10 cases
+SELFTEST EXIT=0
+```
+
+> stub 自测的「FAIL」是**预期**：pre-install（插件未安装）、malformed-snapshot（快照不合 `wire.ts`）、envelope-negative（type/rpcId/value 不合法）、http-500 四组故意构造失败；`body-text-false-positive` 证明「对话正文里出现『已完成/进行中』等列标签」不会被误判成面板已渲染。它证明脚本能区分「通过 / 失败 / 未渲染」并保留 B3 的 `boardToken`/`capabilities` 输出（回归 `redact` 过宽 + 末行格式 + `row.rev`），不证明真实页面里的结果——真实页面结果只能由 15.4 的页面内粘贴跑出。
+
+### 15.7 授权边界（写死）
+
+- 本剧本**由用户授权后才执行**，且执行会**重启 GUI、中断当前会话**。
+- 未获授权时：不写 `~/.dsh/profiles/desktop`（含 junction）、不运行非 `--dry-run` 的 `tools/sync-to-profile.mjs`、不执行 `dsh plugin … add`、不重启/结束 Electron、不 kill 端口进程。
+- 本档（P6b 准备）的自证范围到此为止：新增 [`tools/browser-check.js`](../../tools/browser-check.js)（已在 Node stub 环境跑过 10 组用例，覆盖 happy path / 未安装 / 合法空集 / 畸形快照 / `unavailable` 重试 / token 脱敏 / boot `row.rev` / 信封负例 / HTTP 500 / 正文列标签假阳性），追加本节与 ADR-005「尚未验证」收窄；**不含任何安装动作**。

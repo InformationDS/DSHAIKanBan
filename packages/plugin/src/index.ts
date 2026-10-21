@@ -39,9 +39,11 @@
  *    failures stay visible instead of being presented as an empty board.
  *
  * Business behaviour (project/task records, paired confirmation, board data)
- * lives in `packages/core` (workstream S0-W2); the core→board adapter is the
- * next step (P5b), so the channel currently answers `not-wired-yet` once the
- * data layer is ready.
+ * lives in `packages/core` (workstream S0-W2); `board-adapter.ts` is the
+ * core→`HostBoardPort` mapping for the four slice-A endpoints, and the channel
+ * is registered with a delayed-ready wrapper that answers `unavailable` until
+ * the data layer is ready (never an empty board) and forwards to the adapter
+ * afterwards.
  *
  * @module @aikanban/dsh-aikanban
  */
@@ -49,6 +51,7 @@
 import type { KanbanCore } from '@aikanban/core'
 import { BOARD_CHANNEL } from '@aikanban/plugin-client/wire'
 
+import { createHostBoardPort, type WorkspaceRegistryLike } from './board-adapter.js'
 import {
   isHostConnectionLike,
   registerBoardChannel,
@@ -249,25 +252,11 @@ interface SystemPromptLike {
 }
 
 /**
- * One workspace entity, as far as the host half needs it (ADR-003 W1/W2).
- *
- * Only the fields the board adapter will resolve a project from are named.
- * `status()` is `Promise<'ok' | 'missing-dir'>` — two values, no `unknown` —
- * according to the shipped `dsh-workspace` declarations; the display-only
- * `unknown` value lives in `@aikanban/core`, not in the host.
+ * Workspace entity/registry shapes moved to `board-adapter.ts` (the module that
+ * consumes them) and re-exported here so the host half still presents them from
+ * its one public entry.
  */
-export interface WorkspaceLike {
-  readonly id: string
-  readonly title?: string
-  readonly path?: string
-  status(): Promise<'ok' | 'missing-dir'>
-}
-
-/** The subset of `ctx.workspaceRegistry` the host half needs (read-only). */
-export interface WorkspaceRegistryLike {
-  get(id: string): WorkspaceLike | undefined
-  list(): readonly WorkspaceLike[]
-}
+export type { WorkspaceLike, WorkspaceRegistryLike } from './board-adapter.js'
 
 /** The subset of the `tools` {@link ToolDefinition} this plugin builds. */
 export interface DiagnosticTool {
@@ -296,7 +285,7 @@ export interface HostContext {
   readonly connection?: HostConnectionLike
   /** `ctx.storageDomain` — the domain facility the core is opened through. */
   readonly storageDomain?: StorageDomainLike
-  /** `ctx.workspaceRegistry` — workspace entities; project resolution is P5b. */
+  /** `ctx.workspaceRegistry` — workspace entities; the board adapter resolves projects from it (§3.1). */
   readonly workspaceRegistry?: WorkspaceRegistryLike
   /**
    * `ctx.inject(deps, callback)` — mount a **child** fiber that runs `callback`
@@ -588,19 +577,30 @@ export function apply(ctx: HostContext): void {
 
   tryRegisterTool()
   tryRegisterSection()
+  // The board adapter resolves projects lazily through the registry; observe it
+  // for the activation snapshot when it is already bound (late bindings are
+  // recorded by the `internal/service` handler below).
+  if (serviceOf<WorkspaceRegistryLike>(ctx, 'workspaceRegistry') !== undefined) noteService('workspaceRegistry')
 
-  // ---- `/aikanban` channel: port delayed-ready, registration in a child fiber
+  // ---- `/aikanban` channel: real adapter behind a delayed-ready wrapper ----
   //
   // Opening the storage domain is asynchronous, but `apply()` may not be, so
-  // the channel is registered up front with a port that answers `unavailable`
-  // (not an empty board) until the data layer is ready, and `not-wired-yet`
-  // until the core adapter lands in P5b. Registration is wrapped: a throwing
+  // the channel is registered up front with a wrapper that answers `unavailable`
+  // (not an empty board) until the data layer is ready, then forwards every
+  // request to the real core adapter. Registration is wrapped: a throwing
   // `connection.rpc.handle` is reported as `register-failed` and never escapes
   // `apply()`.
-  const delayedPort = createDelayedBoardPort({
-    coreReady: () => lastCore !== null,
-    failureReason: () => lastDataLayerError,
+  const boardAdapter = createHostBoardPort({
+    core: () => lastCore,
+    workspaceRegistry: () => serviceOf<WorkspaceRegistryLike>(ctx, 'workspaceRegistry'),
   })
+  const delayedPort = createDelayedBoardPort(
+    {
+      coreReady: () => lastCore !== null,
+      failureReason: () => lastDataLayerError,
+    },
+    boardAdapter,
+  )
 
   const publishChannelState = (): void => {
     publishBoardChannelSignal({
@@ -837,6 +837,7 @@ export function apply(ctx: HostContext): void {
       if (typeof ctx.inject === 'function') mountBoardChannel()
       else tryRegisterChannel(value)
     } else if (name === 'storageDomain') startBootstrap(value)
+    else if (name === 'workspaceRegistry') noteService('workspaceRegistry')
   }) as never)
 
   applyCompleted = true
@@ -858,10 +859,11 @@ export function apply(ctx: HostContext): void {
  * Re-exported so the host half presents its whole channel surface from this one
  * entry module: the probe, the tests and the core adapter import from here
  * rather than reaching into `lib/board-channel.js`. The channel itself is
- * registered inside `apply()`; the port behind it is `delayed-board-port.ts`
- * until the core adapter (P5b) replaces it.
+ * registered inside `apply()`; the port behind it is the real
+ * `board-adapter.ts` behind the delayed-ready wrapper.
  * ------------------------------------------------------------------ */
 
+export { createHostBoardPort } from './board-adapter.js'
 export {
   createBoardChannelHandler,
   isHostConnectionLike,
@@ -873,5 +875,8 @@ export type {
   BoardRpcResult,
   HostBoardPort,
   HostReadOutcome,
+  HostReorderInput,
+  HostSetStatusInput,
+  HostUndoInput,
   HostWriteOutcome,
 } from './board-channel.js'

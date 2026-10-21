@@ -265,7 +265,9 @@ describe('F02 channel: protocol round trip (built client bundle ↔ built host h
     expect(result.undoable).toBe(true)
     expect(calls).toEqual([{
       port: 'setStatus',
-      input: { taskId: 'task-1', next: 'doing', operationId: 'op-1', expectedStatusVersion: 'ver1:0' },
+      // The handler decodes `ver1:<n>` before the port; the data layer never
+      // sees the wire encoding (s1-wiring.md §4.2/A3).
+      input: { taskId: 'task-1', next: 'doing', operationId: 'op-1', expectedStatusRevision: 0 },
     }])
   })
 
@@ -417,7 +419,7 @@ describe('F02 channel: protocol round trip (built client bundle ↔ built host h
     expect(calls[0]?.input).toEqual({
       taskId: 'task-2',
       operationId: 'undo-1',
-      expectedStatusVersion: 'ver1:3',
+      expectedStatusRevision: 3,
       appliedUpdateId: 'op-prev',
     })
   })

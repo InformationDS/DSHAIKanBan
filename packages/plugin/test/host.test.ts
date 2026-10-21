@@ -704,18 +704,17 @@ describe('host half: data layer bootstrap', () => {
     expect(getLastActivation()?.dataLayerReady).toBe(true)
     expect(getLastActivation()?.servicesObserved).toContain('storageDomain')
 
-    // Ready without the core adapter (P5b) = explicit placeholder, never an
-    // empty board and never a silent success.
+    // Ready with the real adapter but no workspaceRegistry in this fake: the
+    // read must say "project cannot be resolved", never an empty board, and a
+    // write for a task core does not know is not-found. Neither is a throw.
     const handler = handles[0]?.handler
     expect(handler).toBeDefined()
     if (handler === undefined) return
     const signal = AbortSignal.timeout(5_000)
     const read = await handler('board/read', { projectId: 'project-1' }, signal)
-    expect(read).toMatchObject({ ok: false, error: { code: 'read-failed' } })
-    expect(JSON.stringify(read)).toContain('not-wired-yet')
+    expect(read).toMatchObject({ ok: false, error: { code: 'unknown-project' } })
     const write = await handler('task/status.set', { taskId: 't1', next: 'done', operationId: 'op-1', expectedStatusVersion: 'ver1:0' }, signal)
-    expect(write).toMatchObject({ ok: false, error: { code: 'save-failed' } })
-    expect(JSON.stringify(write)).toContain('not-wired-yet')
+    expect(write).toMatchObject({ ok: false, error: { code: 'not-found' } })
   })
 
   it('keeps dataLayerReady false and exposes the reason when open() rejects', async () => {

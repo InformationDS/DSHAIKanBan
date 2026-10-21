@@ -53,9 +53,6 @@ import {
   type BoardSnapshotValue,
   type FormalStatusValueWire,
   type ReadBoardPayload,
-  type ReorderPayload,
-  type SetStatusPayload,
-  type UndoStatusPayload,
 } from '@aikanban/plugin-client/wire'
 
 /* ------------------------------------------------------------------ *
@@ -99,8 +96,47 @@ export interface HostWriteFailure {
 export type HostWriteOutcome = HostWriteSuccess | HostWriteFailure
 
 /**
+ * A `task/status.set` input after the handler decoded the baseline.
+ *
+ * The wire carries `expectedStatusVersion: 'ver1:<n>'`; the handler validates
+ * the grammar and **decodes it before the port**, so the data layer only ever
+ * sees a number. This type is host-internal: the wire contract is unchanged.
+ */
+export interface HostSetStatusInput {
+  readonly taskId: string
+  readonly next: string
+  readonly operationId: string
+  readonly reason?: string
+  readonly toIndex?: number
+  readonly expectedStatusRevision: number
+}
+
+/** A `task/reorder` input after the handler decoded the baseline. */
+export interface HostReorderInput {
+  readonly taskId: string
+  readonly status: string
+  readonly toIndex: number
+  readonly operationId: string
+  readonly expectedStatusRevision: number
+}
+
+/**
+ * A `task/status.undo` input after the handler decoded the baseline.
+ *
+ * The two identities stay distinct: `operationId` is **this undo**, and
+ * `appliedUpdateId` names the write being undone.
+ */
+export interface HostUndoInput {
+  readonly taskId: string
+  readonly operationId: string
+  readonly expectedStatusRevision: number
+  readonly appliedUpdateId: string
+}
+
+/**
  * What the host half needs from the data layer. The core adapter implements it;
- * the payloads arrive already validated.
+ * the payloads arrive already validated **and with the `ver1:` baseline decoded**
+ * (a malformed/missing baseline never reaches this port).
  *
  * `signal` is the HTTP request's abort signal (the browser half cancels a read
  * when the user leaves the board view). An adapter that cannot cancel may ignore
@@ -109,9 +145,9 @@ export type HostWriteOutcome = HostWriteSuccess | HostWriteFailure
  */
 export interface HostBoardPort {
   readBoard(input: ReadBoardPayload, signal?: AbortSignal): Promise<HostReadOutcome>
-  setStatus(input: SetStatusPayload, signal?: AbortSignal): Promise<HostWriteOutcome>
-  reorder(input: ReorderPayload, signal?: AbortSignal): Promise<HostWriteOutcome>
-  undoStatusChange(input: UndoStatusPayload, signal?: AbortSignal): Promise<HostWriteOutcome>
+  setStatus(input: HostSetStatusInput, signal?: AbortSignal): Promise<HostWriteOutcome>
+  reorder(input: HostReorderInput, signal?: AbortSignal): Promise<HostWriteOutcome>
+  undoStatusChange(input: HostUndoInput, signal?: AbortSignal): Promise<HostWriteOutcome>
 }
 
 /* ------------------------------------------------------------------ *
@@ -178,7 +214,9 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
         return failure('invalid-payload', 'task/status.set payload must carry a non-empty taskId, an operationId, a known status and a status baseline.')
       }
       // F5: the baseline grammar is a protocol rule, checked before the port.
-      if (parseStatusVersion(input.expectedStatusVersion) === null) {
+      // The port receives the DECODED revision (`ver1:<n>` never crosses it).
+      const expectedStatusRevision = parseStatusVersion(input.expectedStatusVersion)
+      if (expectedStatusRevision === null) {
         return failure('invalid-payload', INVALID_BASELINE_MESSAGE)
       }
       if (input.next === 'blocked' && !isBlockedReasonValid(input.reason)) {
@@ -187,7 +225,17 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
         return failure('invalid-reason', '进入「已阻塞」必须填写原因，正式状态未改变。')
       }
       try {
-        const outcome = await port.setStatus(input, signal)
+        const outcome = await port.setStatus(
+          {
+            taskId: input.taskId,
+            next: input.next,
+            operationId: input.operationId,
+            expectedStatusRevision,
+            ...(input.reason === undefined ? {} : { reason: input.reason }),
+            ...(input.toIndex === undefined ? {} : { toIndex: input.toIndex }),
+          },
+          signal,
+        )
         return outcome.ok
           ? success({ snapshot: outcome.snapshot, undoable: outcome.undoable })
           : failure(outcome.code, outcome.message, detailsOf(outcome.current))
@@ -201,11 +249,21 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
       if (input === null) {
         return failure('invalid-payload', 'task/reorder payload must carry taskId, operationId, a known status, a non-negative integer toIndex and a status baseline.')
       }
-      if (parseStatusVersion(input.expectedStatusVersion) === null) {
+      const expectedStatusRevision = parseStatusVersion(input.expectedStatusVersion)
+      if (expectedStatusRevision === null) {
         return failure('invalid-payload', INVALID_BASELINE_MESSAGE)
       }
       try {
-        const outcome = await port.reorder(input, signal)
+        const outcome = await port.reorder(
+          {
+            taskId: input.taskId,
+            status: input.status,
+            toIndex: input.toIndex,
+            operationId: input.operationId,
+            expectedStatusRevision,
+          },
+          signal,
+        )
         return outcome.ok
           ? success({ snapshot: outcome.snapshot, undoable: outcome.undoable })
           : failure(outcome.code, outcome.message, detailsOf(outcome.current))
@@ -219,11 +277,20 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
       if (input === null) {
         return failure('invalid-payload', 'task/status.undo payload must carry non-empty taskId, operationId (this undo), appliedUpdateId (the write being undone) and a status baseline.')
       }
-      if (parseStatusVersion(input.expectedStatusVersion) === null) {
+      const expectedStatusRevision = parseStatusVersion(input.expectedStatusVersion)
+      if (expectedStatusRevision === null) {
         return failure('invalid-payload', INVALID_BASELINE_MESSAGE)
       }
       try {
-        const outcome = await port.undoStatusChange(input, signal)
+        const outcome = await port.undoStatusChange(
+          {
+            taskId: input.taskId,
+            operationId: input.operationId,
+            expectedStatusRevision,
+            appliedUpdateId: input.appliedUpdateId,
+          },
+          signal,
+        )
         return outcome.ok
           ? success({ snapshot: outcome.snapshot, undoable: outcome.undoable })
           : failure(outcome.code, outcome.message, detailsOf(outcome.current))

@@ -3664,7 +3664,7 @@ dsh-app://app/assets/index-CN7NIWNw.js:190 Error: web boot: 1 entry did not acti
 @aikanban/dsh-aikanban: loading
 ```
 
-同一时段还有两份相同的 `crash-*-web-boot.log`（`15-18-11-831Z`），说明是稳定复现、不是偶发。
+同一时段另有一份相同的 `crash-*-web-boot.log`（`crash-2026-10-21T15-18-11-831Z-web-boot.log`），说明是稳定复现、不是偶发。
 
 profile 侧的痕迹（已由用户恢复；只读核对）：
 

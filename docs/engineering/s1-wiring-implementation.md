@@ -3622,3 +3622,350 @@ SELFTEST EXIT=0
 - 本剧本**由用户授权后才执行**，且执行会**重启 GUI、中断当前会话**。
 - 未获授权时：不写 `~/.dsh/profiles/desktop`（含 junction）、不运行非 `--dry-run` 的 `tools/sync-to-profile.mjs`、不执行 `dsh plugin … add`、不重启/结束 Electron、不 kill 端口进程。
 - 本档（P6b 准备）的自证范围到此为止：新增 [`tools/browser-check.js`](../../tools/browser-check.js)（已在 Node stub 环境跑过 10 组用例，覆盖 happy path / 未安装 / 合法空集 / 畸形快照 / `unavailable` 重试 / token 脱敏 / boot `row.rev` / 信封负例 / HTTP 500 / 正文列标签假阳性），追加本节与 ADR-005「尚未验证」收窄；**不含任何安装动作**。
+
+---
+
+## 16. P6c：真实桌面进程里 client 半「卡在 loading」的诊断与修复（仍未重启验证）
+
+> **本档边界**：只改代码/测试/工具 + 盘外沙盒门禁 + 只读诊断；**没有**向 `~/.dsh/profiles/desktop` 写入任何内容、**没有**重启或结束 Electron、**没有**执行安装。真实桌面里的 boot 结果只能由用户按 §16.8 的脚本安装并重启后得出；在那之前，§16.4 的根因是**判断**而不是已复现的结论。
+
+### 16.1 本档结论速览
+
+| 问题 | 结论 |
+| --- | --- |
+| P6b 手工安装后发生了什么 | 桌面应用启动失败并弹「应用无法启动或已意外停止」；崩溃报告 `source: web-boot` 写 `web boot: 1 entry did not activate` / `@aikanban/dsh-aikanban: loading`，即**页面侧 boot 审计**判我们这一行没有激活，整个应用因此 fatal。 |
+| 失败发生在哪一侧 | **浏览器半（client 半）**，不是宿主半：宿主半的加载链在隔离探针里 5/5 通过（§16.6 ⑦）；崩溃报告里没有 import 失败的证据，也没有 `pending (waiting for service…)` 分支。 |
+| 根因判断 | 我们的 `apply()` 用**直接** `ctx.slots.register(...)` 抢在槽位声明之前注册；DSH 0.2.1 的槽位服务在声明缺失时直接抛 `slot "…" is not declared`，官方与第三方可用插件全部改为 `ctx.slots.inject(ownerKey, () => ctx.slots.register(...))`（声明感知）来消除这个 race。`dsh.client.inject` 此前为 `[]`，又少了两条官方同款「模块到达顺序」边。 |
+| 本档改了什么 | ① `packages/plugin/package.json` 的 `dsh.client.inject` 补齐 renderer+sidebar；② client 半座位注册改为逐座位 `slots.inject`（无该 API 时回退直接 register）；③ `apply()` 入口 `console.info` + 整体 try/catch，失败 `console.error` 后 **rethrow**；④ 新增可重复安装脚本 [`tools/install-to-profile.mjs`](../../tools/install-to-profile.mjs)（含 PyYAML 断言与 `--restore` 一键回滚）。 |
+| 门禁 | 盘外沙盒（`C:\Users\InformationDS\aikanban-p6c` @ `e65eee6`）install/typecheck/build/用例 **257**/verify **11/11**/probe **5/5**/roundtrip **17/17**/check_docs 全绿，原始输出见 §16.6。 |
+| 仍未验证 | 真实 desktop 进程的 boot 与面板渲染（不得在本档重启）；「LOADING 的确切触发链」未在浏览器里复现，只能依据 0.2.1 内的判定代码与官方/第三方插件写法作判断。 |
+
+### 16.2 失败现场（原始证据，不再重新论证）
+
+崩溃报告（本机，时间 UTC `2026-10-21T15:17:51Z`，即本地 2026-10-22 02:17）：
+
+`C:\Users\InformationDS\AppData\Roaming\@deepseek-ai\dsh-desktop\logs\crash-2026-10-21T15-17-51-292Z-web-boot.log`
+
+```text
+time: 2026-10-21T15:17:51.292Z
+source: web-boot
+phase: running
+app: @deepseek-ai/dsh-desktop 0.2.1-rc.2
+electron: 44.7.0
+node: 24.21.0
+
+--- error ---
+Error: web boot: 1 entry did not activate
+@aikanban/dsh-aikanban: loading
+    at file:///D:/dsh/resources/app.asar/lib/main.js:12437:15
+
+--- renderer console (error level, oldest first) ---
+dsh-app://app/assets/index-CN7NIWNw.js:190 Error: web boot: 1 entry did not activate
+@aikanban/dsh-aikanban: loading
+```
+
+同一时段还有两份相同的 `crash-*-web-boot.log`（`15-18-11-831Z`），说明是稳定复现、不是偶发。
+
+profile 侧的痕迹（已由用户恢复；只读核对）：
+
+| 位置 | 观察 |
+| --- | --- |
+| `profiles/desktop/cordis.patch.yml` | 已还原为 8 条用户配置覆盖，**无** aikanban；旁边留着应用写出的 `cordis.patch.yml.bak-1792595895487`，其内容**恰好是**正确的 `- insert: / - id: aikanban / name: "@aikanban/dsh-aikanban"` 形状 → 说明 P6b 的 patch 形状没有错，失败不在「条目没被组合」。 |
+| `profiles/desktop/package.json` | 已还原为 10 个官方 bundle，**无** aikanban。 |
+| `profiles/desktop/node_modules/@aikanban`、`profiles/node_modules/@aikanban` | 都不存在（安装点已删）。 |
+
+**用户侧重要事实（本档前已实测）**：应用崩溃弹窗里的「禁用第三方插件、备份 profile patch 并重启」按钮，除了禁用插件，还会把 profile 的 `dsh.profile.bundles` **从 10 个削减到 2 个**。因此「点按钮」之后必须用备份恢复 `package.json`，不能只删 aikanban 条目（§16.8 给出一键恢复）。
+
+### 16.3 诊断依据（全部从本机 0.2.1-rc.2 的 `app.asar` / 已安装 web 插件里读到）
+
+1. **`loading` 是页面侧 boot 审计的 fiber 状态，不是 import 失败、不是缺服务。**
+   `D:\dsh\resources\app.asar` 内 `dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/index-CN7NIWNw.js`（运行中的 shell）里，状态表是
+   `{PENDING:0:"pending", LOADING:1:"loading", ACTIVE:2:"active", FAILED:3:"failed", DISPOSED:4:"disposed", UNLOADING:5:"unloading"}`；
+   审计函数在 `await loader.await()` 之后遍历 `ctx.loader.entries()`：`fiber === undefined` 打印 `import failed`（并带 `modules.importError`），`pending` 分支打印 `pending (waiting for services: …)`，其余非 active 打印 `${name}: ${state}`，最后 `throw new Error("web boot: N entries did not activate\n" + …)`。报告里的 `@aikanban/dsh-aikanban: loading` 正是第三分支 → **模块已 import、依赖服务不缺失，但 fiber 在审计时仍是 LOADING**。
+2. **LOADING 的 cordis 语义**：`app.asar` 内 `cordis/src/fiber.ts` 的 `FiberState` 文档写明：`PENDING` 等必需服务；`LOADING` **插件回调正在运行**；`ACTIVE` 已加载；`FAILED` 回调或配置抛错；`UNLOADING` 正在跑 disposer。即审计看的是「激活过程还没收口」，不是「导入坏了」。
+3. **槽位注册的权威 API 是 `ctx.slots.inject(ownerKey, callback)`，不是直接 register。**
+   `app.asar` 内 `dsh-cordis-client-runner/lib/client.js` 的 Inspect 声明（0.2.1）：
+   ```text
+   inject(key: keyof SlotMap & string, callback: () => SlotInjectionEffect): () => void
+   ```
+   > Install an effect for each declaration lifetime of a slot. The callback runs
+   > synchronously when the declaration already exists; otherwise it runs inside
+   > the declaring `register()` call after the declaration is committed. Collapse
+   > disposes the effect and a later declaration runs it again. …
+   > The controller belongs to the caller's fiber, so plugin unload cancels a
+   > pending wait and removes any active contribution.
+
+   同一 Inspect 数据里，`main` 的 `declaredBy` 是 *"an entry in 'root' (client-ui-layout)"*，`sidebar.panellist` 的 `declaredBy` 是 *"an entry in 'sidebar' (client-ui-sidebar)"*，两者的官方示例分别就是
+   `ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: … }, …))` 与
+   `ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: … }, …))`。
+   直接注册的失败方式也在同一条链上：`app.asar` 内 shell 的 SlotCore 实现里，`register()` 对未声明槽位直接抛
+   `slot "X" is not declared (a parent entry's children table must declare it)`。
+4. **官方 bundle 的写法就是声明感知**：`app.asar` 内 `@deepseek-ai/dsh-client-ui-brand-official@0.2.1-rc.2` 的 `lib/client.js` 用
+   `ctx.slots.inject('sidebar.brand.mark', () => ctx.slots.inject('sidebar.brand.name', function* () { yield ctx.slots.register(…) }))`；其 `package.json` 的 `dsh.client.inject` 是
+   `["@deepseek-ai/dsh-client-ui-renderer", "@deepseek-ai/dsh-client-ui-sidebar"]`（我们 P6b 是 `[]`）。
+5. **`dsh.client.inject` 只排序模块到达，不是 cordis 服务注入**：`app.asar` 内 `dsh-client-modules` 把 `dsh.client.inject` 读成图行的 `inject` 字段；client 侧 `arriveGraphRow()` 先到达 `row.external`、再到达 `row.inject` 里的包、最后才到达本行。也就是说它**不会**让一次非法注册变合法，但会改变「谁先 materialize」的顺序。
+6. **第三方可运行插件的旁证**（本机 `profiles/web`，这些插件在该 profile 下可用）：`@dsh-external/dsh-visualize` 的 `src/client/index.tsx` 注释原话是
+   > "Waiting on each hole's declaration mirrors the official registrants: entry application order is loader-driven, and a direct register racing the declaration fails boot."
+
+   它同样用 `ctx.slots.inject(...)`；`@omdsh-dev/dsh-genui` 的 `dsh.client.inject` 也是 `[]` 但同样用 `slots.inject` —— 进一步支持「决定成败的是声明感知注册，而不是 `inject` 列表本身」。
+
+### 16.4 根因判断（标注为判断，不是本档已复现的结论）
+
+把 16.2/16.3 串起来：
+
+- 失败发生在**我们的 client entry 的激活**，模块已到达、`slots` 服务也不缺（否则会是 `import failed` / `pending` 分支）；
+- P6b 的 client 半在 `apply()` 里**同步、直接**调用 `ctx.slots.register(...)`，两个座位都在 `apply()` 执行那一刻注册，而两个座位的声明分别来自 `client-ui-layout`（`main`）与 `client-ui-sidebar`（`sidebar.panellist`），client entry 的 application 顺序由 loader 驱动、不由我们控制；
+- 0.2.1 的槽位服务对「声明尚未提交时的直接注册」是拒绝的（`slot … is not declared`）；同时 `dsh.client.inject` 又是 `[]`，连官方同款的模块到达顺序边也没有；
+- **判断**：P6b 的失败是**声明竞态**——我们的座位注册与槽位声明之间没有顺序保证，fiber 在这次 boot 里没有收口到 ACTIVE，页面侧 boot 审计因此把整棵 client 树判 fatal。修复方向是把注册改成声明感知（`slots.inject`），并补齐官方同款的 `dsh.client.inject` 边。
+
+**必须诚实标注的不一致**：按 cordis 的 `FiberState` 语义，`apply()` 里同步抛出本应落成 `FAILED` 而不是 `LOADING`；我们拿到的是 `LOADING`。这说明该轮 boot 里我们看到的不是「apply 同步抛错」这一条路径，而更可能是注册/effect 在声明竞态下被挂起/重入后未收口。**这条具体触发链没有在本档复现**（复现必须重启真实 GUI），所以 §16.4 是判断；`slots.inject` 的修复不依赖这个判断成立——它同时消除了「直接注册被拒绝」与「注册先于声明」两类问题，是官方与第三方都在用的形状。
+
+### 16.5 修改点
+
+| 文件 | 修改 |
+| --- | --- |
+| `packages/plugin/package.json` | `dsh.client.inject`：`[]` → `["@deepseek-ai/dsh-client-ui-renderer", "@deepseek-ai/dsh-client-ui-sidebar"]`（照 0.2.1 官方 `dsh-client-ui-brand-official` 的写法）。注释与文档明确：它只排序 boot 图模块到达，**不是** cordis 服务注入。 |
+| `packages/plugin-client/src/index.tsx` | ① 新增 `SlotsLike.inject?(ownerKey, callback)` 与 `SlotInjectionEffect`/`SlotDisposer` 类型（结构类型，不引入 `@deepseek-ai/dsh-client-ui-slots` 依赖）；② 两个座位抽成 `SLOT_SEATS`（`ownerKey` = 座位自己的槽位名，来自 0.2.1 Inspect 声明与官方示例，不是臆造）；③ `registerSlots()` 逐座位执行 `ctx.slots.inject(ownerKey, () => ctx.slots.register(...))`，`typeof ctx.slots.inject === 'function'` 为假时回退直接 register；④ `apply()` 入口 `console.info('[aikanban] client apply entered')`，整体 try/catch，失败 `console.error('[aikanban] client apply failed', error)` 后 **rethrow**。 |
+| `packages/plugin/src/client.tsx` | 类型再导出补 `SlotDisposer` / `SlotInjectionEffect`。 |
+| `packages/plugin/README.md` | 字段表补 `dsh.client.inject` 一行（写清它只排序模块到达、不是服务注入）。 |
+| `packages/plugin-client/test/slots.test.ts` | 7 → 11 用例（+4）：inject 路径逐座位等待声明；无 inject 时回退直接 register；inject 的 disposer 级联释放；`apply()` 失败**记录并 rethrow**。 |
+| `packages/plugin/test/client-bundle.test.ts` | 7 → 8 用例（+1）：**构建产物**在带 `slots.inject` 的 shell 上走声明感知路径（fake 增加 `withInject`）。 |
+| `tools/install-to-profile.mjs` | 新增（不执行）：备份四清单 → 复制载荷 → insert 形状补丁 + PyYAML 断言 → `profiles/node_modules/@aikanban` 锚点 junction；`--dry-run` 只读；`--restore <备份目录>` 一键回滚。 |
+
+**为什么 rethrow 而不是返回空 disposer**：吞掉异常会得到一个 `ACTIVE` 但没有面板的 fiber —— boot 审计不会点名，用户只看到「图标/面板没了」的静默失败；rethrow 让 entry 以 failed 身份被审计点名，同时 `console.error` 的堆栈会进入桌面崩溃报告的 `renderer console (error level)` 段（§16.2 已证明该段会被采集），下一次失败可直接定位。
+
+**为什么用两次 `inject` 而不是一次包住两个座位**：`inject` 的 `ownerKey` 是「要依赖其声明生命周期的槽位」，两个座位的声明来自两个不同包（`client-ui-layout` / `client-ui-sidebar`），必须各自等待各自的声明；官方 brand-official 也是逐座位嵌套 `inject`，Inspect 示例对每个槽位各给一条 `inject(...)`。
+
+### 16.6 本档门禁原始输出（盘外沙盒 `C:\Users\InformationDS\aikanban-p6c` @ `e65eee6`）
+
+工作树为 `git worktree add --detach C:\Users\InformationDS\aikanban-p6c e65eee6`（盘外、非同步盘），依赖与构建全部在沙盒内完成；主仓库工作树不构建、不写 `node_modules`。运行命令：
+
+```powershell
+$NODE = "C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
+$PNPM = "C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\pnpm\bin\pnpm.mjs"
+Set-Location C:\Users\InformationDS\aikanban-p6c
+& $NODE $PNPM install --frozen-lockfile      # EXIT 0
+& $NODE $PNPM run typecheck                  # EXIT 0
+& $NODE $PNPM run build                      # EXIT 0
+& $NODE $PNPM -r --if-present run test       # EXIT 0
+& $NODE $PNPM run verify                     # EXIT 0
+& $NODE tools\probe-host.mjs                 # EXIT 0
+& $NODE tools\verify-rpc-roundtrip.mjs       # EXIT 0
+python docs\tools\check_docs.py              # EXIT 0
+```
+
+**① install / typecheck / build**
+
+```text
+Scope: all 4 workspace projects
+✓ Lockfile passes supply-chain policies (verified 1d ago)
+Lockfile is up to date, resolution step is skipped
+Packages: +89
+Progress: resolved 0, reused 89, downloaded 0, added 89, done
+Done in 1.7s using pnpm v11.7.0
+EXITCODE=0
+
+$ tsc -b
+EXITCODE=0
+
+$ tsc -b && pnpm -C packages/plugin run build:bundle
+ℹ [@aikanban/dsh-aikanban] lib\index.js      182.58 kB │ gzip: 45.26 kB
+✔ [@aikanban/dsh-aikanban] Build complete in 129ms
+ℹ [@aikanban/dsh-aikanban/client] lib\client.js  34.85 kB │ gzip: 10.50 kB
+✔ [@aikanban/dsh-aikanban/client] Build complete in 45ms
+EXITCODE=0
+```
+
+**② 用例：257 = core 66 / plugin 107 / plugin-client 84**
+
+```text
+packages/plugin-client test:  ✓ test/model.test.ts (20 tests)
+packages/plugin-client test:  ✓ test/wire.test.ts (12 tests)
+packages/plugin-client test:  ✓ test/controller.test.ts (35 tests)
+packages/plugin-client test:  ✓ test/board.test.ts (6 tests)
+packages/plugin-client test:  ✓ test/slots.test.ts (11 tests)
+packages/plugin-client test:  Test Files  5 passed (5)
+packages/plugin-client test:       Tests  84 passed (84)
+
+packages/core test:  Test Files  11 passed (11)
+packages/core test:       Tests  66 passed (66)
+
+packages/plugin test:  ✓ test/client-bundle.test.ts (8 tests)
+packages/plugin test:  ✓ test/channel-roundtrip.test.ts (19 tests)
+packages/plugin test:  ✓ test/board-adapter.test.ts (46 tests)
+packages/plugin test:  ✓ test/host.test.ts (34 tests)
+packages/plugin test:  Test Files  4 passed (4)
+packages/plugin test:       Tests  107 passed (107)
+
+EXITCODE=0
+```
+
+**用例数解释**：基线 252（66/106/80）→ **257**（66/107/84），**+5 全部是新增断言，没有删除或改写任何既有用例**：`slots.test.ts` 7→11（+4，见 16.5 的①③④），`client-bundle.test.ts` 7→8（+1，构建产物走 inject 路径）。
+
+**③ verify-host-import（11/11）**
+
+```text
+Host-half import verification — packages/plugin
+
+  PASS  package.json exists                                   packages\plugin\package.json
+  PASS  manifest declares type: module                        module
+  PASS  manifest declares a main entry                        ./lib/index.js
+  PASS  host entry is built                                   packages\plugin\lib\index.js (178.3 KB)
+  PASS  host entry is ESM, not a browser-half bundle          no __ModuleLoader__ banner; ESM statements present
+  PASS  import graph is host-resolvable (no bare specifiers)  1 module(s), only node: builtins
+  PASS  module graph is fully present on disk                 1 file(s) reachable
+  PASS  exports apply() for the loader to call                function apply(ctx)
+  PASS  exports an inject array (cordis activation gate)      []
+  PASS  apply() activates against a service-less context      activation=mviauhhr-1 pid=1500
+  PASS  diagnostic tool is exported and callable              aikanban_status → [aikanban] active (plugin @aikanban/dsh-aikanban@0.0.0, activation mviauhhr-1, pid 1500, services seen: none)
+
+OK
+EXITCODE=0
+```
+
+**④ probe-host：5/5**
+
+```text
+[1/5] composing the probe profile tree (--dump-config)
+  PASS  # == …\.probe-home-scaffold\profiles\probe\cordis.patch.yml | - id: aikanban
+[2/5] resolving and activating the host half from the profile directory
+  PASS  packages/plugin/package.json
+        [aikanban] active (host half) plugin=@aikanban/dsh-aikanban version=0.0.0 activation=mviaui0j-1
+[3/5] booting the probe host; reading its window.__DSH_BOOT__ graph
+  PASS  browser row published: /plugins/??@aikanban/dsh-aikanban/client.js&rev=cd647bd751aca5b6-44
+        served 200 33015B: window.__ModuleLoader__.load({id:`@aikanban/dsh-aikanban`,factory:e=>{var t={exp…
+[4/5] waiting for the activation signal from inside the host
+  PASS  the booting host published aikanban:activation:
+        activation=mviaumtq-1 pid=11244 tools=false systemPrompt=false
+[5/5] waiting for the /aikanban board channel registration from inside the host
+  PASS  the booting host registered the board channel:
+        channel=/aikanban registered=true path=compat reason=null dataLayerReady=true
+
+PROBE OK — the bundle composed, resolved from the profile, activated, and published a browser row.
+EXITCODE=0
+```
+
+**⑤ verify-rpc-roundtrip：17/17**
+
+```text
+  assertions: 17/17 passed (required groups failed: 0)
+  exit code:  0 (all assertions passed)
+EXITCODE=0
+```
+
+（该次运行同时观察到 `aikanban:board-channel channel=/aikanban registered=true path=compat`，`dataLayerReady=true`；端口由系统分配，不写死。）
+
+**⑥ check_docs：PASS（59 md）**
+
+```text
+PASS: 59 Markdown files; 20 PRDs; 48 common rules; 143 local rules.
+PASS: unchanged baseline; 422 FR source units; 16 UX rules; 106 original ATs + 27 additions, all fully indexed by section 6.
+PASS: local links; unique IDs; acyclic dependencies; no later-stage dependencies; root documentation boundary.
+PASS: FR unit counts and owners agree between traceability.md and requirements.csv; catalog stage/dependencies/FR sources agree with both index tables.
+Scope: document integrity only. Application and product acceptance have not run.
+EXITCODE=0
+```
+
+> 说明：以上原始输出取自 `e65eee6`（代码+测试+工具）。最终提交只在此基础上再追加本节与 `tools/install-to-profile.mjs` 的一处打印修复（`oldEntries/newEntries` 字段名），不触碰产品代码与测试；该最终提交上复跑六项门禁结果相同（见交付报告）。
+
+### 16.7 安装脚本自测（**未安装**；只对真实 profile 做只读 `--dry-run`）
+
+本档新增 [`tools/install-to-profile.mjs`](../../tools/install-to-profile.mjs)，一次运行完成：备份四清单（`package.json`、`cordis.patch.yml`、`cordis.yml`、`pnpm-workspace.yaml`）→ 复制载荷（`package.json`、`README.md`、`lib`）→ 以**权威 insert 形状**追加补丁并用 PyYAML 断言 → 建 `profiles/node_modules/@aikanban/dsh-aikanban` 锚点 junction。它不重启应用、不改 `dsh.profile.bundles`、不改 profile `package.json`。
+
+**补丁形状的断言**（脚本拒绝错形状，不只靠人眼）：
+
+```yaml
+- insert:
+    - id: aikanban
+      name: "@aikanban/dsh-aikanban"
+```
+
+PyYAML 断言内容：旧层是一条 list、新层 = 旧层 + 恰好这一条 insert、`entries` 增加数与预期一致（首次 1、重复运行 0）、全文件不存在顶层 `- id: aikanban`（这种形状是「给已存在插件打补丁」，没有同名 entry 时被 loader 静默忽略）。
+
+**自测（临时 fixture home，全部写在 `%TEMP%` 下；真实 profile 未被写入）**：
+
+| # | 场景 | 结果 |
+| --- | --- | --- |
+| F1 | 空 profile（非空 patch 层）全新安装 | `EXIT 0`；`pyyaml {"oldEntries":1,"newEntries":2,"delta":1}`；四清单备份 + `install-record.json`；载荷与 junction 就位；层尾出现上述 insert 块 |
+| F2 | 同一天重复安装 | `EXIT 0`；`delta 0` 且 patch 文本逐字不变；第二次备份自动落到 `…-20261022-2`，**不覆盖**第一次备份 |
+| F3 | 补丁层是错形状（顶层 `- id: aikanban`） | `EXIT 7`，打印「该形状会被静默忽略」，patch 未被修改 |
+| F4 | `--dry-run`（已安装状态） | `EXIT 0`；备份根未创建、profile 文件哈希不变 |
+| F5 | `--restore <备份1>` | `EXIT 0`；patch 与原始逐字相等；载荷目录与 junction 都删除且 junction 目标未被误删；备份保留 |
+| F6 | `--restore` 指向不完整目录 | `EXIT 9`（拒绝半套恢复） |
+| F7 | patch 层为空流序列 `[]` | `EXIT 0`；`[]` 被正确替换成 insert 块，`0 → 1` |
+| F8 | profile 目录不存在 | `EXIT 3`（拒绝隐式创建 profile） |
+
+**对真实 `profiles/desktop` 的只读预演**（本档唯一一次「接近安装」的动作，`--dry-run`，不写任何文件）：
+
+```text
+  harness home     C:\Users\InformationDS\.dsh   (from $DSH_HOME)
+  profile          desktop
+  profile dir      C:\Users\InformationDS\.dsh\profiles\desktop
+  install dir      C:\Users\InformationDS\.dsh\profiles\desktop\node_modules\@aikanban\dsh-aikanban
+  anchor junction  C:\Users\InformationDS\.dsh\profiles\node_modules\@aikanban\dsh-aikanban
+  patch layer      C:\Users\InformationDS\.dsh\profiles\desktop\cordis.patch.yml
+  backup dir       C:\Users\InformationDS\aikanban-profile-backup-20261022-2
+  mode             install (dry run)
+…
+  patch layer will gain
+  - insert:
+      - id: aikanban
+        name: "@aikanban/dsh-aikanban"
+…
+dry run: nothing was written.
+DRYRUN_EXIT=0
+```
+
+只读校验：四个清单 SHA256 前后一致；profile 目录条目一致（`node_modules,cordis.patch.yml,cordis.patch.yml.bak-1792595895487,cordis.yml,package.json,pnpm-workspace.yaml`）；`C:\Users\InformationDS` 下备份目录集合不变（只有用户已有的 `aikanban-profile-backup-20261022`）；两个安装点仍然不存在。
+
+### 16.8 安装 / 回滚 / 用户侧恢复须知
+
+**安装（需要用户执行；本档未执行）**：
+
+```powershell
+$NODE = "C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
+Set-Location D:\BaiduSyncdisk\dsh-plugin\AIKanBan
+& $NODE tools\install-to-profile.mjs --dry-run     # 只读预演；确认解析到的 profile / 备份目录
+& $NODE tools\install-to-profile.mjs               # 真正写入（备份 → 载荷 → patch → PyYAML 断言 → junction）
+```
+
+然后**由用户关闭并重启桌面应用**（安装/回滚都只有重启才会重新组合层；本档不重启、不结束 Electron）。重启后先在页面 Console 跑 [`tools/browser-check.js`](../../tools/browser-check.js)：page 侧 boot 审计不应再点名 `@aikanban/dsh-aikanban`，`B1`/`B4` 应 PASS。
+
+**回滚（一键）**：
+
+```powershell
+& $NODE tools\install-to-profile.mjs --restore "C:\Users\InformationDS\aikanban-profile-backup-<日期>"
+```
+
+`--restore` 会把备份里的四个清单覆盖回 profile（这正是应用「禁用第三方插件」按钮把 bundles 从 10 削减到 2 之后的恢复点），并删除 `<profile>/node_modules/@aikanban/dsh-aikanban` 与 `profiles/node_modules/@aikanban/dsh-aikanban`（junction 只删链接、不碰目标）。之后同样需要重启。
+
+**若用户已经点了崩溃弹窗的「禁用第三方插件、备份 profile patch 并重启」**：
+
+1. 该按钮已把 `cordis.patch.yml` 备份成 `cordis.patch.yml.bak-<ts>` 并把 `package.json` 的 bundles 削减为 2 —— 不要手工逐条拼回去；
+2. 直接跑上面的 `--restore <本脚本打印的备份目录>`（脚本安装时打印的 `rollback directory` 就是它）；
+3. 重启应用；再按 §15.1 的三处只读检查确认 aikanban 已消失。
+
+### 16.9 仍未验证 / 为什么这次更可能成功 / 仍可能失败的点
+
+**仍未验证（不得写成结论）**：
+
+1. 真实 desktop 进程里的 boot 结果（本档不重启，无法取证）；
+2. 面板真正挂载到 `main` 与 `sidebar.panellist`（`B4` 只能由页面内 `browser-check.js` 给出）；
+3. 「LOADING 的确切触发链」没有在浏览器里复现；§16.4 是依据 0.2.1 判定代码与官方/第三方写法的判断；
+4. 无浏览器环境下 `slots.inject` 的真实调用（单元测试的 fake 只验证我们的调用形状与回退）。
+
+**这次为什么更可能成功**：
+
+1. 注册形状与**所有**已证实可运行的注册者一致：官方 `dsh-client-ui-brand-official@0.2.1-rc.2` 与第三方 `dsh-visualize` / `dsh-genui` 都用 `ctx.slots.inject(ownerKey, () => ctx.slots.register(...))`；本档逐座位使用，`ownerKey`/注册选项直接取自 0.2.1 的 Inspect 声明与官方示例（`main` 的 keyed 形式、`sidebar.panellist` 的 list 形式）；
+2. 直接注册的失败形态在 0.2.1 的实现里是明确抛错（`slot "…" is not declared`），声明感知 API 把「注册先于声明」变成「等声明提交后再注册」，这正是 P6b 最可能的失败点；
+3. `dsh.client.inject` 补成官方同款两条边，减少「我们的 bundle 先于声明者 materialize」的概率；
+4. 即使再次失败，`apply()` 的 `console.error` + rethrow 会让崩溃报告的 `renderer console (error level)` 段直接出现 `[aikanban] client apply failed` + 堆栈，下一轮不用再靠猜。
+
+**仍可能失败的点（按可能性排序）**：
+
+1. §16.4 的判断若不完整（例如真实触发链还牵涉槽位服务自身的 provider 生命周期），`slots.inject` 只解决声明竞态，不保证 0.2.1 桌面里的所有竞态；
+2. `dsh.client.inject` 列表按用户指示照抄 brand-official（renderer + sidebar）；但按 0.2.1 Inspect 数据，`main` 的声明者其实是 **`@deepseek-ai/dsh-client-ui-layout`**。若下一轮仍出现「main 未声明时注册」，**下一个具体杠杆是把 `@deepseek-ai/dsh-client-ui-layout` 加进该列表**（该列表只影响模块到达顺序，加包是安全的，但仍需真实 boot 验证）；
+3. 桌面 0.2.1 的 `slots.inject` 行为可能与 Inspect 声明有版本内差异（`dsh-client-ui-brand-official@0.2.1-rc.2` 的 `client.js` 已在用同一 API，风险较低）；
+4. 与本次失败无关的其它启动问题可能被这次修复掩盖（P6b 的报告只有这 1 条 entry 失败，可能性低）；
+5. 安装是「复制载荷 + junction 锚点」而不是 `dsh plugin add`（desktop 被 Electron 独占、CLI 拒绝）；若宿主解析路径与探针锚点不同，可能表现为「bundle 行存在但宿主半未激活」，届时看 `browser-check.js` 的 B1 与宿主日志即可区分。
+

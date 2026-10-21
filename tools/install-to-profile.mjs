@@ -313,7 +313,7 @@ if problems:
     for problem in problems:
         print('  - ' + problem, file=sys.stderr)
     sys.exit(1)
-print(json.dumps({'old': len(old), 'new': len(new), 'delta': len(new) - len(old)}))
+print(json.dumps({'oldEntries': len(old), 'newEntries': len(new), 'delta': len(new) - len(old)}))
 `
   const result = spawnSync(
     python.command,
@@ -475,7 +475,7 @@ const home = resolveDshHome(typeof options.home === 'string' ? options.home : un
 const profileDir = join(home, 'profiles', profileName)
 const installDir = join(profileDir, 'node_modules', '@aikanban', 'dsh-aikanban')
 const anchorPath = join(home, 'profiles', 'node_modules', '@aikanban', 'dsh-aikanban')
-const backupRoot = resolve(typeof options.backup-root === 'string' ? options.backup-root : homedir())
+const backupRoot = resolve(typeof options['backup-root'] === 'string' ? options['backup-root'] : homedir())
 const dateSuffix = typeof options.date === 'string' ? options.date : localDateSuffix(new Date())
 if (!/^\d{8}$/.test(dateSuffix)) {
   process.stderr.write(`install-to-profile: --date must be yyyyMMdd, got ${JSON.stringify(dateSuffix)}\n`)

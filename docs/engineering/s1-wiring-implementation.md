@@ -3922,12 +3922,16 @@ DRYRUN_EXIT=0
 
 **安装（需要用户执行；本档未执行）**：
 
+必须从**「已构建、且就是要安装的那一版」的 checkout** 运行 —— 脚本会把该 checkout 的 `packages/plugin` 载荷复制进 profile；主仓库在同步盘上不装依赖、本档也没在其中构建。本档的盘外沙盒 `C:\Users\InformationDS\aikanban-p6c` 就是 @ `b800767` 且已 build 的 checkout：
+
 ```powershell
 $NODE = "C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
-Set-Location D:\BaiduSyncdisk\dsh-plugin\AIKanBan
-& $NODE tools\install-to-profile.mjs --dry-run     # 只读预演；确认解析到的 profile / 备份目录
-& $NODE tools\install-to-profile.mjs               # 真正写入（备份 → 载荷 → patch → PyYAML 断言 → junction）
+Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；主仓库未构建，直接跑会 exit 4
+& $NODE tools\install-to-profile.mjs --dry-run       # 只读预演：确认解析到的 profile / 安装点 / 备份目录
+& $NODE tools\install-to-profile.mjs                 # 真正写入（备份 → 载荷 → patch → PyYAML 断言 → junction）
 ```
+
+脚本会打印 `rollback directory: …`，**请保留该路径**——它就是下面一键回滚要用的备份目录。
 
 然后**由用户关闭并重启桌面应用**（安装/回滚都只有重启才会重新组合层；本档不重启、不结束 Electron）。重启后先在页面 Console 跑 [`tools/browser-check.js`](../../tools/browser-check.js)：page 侧 boot 审计不应再点名 `@aikanban/dsh-aikanban`，`B1`/`B4` 应 PASS。
 
@@ -3938,6 +3942,8 @@ Set-Location D:\BaiduSyncdisk\dsh-plugin\AIKanBan
 ```
 
 `--restore` 会把备份里的四个清单覆盖回 profile（这正是应用「禁用第三方插件」按钮把 bundles 从 10 削减到 2 之后的恢复点），并删除 `<profile>/node_modules/@aikanban/dsh-aikanban` 与 `profiles/node_modules/@aikanban/dsh-aikanban`（junction 只删链接、不碰目标）。之后同样需要重启。
+
+> 备份目录的选取：脚本默认写到 `%USERPROFILE%\aikanban-profile-backup-<yyyyMMdd>`；若该目录当天已存在（本机现在就已有用户手工恢复用的 `C:\Users\InformationDS\aikanban-profile-backup-20261022`），会顺延成 `…-2`、`…-3`，**不覆盖旧备份**。以安装输出里打印的 `rollback directory` 为准；若输出丢了，也可以直接对那份手工备份目录执行 `--restore`（本档只读核对过：它的 `package.json` 是 10 bundle 原版、`cordis.patch.yml` 是 8 条原版）。
 
 **若用户已经点了崩溃弹窗的「禁用第三方插件、备份 profile patch 并重启」**：
 

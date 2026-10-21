@@ -2865,3 +2865,373 @@ Scope: document integrity only. Application and product acceptance have not run.
 ### 13.9 记录追加后的文档门禁
 
 本记录只改 `docs/engineering/s1-wiring-implementation.md`（未新增 md 文件数）；追加后复跑 `python docs/tools/check_docs.py`：`PASS: 59 Markdown files; 20 PRDs; 48 common rules; 143 local rules.`（四项 PASS + `EXIT=0`；文档完整性，不涉及应用/产品验收）。
+
+## 14. P6a：真实 HTTP 上的 RPC 往返证据（2026-10-22，提交 `75726cf` + 本记录提交）
+
+> **本档任务书裁定的硬边界**：不改 `packages/*/src` 的任何业务逻辑；唯一新增代码是 `tools/verify-rpc-roundtrip.mjs`（验证脚本），并**复用** `packages/plugin/src/probe/` 的探针设施（探针不是产品代码）。不装 `desktop` profile、不重启 GUI、不写 `~/.dsh/profiles/desktop`。端点仍 **5 个**、失败码仍 **8 个**、契约一律不动。AT 全部「待执行」、`acceptance.csv` 未动；**本档证据不是 AT 验收**。**ADR-005 状态未改**（仍「提议」），只在其后追加「证据（2026-10-22）」节。
+
+### 14.1 本档补的是哪一层证据
+
+§13.7/§13.8 与 [ADR-005](decisions/ADR-005-浏览器半与宿主半的数据通道.md)「尚未验证」把缺口写得很明确：已有的是**进程内协议往返**（构建后的 client bundle ↔ 构建后的 host handler）与**探针的宿主内注册观察**，缺的是**真实 HTTP carrier 上的往返**。
+
+本档不写 profile、不重启 GUI，而是复用 `tools/probe-host.mjs` 的**隔离宿主**形态：它是真实 HTTP 服务（`--port 0` 由系统分配端口，不写死），有自己的 `DSH_HOME`，不碰用户正在使用的 GUI。区别只在于：探针只看宿主日志，本档**真的向它发 HTTP 请求**。
+
+### 14.2 新增工具与做法（可重复运行）
+
+新增 [tools/verify-rpc-roundtrip.mjs](../../tools/verify-rpc-roundtrip.mjs)（`75726cf`，1 文件 +1224 行，唯一代码改动）。做法逐条对应任务书 §2.1：
+
+1. **隔离宿主引导**：与 `probe-host.mjs` 同形——独立 `DSH_HOME`、临时 profile（`dsh-base` + `dsh-web-app` 两个 bundle + 只 insert `@aikanban/dsh-aikanban`）、junction 指向当前构建产物、`--port 0`、`--no-open`、退出时整树删除。默认 home 是 `.probe-home-scaffold/rpc-roundtrip`（嵌套在既有 gitignore 目录内，工具只删自己那一层，`probe-host` 不会与它共用 home）。
+2. **认证**：照 `probe-host.mjs:436-452` 的写法，从宿主打印的 URL 取 `origin` 与 `token`，`GET /?token=…`（`redirect:'manual'`）→ **303 + `set-cookie`**，取 `name=value` 作为后续请求的 cookie；再用同一 cookie `GET /` 应得 **200** 且 HTML 含 `__DSH_BOOT__`。
+3. **正向 `project/list`**：`POST {origin}/aikanban/project/list`，显式带 `Host`（= URL 的 `host:port`）、同源 `Origin`、cookie、`content-type: application/json`；请求体是**宿主真实信封** `{"type":"client-request","rpcId":…,"method":"project/list","payload":{}}`。断言 HTTP 200、信封合法（`type='server-response'`、`rpcId` 回显、`result` 对象）、`result.ok===true`、`projects` 为数组且与隔离 home 的 workspace 夹具逐项一致（`projectId`/`title`/`path`）。
+4. **正向 `board/read`**：取上一步的一个 `projectId`，`POST {origin}/aikanban/board/read`，payload `{"projectId":…}`。断言 200、信封合法、`result.ok===true`，并校验看板快照形状：`project.projectId/title/path` 与夹具一致、`tasks` 数组、`columns` 5 列（`todo/doing/blocked/done/cancelled`，含 `label`/`collapsedByDefault`）、`boardToken` 非空、`capabilities` 三布尔全 `true`。
+5. **负载与就绪**：隔离 home 冷启动时数据层尚未打开，`project/list` 会先回 `unavailable`（delayed-ready 包装器的既有行为）。工具用**轮询 + 超时**等待，不假设固定启动窗口；就绪前失败、超时仍失败则如实记为 FAIL 并跳过 `board/read`。
+6. **围栏负向**（每次只改一个请求属性）：无 cookie → **401**；cookie 合法但 `Origin: https://evil.example` → **403**；cookie 合法但 `content-type: text/plain` → **415**；方法 `GET` → **404**；路径 `/aikanban`（无 endpoint 段）→ **404**；补充：cookie 合法但 `Host: evil.example:1234` → **403**。负向批次之后**再发一条同 cookie 的健康请求**作对照（FEN-7，200 + `result.ok=true`），以排除「cookie 中途失效」这一替代解释。
+7. **契约负向（与围栏分开计数）**：`/aikanban/does-not-exist`（端点名不在 5 端点内）→ **HTTP 200 + `result.ok=false, error.code='unknown-endpoint'`**；`board/read` 携带未登记 `projectId` → **HTTP 200 + `error.code='unknown-project'`**。这两条证明 handler 用 envelope 返回失败、没有抛成 500，也覆盖了任务书 §4 提到的「未登记项目 → unknown-project」路径。
+8. **原始证据落盘**：`stdout` 打印可粘贴摘要（每条断言的 ID / 期望 / 实际 / HTTP 状态 / PASS|FAIL），完整原始 transcript（请求头、HTTP 状态、响应体、host log）写入 `.probe-out-scaffold/rpc-roundtrip/roundtrip-probe.{log,json}`（gitignored；`token` 与 `Set-Cookie` 值已脱敏）。退出码：0 全通过 / 1 有断言失败 / 2 参数或找不到 dsh CLI / 4 未构建 / 5 宿主未就绪 / 6 隔离 home 准备失败。
+
+**「隔离 home 里没有 workspace」的解法（任务书要求写清楚）**：不改产品代码，而是复用探针设施 [packages/plugin/src/probe/harness/prepare.mjs](../../packages/plugin/src/probe/harness/prepare.mjs) 的 `prepare(home)`：它把 durable workspace 存储 unit（`storages/workspace.json`，domain `workspace` version 2）直接写进隔离 home，内容就是真实 registry 里观察到的两条 workspace 记录（仓库目录 `03696d17-…` 与父目录 `455306c1-…`）。产品的 `workspaceRegistry` 启动时按**正常读取路径**加载它；`board/read` 的 `registerProject` 由适配层在同一请求内自动触发（契约里没有注册端点，也不需要）。因此 `board/read` 走的是真实适配层 `registry.get → core.registerProject → core.readBoard`，不是特制入口。**这不等于「产品能自己创建 workspace」**：真实创建入口（GUI / 宿主 API）本档仍未经过。
+
+**实现中的一个必要细节**：请求用 `node:http` 而不是 `fetch` 发送，因为 Node 的 `fetch` 会忽略调用方提供的 `Host`，否则 Host 围栏负向根本不可能被证明；cookie 交换仍用 `fetch`（与 `probe-host.mjs` 一致）。
+
+### 14.3 逐条断言（本次门禁运行，17/17）
+
+| # | 断言 | 期望 | 实际 |
+| --- | --- | --- | --- |
+| AUTH-1 | launch token → 签名 cookie | 303 + `set-cookie` | 303 + `set-cookie`（`dsh-auth-…`） |
+| AUTH-2 | cookie 可载入应用壳 | 200 且含 `__DSH_BOOT__` | 200、27899B、含 `__DSH_BOOT__` |
+| POS-1 | `project/list` HTTP | 200 | 200（数据层就绪后，1 次尝试） |
+| POS-2 | `project/list` 信封 | `type=server-response`、`rpcId` 回显、`result.ok=true` | 同期望 |
+| POS-3 | `project/list` 候选集 | 与 workspace 夹具 2 项逐项一致 | 2 项：`03696d17…`(AIKanBan)、`455306c1…`(dsh-plugin（旧）) |
+| POS-4 | `board/read` HTTP | 200 | 200（`projectId=03696d17-…`） |
+| POS-5 | `board/read` 信封 | 同 POS-2 | 同期望 |
+| POS-6 | `board/read` 快照形状 | project 字段一致、tasks 数组、5 列、boardToken、capabilities | project 一致、`tasks=0`、5 列、boardToken 非空、三项 capabilities 全 true |
+| FEN-1 | 无 cookie | 401 | 401 `unauthorized` |
+| FEN-2 | cookie + 跨站 Origin | 403 | 403 `forbidden` |
+| FEN-3 | cookie + 非 JSON content-type | 415 | 415 `content type must be application/json` |
+| FEN-4 | 非 POST（GET） | 404 | 404 `not found` |
+| FEN-5 | 无 endpoint 段（`/aikanban`） | 404 | 404 `not found` |
+| FEN-6 | cookie + 非本机 Host（补充） | 403 | 403 `forbidden` |
+| FEN-7 | 负向批次后的同 cookie 对照 | 200 + `result.ok=true` | 200 + `result.ok=true` |
+| CON-1 | 5 端点外的端点名 | 200 + `unknown-endpoint` | 200 + `unknown-endpoint` |
+| CON-2 | 未登记 `projectId` | 200 + `unknown-project` | 200 + `unknown-project` |
+
+说明：`tasks=0` 不是缺陷——隔离 home 的 core 是全新 domain，本档只做**读路径**，不创建任务（写端点不在本档范围）。因此「快照形状合法」是本次观察到的全部内容；「有任务时的内容正确」由 core/适配器用例与后续真实 GUI 覆盖。
+
+### 14.4 直接回答：真实 HTTP 往返是否成立
+
+**成立（限定在「隔离宿主 + 本脚本作为发起方」这一层）：**
+
+- 真实 HTTP 服务：宿主监听由系统分配的端口（本档三次运行分别是 `10754`、`1572`、`10306`，**没有写死端口**），`project/list` 与 `board/read` 都由该服务返回 200；响应信封 `type/rpcId/result` 与看板快照都是 HTTP 响应体，不是进程内返回值。
+- 真实鉴权与围栏：launch token → 签名 cookie 交换在真实 HTTP 上完成；无 cookie 401、跨站 Origin 403、非 JSON 415、非 POST 404 都在 carrier 层被拒绝，负向批次后的对照请求仍 200。
+- 真实失败映射：未知端点与未登记项目以 HTTP 200 + envelope 失败码返回，没有 500。
+
+**不成立 / 未证实的部分（不得越级写成结论）：**
+
+- 发起方是**本脚本**，不是页面里的 `ctx.connection.rpc.call`；`window.__DSH_BOOT__` 装配与浏览器半代码没有被本工具执行。「通道在真实 HTTP 上能往返」≠「浏览器半已成立」。
+- 没有真实 profile、没有真实 GUI、没有真实页面渲染；因此本档不能支撑「界面可用」「GUI 已接通」这类表述，[ADR-005](decisions/ADR-005-浏览器半与宿主半的数据通道.md) 状态仍为「提议」。
+- **注册路径与 HTTP 通道是两件事，证据分开**：
+  - 进程内注册（diagnostics `aikanban:board-channel`）：`channel='/aikanban', registered=true, path='compat'`；同次运行最后一个 `aikanban:activation` 显示 `dataLayerReady=true`。这证明宿主进程内注册发生、走的是兼容路径，**不证明公开入口 `ctx.connection.rpc.handle` 可用**。
+  - 真实 HTTP 通道：`POST /aikanban/project/list` 与 `/board/read` 的 200/信封/快照（上表 POS-1…POS-6）。这证明**这条通道上的真实请求确实通**，与 `path=compat` 是两条独立事实；本档没有把二者合并成「公开入口已成立」。
+- `board/read` 的 `tasks` 为空；写端点（`task/status.set`/`reorder`/`undo`）未在本档经真实 HTTP 验证。AT 全部仍「待执行」。
+
+### 14.5 六项门禁 + 新工具的原始输出
+
+沙盒 `C:\Users\InformationDS\aikanban-p6a`，目标提交 `75726cf`（隔离 home、workspace 夹具与 profile 均由工具按上文生成；下述 token 已脱敏）。
+
+```text
+TARGET 75726cf
+===== TYPECHECK =====
+$ tsc -b
+EXIT=0
+===== BUILD =====
+$ tsc -b && pnpm -C packages/plugin run build:bundle
+$ tsdown -c tsdown.config.ts && tsdown -c tsdown.client.config.ts
+ℹ tsdown v0.22.14 powered by rolldown v1.2.13
+ℹ config file: C:\Users\InformationDS\aikanban-p6a\packages\plugin\tsdown.config.ts 
+ℹ [@aikanban/dsh-aikanban] entry: src/index.ts
+ℹ [@aikanban/dsh-aikanban] target: node22
+ℹ [@aikanban/dsh-aikanban] tsconfig: tsconfig.json
+ℹ Build start
+ℹ [@aikanban/dsh-aikanban] lib\index.js      182.58 kB │ gzip: 45.26 kB
+ℹ [@aikanban/dsh-aikanban] lib\index.js.map  405.02 kB │ gzip: 95.51 kB
+ℹ [@aikanban/dsh-aikanban] 2 files, total: 587.60 kB
+✔ [@aikanban/dsh-aikanban] Build complete in 151ms
+ℹ tsdown v0.22.14 powered by rolldown v1.2.13
+ℹ config file: C:\Users\InformationDS\aikanban-p6a\packages\plugin\tsdown.client.config.ts 
+ℹ [@aikanban/dsh-aikanban/client] entry: src/client.tsx
+ℹ [@aikanban/dsh-aikanban/client] target: es2022
+ℹ [@aikanban/dsh-aikanban/client] tsconfig: tsconfig.json
+ℹ Build start
+ℹ [@aikanban/dsh-aikanban/client] lib\client.js  34.54 kB │ gzip: 10.39 kB
+ℹ [@aikanban/dsh-aikanban/client] 1 files, total: 34.54 kB
+✔ [@aikanban/dsh-aikanban/client] Build complete in 45ms
+EXIT=0
+===== TESTS =====
+$ pnpm -r --if-present run test
+Scope: 3 of 4 workspace projects
+packages/core test$ vitest run
+packages/plugin-client test$ vitest run
+packages/core test:  RUN  v3.2.7 C:/Users/InformationDS/aikanban-p6a/packages/core
+packages/plugin-client test:  RUN  v3.2.7 C:/Users/InformationDS/aikanban-p6a/packages/plugin-client
+packages/plugin-client test:  ✓ test/model.test.ts (20 tests) 13ms
+packages/core test:  ✓ |core| test/port-parity.test.ts (5 tests) 10ms
+packages/plugin-client test:  ✓ test/wire.test.ts (12 tests) 19ms
+packages/plugin-client test:  ✓ test/controller.test.ts (35 tests) 35ms
+packages/plugin-client test:  ✓ test/board.test.ts (6 tests) 13ms
+packages/core test:  ✓ |core| test/restart.test.ts (4 tests) 24ms
+packages/core test:  ✓ |core| test/version-chain.test.ts (3 tests) 27ms
+packages/core test:  ✓ |core| test/drafts-and-recheck.test.ts (4 tests) 31ms
+packages/core test:  ✓ |core| test/applicability.test.ts (5 tests) 35ms
+packages/plugin-client test:  ✓ test/slots.test.ts (7 tests) 10ms
+packages/plugin-client test:  Test Files  5 passed (5)
+packages/plugin-client test:       Tests  80 passed (80)
+packages/plugin-client test:    Start at  01:17:38
+packages/plugin-client test:    Duration  4.20s (transform 1.45s, setup 0ms, collect 2.72s, tests 90ms, environment 2ms, prepare 6.13s)
+packages/core test:  ✓ |core| test/concurrency.test.ts (6 tests) 57ms
+packages/core test:  ✓ |core| test/paired-confirmation.test.ts (8 tests) 68ms
+packages/core test:  ✓ |core| test/f01-activity.test.ts (2 tests) 28ms
+packages/core test:  ✓ |core| test/f01-project-isolation.test.ts (6 tests) 44ms
+packages/core test:  ✓ |core| test/f01-task-create-edit.test.ts (12 tests) 67ms
+packages/core test:  ✓ |core| test/f02-status-and-order.test.ts (11 tests) 77ms
+packages/plugin-client test: Done
+packages/core test:  Test Files  11 passed (11)
+packages/core test:       Tests  66 passed (66)
+packages/core test:    Start at  01:17:38
+packages/core test:    Duration  5.01s (transform 2.62s, setup 0ms, collect 8.56s, tests 468ms, environment 4ms, prepare 12.14s)
+packages/core test: Done
+packages/plugin test$ vitest run
+packages/plugin test:  RUN  v3.2.7 C:/Users/InformationDS/aikanban-p6a/packages/plugin
+packages/plugin test:  ✓ test/client-bundle.test.ts (7 tests) 23ms
+packages/plugin test:  ✓ test/channel-roundtrip.test.ts (19 tests) 279ms
+packages/plugin test:  ✓ test/board-adapter.test.ts (46 tests) 49ms
+packages/plugin test:  ✓ test/host.test.ts (34 tests) 94ms
+packages/plugin test:  Test Files  4 passed (4)
+packages/plugin test:       Tests  106 passed (106)
+packages/plugin test:    Start at  01:17:45
+packages/plugin test:    Duration  2.19s (transform 1.19s, setup 0ms, collect 1.83s, tests 444ms, environment 1ms, prepare 1.44s)
+packages/plugin test: Done
+EXIT=0
+===== VERIFY =====
+
+Host-half import verification — packages/plugin
+
+  PASS  package.json exists                                   packages\plugin\package.json
+  PASS  manifest declares type: module                        module
+  PASS  manifest declares a main entry                        ./lib/index.js
+  PASS  host entry is built                                   packages\plugin\lib\index.js (178.3 KB)
+  PASS  host entry is ESM, not a browser-half bundle          no __ModuleLoader__ banner; ESM statements present
+  PASS  import graph is host-resolvable (no bare specifiers)  1 module(s), only node: builtins
+  PASS  module graph is fully present on disk                 1 file(s) reachable
+  PASS  exports apply() for the loader to call                function apply(ctx)
+  PASS  exports an inject array (cordis activation gate)      []
+  PASS  apply() activates against a service-less context      activation=mvi75in3-1 pid=4532
+  PASS  diagnostic tool is exported and callable              aikanban_status → [aikanban] active (plugin @aikanban/dsh-aikanban@0.0.0, activation mvi75in3-1, pid 4532, services seen: none)
+
+OK
+VERIFY EXIT=0
+===== PROBE =====
+AIKanBan isolated load probe
+
+  workspace        C:\Users\InformationDS\aikanban-p6a
+  isolated home    C:\Users\InformationDS\aikanban-p6a\.probe-home-scaffold
+  probe profile    C:\Users\InformationDS\aikanban-p6a\.probe-home-scaffold\profiles\probe
+  port             0 (OS-assigned — cannot collide with a running GUI)
+  mode             composition + real boot
+
+  dsh cli          C:\Users\InformationDS\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh\lib\bin.js
+  node             C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe
+
+prepared isolated home; @aikanban/dsh-aikanban → C:\Users\InformationDS\aikanban-p6a\.probe-home-scaffold\profiles\probe\node_modules\@aikanban\dsh-aikanban
+
+[1/5] composing the probe profile tree (--dump-config)
+  PASS  # == C:\Users\InformationDS\aikanban-p6a\.probe-home-scaffold\profiles\probe\cordis.patch.yml | - id: aikanban
+
+[2/5] resolving and activating the host half from the profile directory
+  PASS  packages/plugin/package.json
+        [aikanban] active (host half) plugin=@aikanban/dsh-aikanban version=0.0.0 activation=mvi75j3x-1
+
+[3/5] booting the probe host; reading its window.__DSH_BOOT__ graph
+  ok    host settled and bound: dsh web: http://127.0.0.1:13759/?token=<redacted>
+  PASS  browser row published: /plugins/??@aikanban/dsh-aikanban/client.js&rev=5711a768d9de8c7a-44
+        served 200 32704B: window.__ModuleLoader__.load({id:`@aikanban/dsh-aikanban`,factory:e=>{var t={exp…
+
+[4/5] waiting for the activation signal from inside the host
+  PASS  the booting host published aikanban:activation:
+        activation=mvi75pcr-1 pid=35252 tools=false systemPrompt=false
+
+[5/5] waiting for the /aikanban board channel registration from inside the host
+  PASS  the booting host registered the board channel:
+        channel=/aikanban registered=true path=compat reason=null dataLayerReady=true
+
+probe host log: .probe-out-scaffold/probe-probe.log
+isolated home removed (pass --keep to inspect it)
+
+summary
+  PASS  composed tree contains the aikanban row
+        # == C:\Users\InformationDS\aikanban-p6a\.probe-home-scaffold\profiles\probe\cordis.patch.yml
+  PASS  host half resolves from the profile and apply() activates
+        packages/plugin/package.json → [aikanban] active (host half) plugin=@aikanban/dsh-aikanban version=0.0.0 activation=mvi75j3x-1
+  PASS  host publishes a window.__DSH_BOOT__ row and serves client.js
+        entry=/plugins/??@aikanban/dsh-aikanban/client.js&rev=5711a768d9de8c7a-44 status=200 bytes=32704
+  PASS  apply() ran inside the booting host
+        activation=mvi75pcr-1 pid=35252 tools=false systemPrompt=false
+  PASS  host half registered /aikanban inside the booting host
+        channel=/aikanban registered=true path=compat reason=null dataLayerReady=true
+
+PROBE OK — the bundle composed, resolved from the profile, activated, and published a browser row.
+PROBE EXIT=0
+===== CHECK-DOCS =====
+PASS: 59 Markdown files; 20 PRDs; 48 common rules; 143 local rules.
+PASS: unchanged baseline; 422 FR source units; 16 UX rules; 106 original ATs + 27 additions, all fully indexed by section 6.
+PASS: local links; unique IDs; acyclic dependencies; no later-stage dependencies; root documentation boundary.
+PASS: FR unit counts and owners agree between traceability.md and requirements.csv; catalog stage/dependencies/FR sources agree with both index tables.
+Scope: document integrity only. Application and product acceptance have not run.
+CHECK-DOCS EXIT=0
+===== ROUNDTRIP (新增工具) =====
+AIKanBan real-HTTP RPC roundtrip verification
+
+  workspace        C:\Users\InformationDS\aikanban-p6a
+  isolated home    C:\Users\InformationDS\aikanban-p6a\.probe-home-scaffold\rpc-roundtrip
+  probe profile    C:\Users\InformationDS\aikanban-p6a\.probe-home-scaffold\rpc-roundtrip\profiles\probe
+  port             0 (OS-assigned — never hardcode a GUI port)
+  channel          /aikanban (5 endpoints: board/read, project/list, task/status.set, task/reorder, task/status.undo)
+  failure codes    8 (unchanged): unknown-endpoint, invalid-payload, invalid-reason, read-failed, not-found, save-failed, stale-baseline, unknown-result
+
+  dsh cli          C:\Users\InformationDS\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh\lib\bin.js
+  node             C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe
+
+prepared isolated home; workspace fixture: 2 workspace(s)
+  03696d17-12c2-4d78-9b3e-ff3bdf9e6f10  AIKanBan  C:\Users\InformationDS\aikanban-p6a
+  455306c1-4d0a-42ad-ba21-d63b41d753d8  dsh-plugin（旧）  C:\Users\InformationDS
+prepared profile; @aikanban/dsh-aikanban → C:\Users\InformationDS\aikanban-p6a\.probe-home-scaffold\rpc-roundtrip\profiles\probe\node_modules\@aikanban\dsh-aikanban
+
+[1/6] booting the isolated host (own DSH_HOME, --port 0, --no-open)
+  ok    isolated host settled and bound: dsh web: http://127.0.0.1:10306/?token=<redacted>
+  ok    request origin (OS-assigned): http://127.0.0.1:10306
+
+[2/6] exchanging the launch token for the signed session cookie
+
+[3/6] positive: POST /aikanban/project/list over real HTTP
+
+[4/6] positive: POST /aikanban/board/read over real HTTP
+
+[5/6] negative: carrier fence and authentication
+
+[6/6] supplementary: contract-level failures over real HTTP (not fence evidence)
+
+[setup / authentication]
+  PASS  AUTH-1 HTTP  303  launch token → signed session cookie exchange
+        expected: 303 with a set-cookie header
+        actual:   303 with set-cookie (dsh-auth-F2XlDx-CXYpRL2ESwv08Su4FwKnPYIn6gtpsBxID-1k=…)
+  PASS  AUTH-2 HTTP  200  the exchanged cookie authenticates the app shell
+        expected: GET / with the cookie → 200 and the shell HTML
+        actual:   200 (27899B, __DSH_BOOT__ present: true)
+
+[positive: real HTTP RPC roundtrip]
+  PASS  POS-1  HTTP  200  project/list answers HTTP 200 (after data-layer readiness, if needed)
+        expected: HTTP 200
+        actual:   HTTP 200 after 1 attempt(s)
+  PASS  POS-2  HTTP  200  project/list response is a valid RPC envelope (type/rpcId echo/result.ok)
+        expected: type='server-response', rpcId echoes the request, result.ok=true, content-type application/json
+        actual:   type=server-response rpcId-echo=true result.ok=true
+  PASS  POS-3  HTTP  200  project/list value carries the candidate set from the host workspaceRegistry
+        expected: 2 fixture workspace(s) with matching projectId/title/path; no selection fields
+        actual:   2 projects: 03696d17…(AIKanBan), 455306c1…(dsh-plugin（旧）)
+  PASS  POS-4  HTTP  200  board/read answers HTTP 200
+        expected: HTTP 200
+        actual:   HTTP 200 for projectId=03696d17-12c2-4d78-9b3e-ff3bdf9e6f10
+  PASS  POS-5  HTTP  200  board/read response is a valid RPC envelope (type/rpcId echo/result.ok)
+        expected: type='server-response', rpcId echoes the request, result.ok=true
+        actual:   type=server-response rpcId-echo=true result.ok=true
+  PASS  POS-6  HTTP  200  board/read value is a board snapshot for the explicitly selected project
+        expected: project.projectId/title/path match the registry fixture; tasks array; 5 columns; boardToken; capabilities
+        actual:   project=03696d17-12c2-4d78-9b3e-ff3bdf9e6f10 tasks=0 columns=[todo:未开始, doing:进行中, blocked:已阻塞, done:已完成, cancelled:已取消] boardToken=a8713d71a105… capabilities={"statusChange":true,"reorder":true,"undo":true}
+
+[negative: carrier fence and authentication]
+  PASS  FEN-1  HTTP  401  no session cookie → 401
+        expected: HTTP 401 (authentication rejected before the handler)
+        actual:   HTTP 401 body="unauthorized"
+  PASS  FEN-2  HTTP  403  valid cookie but cross-site Origin → 403
+        expected: HTTP 403 (Host/Origin fence rejected before authentication)
+        actual:   HTTP 403 body="forbidden"
+  PASS  FEN-3  HTTP  415  cookie valid but content-type is not application/json → 415
+        expected: HTTP 415 (the carrier requires application/json)
+        actual:   HTTP 415 body="content type must be application/json"
+  PASS  FEN-4  HTTP  404  non-POST method (GET) → 404
+        expected: HTTP 404 (only POST is routed to the RPC handler)
+        actual:   HTTP 404 body="not found"
+  PASS  FEN-5  HTTP  404  POST without an endpoint segment (path /aikanban) → 404
+        expected: HTTP 404 (no endpoint can be derived from the path)
+        actual:   HTTP 404 body="not found"
+  PASS  FEN-6  HTTP  403  cookie valid but Host names a non-loopback authority → 403
+        expected: HTTP 403 (the Host fence rejects a rebound authority)
+        actual:   HTTP 403 body="forbidden"
+  PASS  FEN-7  HTTP  200  control: the same cookie still succeeds after the negative batch
+        expected: HTTP 200 + result.ok=true (so the negative statuses above are caused by the deviations)
+        actual:   HTTP 200 result.ok=true
+
+[supplementary: contract-level failures over real HTTP]
+  PASS  CON-1  HTTP  200  endpoint outside the five-endpoint contract returns a failure envelope, not a throw
+        expected: HTTP 200 + result.ok=false + error.code='unknown-endpoint'
+        actual:   HTTP 200 code="unknown-endpoint"
+  PASS  CON-2  HTTP  200  board/read for an unregistered projectId returns a failure envelope, not an empty board
+        expected: HTTP 200 + result.ok=false + error.code='unknown-project'
+        actual:   HTTP 200 code="unknown-project"
+
+[process-internal registration evidence — diagnostics channel, NOT HTTP]
+  observed      aikanban:board-channel channel=/aikanban registered=true path=compat
+  dataLayer     dataLayerReady=true (from the last aikanban:activation payload)
+  meaning       the registration path is process-internal only. path=compat means the
+                public ctx.connection.rpc.handle path threw and the compatibility
+                register() call was used (ADR-005); it does NOT say the public path works.
+
+[verdict]
+  project/list over real HTTP : RPC roundtrip observed (envelope + candidate set)
+  board/read over real HTTP   : RPC roundtrip observed (envelope + snapshot)
+  carrier fence               : authentication + Host/Origin enforced (401/403/415/404 observed)
+  registration path evidence  : process-internal path=compat (separate from the HTTP result)
+  NOT proven here             : the browser half (a page's rpc.call after __DSH_BOOT__ assembly),
+                                a real profile / real GUI, and the public registration entry point.
+  AT                          : none executed; acceptance.csv untouched; every AT remains 待执行.
+
+  assertions: 17/17 passed (required groups failed: 0)
+  exit code:  0 (all assertions passed)
+  raw transcript: .probe-out-scaffold/rpc-roundtrip/roundtrip-probe.log
+  run report:     .probe-out-scaffold/rpc-roundtrip/roundtrip-probe.json
+  isolated home removed (pass --keep to inspect it)
+ROUNDTRIP EXIT=0
+```
+
+**门禁结论**：typecheck EXIT=0 / build EXIT=0 / 用例 **252**（core 66 / plugin 106 / plugin-client 80，与基线一致，本档未改产品代码）/ verify 11/11 EXIT=0 / probe 5/5 EXIT=0（`path=compat`）/ check_docs EXIT=0（59 md）；新增工具 **17/17 EXIT=0**。本档运行该工具共 3 次（端口 10754 / 1572 / 10306），每次均 17/17 且端口由系统分配。
+
+### 14.6 与规格/任务书的字面不一致，或实施中必须说明的点
+
+| # | 字面要求 / 既有描述 | 实施事实 | 说明 |
+| --- | --- | --- | --- |
+| ① | ADR-005「本会话无法做真实网络往返（那需要写 profile 并重启进程）」 | 隔离宿主本身就是真实 HTTP 服务，无需写 profile/重启即可在其上做真实往返 | 这是**隔离宿主**上的往返，不是用户真实 profile/GUI；ADR 状态因此不变，本档只在 ADR 追加证据节。 |
+| ② | 任务书「方法不是 POST 或 endpoint 不存在 → 期望 404」 | 非 POST → **404**；路径无法解析出 endpoint（`/aikanban`、`/aikanban/`、`/aikanban/a//b`）→ **404**；但「端点名不在 5 端点内」（`/aikanban/does-not-exist`）→ **HTTP 200 + `error.code='unknown-endpoint'`** | 后者是 handler 自己返回的契约失败（8 码之一），不是路由 404。两条都实测并分列在 §14.3（FEN-4/FEN-5 与 CON-1），没有把 200 写成 404。 |
+| ③ | 任务书「content-type 不是 application/json → 期望 415」 | 必须**带合法 cookie** 才观察到 415；不带 cookie 时围栏先返回 401 | 宿主 `register()` 路由先跑 `requestRejection`（Host/Origin/token）再进 fetch handler；FEN-3 因此带 cookie，另在 FEN-1 单独验证无 cookie=401。 |
+| ④ | 探针第 5 项只证明「宿主进程内注册发生」，且 `path=compat` | 本档用真实 HTTP 证明 `POST /aikanban/project/list`、`/board/read` 通 | 两件事分开写：`path=compat` 是进程内诊断事实；HTTP 200/信封/快照是 carrier 事实。**都不等于公开 `rpc.handle` 入口可用。** |
+| ⑤ | 任务书「如果隔离 home 里没有任何 workspace…允许在探针设施里创建 workspace」 | 隔离 home 的 workspace 由 `prepare.mjs` 直接写 durable storage unit（两条真实记录），产品 `workspaceRegistry` 正常读取；`board/read` 内的 `registerProject` 由适配层自动触发 | 未改产品代码、未新增端点；但这不等于「产品自己的 workspace 创建入口被验证」。 |
+| ⑥ | 任务书「不改 ADR-005 状态」 | ADR-005 头部状态仍「提议」；只追加「证据（2026-10-22）」节 | 部分「尚未验证」项（真实网络跳转、页面 token 取得）仍未被本档关闭。 |
+
+### 14.7 剩余未确认项（本档未取证，不得写成结论）
+
+- **浏览器半**：页面经 `window.__DSH_BOOT__` 装配后由 `ctx.connection.rpc.call` 发出的真实往返。本档脚本发送的是同一 wire（同 URL、同信封），但不执行浏览器半代码。
+- **真实 profile / 真实 GUI / 真实页面渲染**：本档明令不做；未安装 profile、未重启 GUI、未写 `~/.dsh/profiles/desktop`。
+- **公开注册入口 `ctx.connection.rpc.handle`**：仍走兼容路径（`path=compat`）；本档没有证明公开入口可用，也不把 `path=compat` 写成「公开入口已成立」。
+- **写端点经真实 HTTP**：`task/status.set`、`task/reorder`、`task/status.undo` 未在本档实发；`board/read` 的 `tasks` 为空（隔离 core 全新）。
+- **有任务/多任务时看板内容的正确性**：需要写路径与真实数据，本档范围外。
+- **`details` 跨通道稳健性、取消语义**：沿用 ADR-005「尚未验证」一节。
+- **AT 全部「待执行」**：本档证据不是任何 AT 的验收，`acceptance.csv` 未动。
+
+### 14.8 结论与下一档前置
+
+1. **真实 HTTP 往返成立**（限定层：隔离宿主 + 本脚本发起 + 真实 carrier 鉴权/围栏/路由 + 真实适配层与 core；`project/list`、`board/read` 均观察到合法信封与快照）。
+2. **[ADR-005](decisions/ADR-005-浏览器半与宿主半的数据通道.md) 状态仍「提议」**：本档在其后追加「证据（2026-10-22）」节，不改状态、不把隔离宿主结果升级成真实 profile 结论。
+3. **关闭 ADR-005 的必要条件仍是 P6**：在真实 profile/GUI 中观察同一条 wire（`POST /aikanban/project/list` 200 + 信封；显式选择后 `board/read` 200 + 快照），并重新观察 `path`（宿主升级可能改变注册路径）。
+4. **回归价值**：新工具可在任何宿主升级后重跑——它同时检查 carrier（401/403/415/404）、信封契约（`rpcId` 回显/`result` 形状）、5 端点契约与 `unknown-endpoint`/`unknown-project` 失败形状；产物在 `.probe-out-scaffold/rpc-roundtrip/`（gitignored）。
+
+### 14.9 记录追加后的文档门禁
+
+本记录追加只改 `docs/engineering/s1-wiring-implementation.md` 与 `docs/engineering/decisions/ADR-005-浏览器半与宿主半的数据通道.md`（均为既有文件，未新增 md 文件数）；追加后复跑 `python docs/tools/check_docs.py`：`PASS: 59 Markdown files; 20 PRDs; 48 common rules; 143 local rules.`（四项 PASS + `EXIT=0`；文档完整性，不涉及应用/产品验收）。

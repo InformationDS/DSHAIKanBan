@@ -23,7 +23,7 @@
  * @module @aikanban/dsh-aikanban/delayed-board-port
  */
 
-import type { HostBoardPort, HostReadOutcome, HostWriteOutcome } from './board-channel.js'
+import type { HostBoardPort, HostProjectListOutcome, HostReadOutcome, HostWriteOutcome } from './board-channel.js'
 
 /** What the delayed port needs from the data-layer owner. */
 export interface DelayedPortState {
@@ -58,9 +58,23 @@ export function createDelayedBoardPort(state: DelayedPortState, readyPort: HostB
     message: `数据层尚未就绪，本次操作未执行${reasonSuffix()}；正式值未改变。`,
   })
 
+  /**
+   * The project list is gated exactly like a read: while the data layer is not
+   * ready, selecting a project could not produce a board, so the wrapper says
+   * "unavailable" instead of offering candidates that cannot be opened.
+   */
+  const unavailableProjects = (): HostProjectListOutcome => ({
+    ok: false,
+    code: 'unavailable',
+    message: `数据层尚未就绪，项目清单暂不可用${reasonSuffix()}；不会猜测或默认选择项目。`,
+  })
+
   return {
     async readBoard(input, signal) {
       return state.coreReady() ? readyPort.readBoard(input, signal) : unavailableRead()
+    },
+    async listProjects(signal) {
+      return state.coreReady() ? readyPort.listProjects(signal) : unavailableProjects()
     },
     async setStatus(input) {
       return state.coreReady() ? readyPort.setStatus(input) : unavailableWrite()

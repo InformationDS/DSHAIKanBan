@@ -28,6 +28,10 @@
  * 5. **Never throw**: every public method catches its own exceptions and
  *    returns a failure result; the channel handler additionally maps an
  *    unexpected throw, but this port must stay boring.
+ * 6. **Project listing** (`project/list`, Q1=B): the candidate set comes from the
+ *    host workspace registry — never from core's "already registered" list — and
+ *    listing selects, registers, caches and writes nothing. The ids it returns
+ *    are exactly the ids {@link createHostBoardPort}'s read path resolves.
  *
  * ## What does not cross this boundary
  *
@@ -54,11 +58,13 @@ import {
   type BoardFailureCodeWire,
   type BoardSnapshotValue,
   type FormalStatusValueWire,
+  type ProjectListItem,
   type ReadBoardPayload,
 } from '@aikanban/plugin-client/wire'
 
 import type {
   HostBoardPort,
+  HostProjectListOutcome,
   HostReadOutcome,
   HostReorderInput,
   HostSetStatusInput,
@@ -426,7 +432,49 @@ export function createHostBoardPort(deps: HostBoardAdapterDeps): HostBoardPort {
 
   /* ---------------- the port ---------------- */
 
+  /**
+   * One workspace as a selectable item.
+   *
+   * `projectId` is `workspace.id` on purpose: that is the key `board/read` sends
+   * back and the adapter resolves through `workspaceRegistry.get` — the listing
+   * can never offer an id its own read path would reject. `title` falls back to
+   * the id, and `path` keeps same-title projects distinguishable (Q1=B).
+   */
+  const projectItemOf = (workspace: WorkspaceLike): ProjectListItem => ({
+    projectId: workspace.id,
+    title: typeof workspace.title === 'string' && workspace.title.trim().length > 0 ? workspace.title : workspace.id,
+    path: typeof workspace.path === 'string' ? workspace.path.trim() : '',
+  })
+
   return {
+    /**
+     * The candidate project set, straight from the host registry.
+     *
+     * Deliberately does **not** consult the core data layer's `listProjects()`
+     * (that one only knows projects already registered by a read) and does not
+     * select, register, cache or remember anything (Q1=B). An empty registry is
+     * a legal empty candidate set; a missing registry is `unavailable`, and an
+     * exploding registry is `read-failed` — never a fabricated project.
+     */
+    async listProjects(signal?: AbortSignal): Promise<HostProjectListOutcome> {
+      try {
+        if (signal?.aborted === true) {
+          return { ok: false, code: 'read-failed', message: '读取项目清单已取消；未返回任何项目。' }
+        }
+        const registry = deps.workspaceRegistry()
+        if (registry === undefined) {
+          return {
+            ok: false,
+            code: 'unavailable',
+            message: '项目清单不可用：宿主的 workspaceRegistry 服务未绑定；不会猜测或默认选择项目。',
+          }
+        }
+        return { ok: true, projects: registry.list().map(projectItemOf) }
+      } catch (error) {
+        return { ok: false, code: 'read-failed', message: `读取项目清单失败：${messageOf(error)}` }
+      }
+    },
+
     async readBoard(input: ReadBoardPayload, signal?: AbortSignal): Promise<HostReadOutcome> {
       try {
         if (signal?.aborted === true) {

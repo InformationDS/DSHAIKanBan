@@ -509,6 +509,94 @@ describe('board/read: three outcomes and snapshot mapping (§3.1/§3.2/§3.3)', 
 })
 
 /* ------------------------------------------------------------------ *
+ * project/list — host registry candidate set (Q1=B, no "current project")
+ * ------------------------------------------------------------------ */
+
+describe('project/list: the host registry is the candidate set, never a selection', () => {
+  it('lists every workspace with the read-compatible id, title and path', async () => {
+    const harness = createHarness()
+    // Same title, different directory: path is what tells them apart.
+    harness.registry.add('ws-2', { title: 'Demo project', path: 'D:/work/demo', statusMode: 'missing-dir' })
+
+    const result = await harness.handler('project/list', {}, SIGNAL)
+    const value = successOf(result) as { projects: { projectId: string; title: string; path: string }[] }
+
+    expect(value.projects).toEqual([
+      { projectId: 'ws-1', title: 'Demo project', path: 'C:/demo' },
+      { projectId: 'ws-2', title: 'Demo project', path: 'D:/work/demo' },
+    ])
+    // Q1=B: an item carries exactly the id/title/path — no "current", "default"
+    // or "last used" flag could be smuggled through.
+    for (const project of value.projects) {
+      expect(Object.keys(project).sort()).toEqual(['path', 'projectId', 'title'])
+    }
+    // The id is the one board/read accepts: the very same registry key.
+    const read = await harness.handler('board/read', { projectId: value.projects[1]?.projectId }, SIGNAL)
+    expect(read.ok).toBe(true)
+  })
+
+  it('registers, reads and writes nothing: listing is not an implicit selection', async () => {
+    const harness = createHarness()
+
+    const result = await harness.handler('project/list', {}, SIGNAL)
+
+    expect(result.ok).toBe(true)
+    // Core still knows no project: nobody registered ws-1 by listing it, and a
+    // later read without a selection is still refused rather than defaulted.
+    expect(harness.core.listProjects()).toEqual([])
+    expect(harness.core.readBoard({ projectId: 'ws-1', workScope: { availability: 'ok' } }).status).toBe('unknown-project')
+  })
+
+  it('treats an empty registry as a legal empty candidate set, not as an error', async () => {
+    const harness = createHarness({ project: false })
+
+    const result = await harness.handler('project/list', {}, SIGNAL)
+    const value = successOf(result) as { projects: unknown[] }
+
+    expect(value.projects).toEqual([])
+  })
+
+  it('maps a missing registry to unavailable and an exploding registry to read-failed, never throwing', async () => {
+    const noRegistry = createHarness({ registry: false })
+    const unavailable = await noRegistry.handler('project/list', {}, SIGNAL)
+    expect(failureOf(unavailable).code).toBe('unavailable')
+    expect(failureOf(unavailable).message).toContain('workspaceRegistry')
+
+    const harness = createHarness()
+    const exploding = createHostBoardPort({
+      core: () => harness.core,
+      workspaceRegistry: () => ({
+        get: () => undefined,
+        list: () => { throw new Error('injected registry failure') },
+      }),
+    })
+    const result = await createBoardChannelHandler(exploding)('project/list', {}, SIGNAL)
+    expect(failureOf(result).code).toBe('read-failed')
+    expect(failureOf(result).message).toContain('injected registry failure')
+  })
+
+  it('refuses a non-object payload before the registry is touched', async () => {
+    const harness = createHarness()
+    let listings = 0
+    const adapter = createHostBoardPort({
+      core: () => harness.core,
+      workspaceRegistry: () => ({
+        get: (id: string) => harness.registry.registry.get(id),
+        list: () => { listings += 1; return harness.registry.registry.list() },
+      }),
+    })
+    const handler = createBoardChannelHandler(adapter)
+
+    for (const payload of [null, undefined, [], 'project/list', 5]) {
+      const result = await handler('project/list', payload, SIGNAL)
+      expect(failureOf(result).code, `payload ${JSON.stringify(payload)}`).toBe('invalid-payload')
+    }
+    // §1.2: the payload guard runs before the port; no listing was attempted.
+    expect(listings).toBe(0)
+  })
+})
+
+/* ------------------------------------------------------------------ *
  * task/status.set — success paths and §6.2 mappings
  * ------------------------------------------------------------------ */
 

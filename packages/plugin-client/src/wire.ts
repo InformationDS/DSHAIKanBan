@@ -33,6 +33,7 @@ import {
   type BoardActionHint,
   type BoardCapabilities,
   type BoardColumnInput,
+  type BoardProjectChoice,
   type BoardProjectView,
   type BoardTask,
   type BoardUndoTarget,
@@ -96,6 +97,11 @@ export const BOARD_CHANNEL = '/aikanban'
 /** Endpoint names, relative to {@link BOARD_CHANNEL}. Segments must match `^[A-Za-z0-9_$.-]+$`. */
 export const BOARD_ENDPOINTS = {
   readBoard: 'board/read',
+  /**
+   * The candidate project set, read fresh on every entry (Q1=B). Listing is a
+   * host-registry read: it selects nothing, remembers nothing and writes nothing.
+   */
+  listProjects: 'project/list',
   setStatus: 'task/status.set',
   reorder: 'task/reorder',
   undoStatusChange: 'task/status.undo',
@@ -123,6 +129,16 @@ export interface ReadBoardPayload {
   /** Project key = `workspace.id` (F01). */
   readonly projectId: string
 }
+
+/**
+ * `project/list` payload.
+ *
+ * Empty by contract. Listing is a read of the host's workspace registry; it
+ * takes no selection and carries no hint of a "current" project (Q1=B). A
+ * non-object payload is refused with `invalid-payload` — the host never guesses
+ * a project from a listing request.
+ */
+export type ProjectListPayload = Readonly<Record<string, never>>
 
 /**
  * `task/status.set` payload.
@@ -244,6 +260,25 @@ export interface BoardWriteValue {
 export interface FormalStatusValueWire {
   readonly status: string
   readonly statusVersion: string
+}
+
+/**
+ * One selectable project from `project/list`.
+ *
+ * The fields live in the view model (`BoardProjectChoice`): the wire adds no
+ * "current"/"default"/"last used" flag, because every entry must be an explicit
+ * user choice and the host does not remember one (Q1=B).
+ */
+export type ProjectListItem = BoardProjectChoice
+
+/**
+ * `project/list` success value: the candidate set, in host order.
+ *
+ * An empty array is a legal, explicitly rendered "no projects" answer — not an
+ * error and never replaced by a fabricated/default project.
+ */
+export interface ProjectListValue {
+  readonly projects: readonly ProjectListItem[]
 }
 
 /* ------------------------------------------------------------------ *
@@ -532,6 +567,33 @@ export function parseBoardWriteValue(value: unknown): BoardWriteValue | null {
   return { snapshot, undoable }
 }
 
+/**
+ * Parse a `project/list` success value.
+ *
+ * Every item must carry a non-empty `projectId` and string `title`/`path`.
+ * Unknown extra fields (including a would-be "current" flag) are ignored, never
+ * interpreted: the list is a candidate set, not a statement about selection.
+ *
+ * @param value - untrusted value.
+ * @returns the candidate set, or null when malformed (the caller reports a failure).
+ */
+export function parseProjectListValue(value: unknown): ProjectListValue | null {
+  if (!isRecord(value)) return null
+  const projects = value['projects']
+  if (!Array.isArray(projects)) return null
+  const parsed: ProjectListItem[] = []
+  for (const entry of projects) {
+    if (!isRecord(entry)) return null
+    const projectId = entry['projectId']
+    const title = entry['title']
+    const path = entry['path']
+    if (!isString(projectId) || projectId.length === 0) return null
+    if (!isString(title) || !isString(path)) return null
+    parsed.push({ projectId, title, path })
+  }
+  return { projects: parsed }
+}
+
 /* ------------------------------------------------------------------ *
  * Payload guards (host half)
  * ------------------------------------------------------------------ */
@@ -552,6 +614,21 @@ export function parseReadBoardPayload(value: unknown): ReadBoardPayload | null {
   const projectId = value['projectId']
   if (!isString(projectId) || projectId.length === 0) return null
   return { projectId }
+}
+
+/**
+ * Parse a `project/list` payload.
+ *
+ * The payload is empty by contract; anything that is not a JSON object is
+ * malformed. Fields are ignored rather than interpreted — a listing request may
+ * not carry a selection or a "current project" hint (Q1=B).
+ *
+ * @param value - untrusted payload.
+ * @returns the empty payload, or null when malformed.
+ */
+export function parseProjectListPayload(value: unknown): ProjectListPayload | null {
+  if (!isRecord(value)) return null
+  return {}
 }
 
 function optionalIndex(value: unknown): number | undefined | null {

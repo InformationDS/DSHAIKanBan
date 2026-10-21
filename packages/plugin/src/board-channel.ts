@@ -44,6 +44,7 @@ import {
   BOARD_ENDPOINT_LIST,
   BOARD_ENDPOINTS,
   isBlockedReasonValid,
+  parseProjectListPayload,
   parseReadBoardPayload,
   parseReorderPayload,
   parseSetStatusPayload,
@@ -52,6 +53,7 @@ import {
   type BoardFailureCodeWire,
   type BoardSnapshotValue,
   type FormalStatusValueWire,
+  type ProjectListItem,
   type ReadBoardPayload,
 } from '@aikanban/plugin-client/wire'
 
@@ -94,6 +96,22 @@ export interface HostWriteFailure {
 
 /** Result of a host-side write. */
 export type HostWriteOutcome = HostWriteSuccess | HostWriteFailure
+
+/** A `project/list` read that succeeded. The candidate set may be empty. */
+export interface HostProjectListSuccess {
+  readonly ok: true
+  readonly projects: readonly ProjectListItem[]
+}
+
+/** A `project/list` read that failed. Never an empty list standing in for a failure. */
+export interface HostProjectListFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+}
+
+/** Result of a host-side project listing. */
+export type HostProjectListOutcome = HostProjectListSuccess | HostProjectListFailure
 
 /**
  * A `task/status.set` input after the handler decoded the baseline.
@@ -145,6 +163,14 @@ export interface HostUndoInput {
  */
 export interface HostBoardPort {
   readBoard(input: ReadBoardPayload, signal?: AbortSignal): Promise<HostReadOutcome>
+  /**
+   * List the projects the host offers for explicit selection (Q1=B).
+   *
+   * The source of truth is the host's workspace registry, not the data layer's
+   * registered projects; listing selects, remembers and writes nothing. An empty
+   * candidate set is a success.
+   */
+  listProjects(signal?: AbortSignal): Promise<HostProjectListOutcome>
   setStatus(input: HostSetStatusInput, signal?: AbortSignal): Promise<HostWriteOutcome>
   reorder(input: HostReorderInput, signal?: AbortSignal): Promise<HostWriteOutcome>
   undoStatusChange(input: HostUndoInput, signal?: AbortSignal): Promise<HostWriteOutcome>
@@ -205,6 +231,22 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
         return outcome.ok ? success(outcome.snapshot) : failure(outcome.code, outcome.message)
       } catch (error) {
         return failure('read-failed', `读取失败：${messageOf(error)}`)
+      }
+    }
+
+    if (endpoint === BOARD_ENDPOINTS.listProjects) {
+      // The payload is empty by contract: listing takes no project, so a body
+      // that is not a JSON object is a caller bug. Nothing is selected or written.
+      if (parseProjectListPayload(payload) === null) {
+        return failure('invalid-payload', 'project/list payload must be an empty JSON object; listing carries no selection.')
+      }
+      try {
+        const outcome = await port.listProjects(signal)
+        return outcome.ok ? success({ projects: outcome.projects }) : failure(outcome.code, outcome.message)
+      } catch (error) {
+        // The handler never throws: an exploded listing is a read failure, and
+        // the browser keeps its selection state instead of fabricating candidates.
+        return failure('read-failed', `读取项目清单失败：${messageOf(error)}`)
       }
     }
 

@@ -196,6 +196,22 @@ export interface BoardProjectView {
 }
 
 /**
+ * One selectable project (Q1=B).
+ *
+ * Deliberately only `projectId`/`title`/`path`: there is no field for
+ * "current", "default" or "last used", so the selection UI cannot claim one.
+ * `projectId` is the workspace id `readBoard` accepts; `path` disambiguates
+ * projects that share a title.
+ */
+export interface BoardProjectChoice {
+  readonly projectId: string
+  /** Display title; the host falls back to the id when the workspace has none. */
+  readonly title: string
+  /** Workspace directory; may be empty when the host has none. */
+  readonly path: string
+}
+
+/**
  * What the connected data layer can actually do. The panel renders an entry
  * point only when its capability is `true`, so a not-yet-bound flow shows an
  * explicit note instead of a control that always fails.

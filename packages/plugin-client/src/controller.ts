@@ -53,6 +53,7 @@ import {
   type BoardSnapshot,
   type BoardSource,
   type FormalStatusValue,
+  type ProjectChoice,
   type ReorderInput,
   type StatusChangeInput,
   type UndoInput,
@@ -133,6 +134,20 @@ export type BoardReadState =
     }
 
 /**
+ * The project-list state, separate from the board read state.
+ *
+ * `loaded` is the candidate set the selector renders; `loaded` with an empty
+ * `projects` array is the explicit "没有可用项目" answer, not an error. It is
+ * never mixed into {@link BoardReadState}: a list is not a board and must not
+ * make the panel look like it read one (Q1=B).
+ */
+export type ProjectListState =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'loading' }
+  | { readonly kind: 'loaded'; readonly projects: readonly ProjectChoice[] }
+  | { readonly kind: 'failed'; readonly code: BoardFailureCode; readonly message: string }
+
+/**
  * Feedback shown to the user. The `kind` is the point: a kept draft, a
  * validation refusal, a success, a refusal to undo, and a failure are five
  * different statements and are never collapsed into one "done" banner (REC-01).
@@ -160,6 +175,12 @@ export interface StatusDialogState {
 /** Everything the panel renders from. Immutable: a new object on every change. */
 export interface BoardState {
   readonly read: BoardReadState
+  /**
+   * The selectable project candidates, read fresh while the selection screen is
+   * shown. Drawn from the host registry each entry; nothing here is a "current"
+   * or "last used" project (Q1=B).
+   */
+  readonly projects: ProjectListState
   readonly transport: BoardSource['transport']
   /**
    * The project this controller is showing; `null` means nothing is selected
@@ -271,6 +292,14 @@ export interface BoardController {
   /** Retry a failed read (same selection; no write is replayed). */
   retryRead(): Promise<void>
   /**
+   * Read the selectable project candidates from the host registry.
+   *
+   * Called on every panel entry/reset and retried on failure; it never selects,
+   * caches or persists anything (Q1=B). An empty result is a legal "no projects"
+   * answer and must be rendered as such, never as an empty board.
+   */
+  loadProjects(): Promise<void>
+  /**
    * Switch projects: clears the previous view, records the selection in state
    * and reads. `null` returns to `selection-required` without a read.
    */
@@ -344,6 +373,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     // Q1=B: a fresh board never assumes a project; the panel opens on the
     // explicit selection empty state and sends no read.
     read: { kind: 'selection-required', message: SELECTION_REQUIRED_DESCRIPTION },
+    projects: { kind: 'idle' },
     transport: source.transport,
     selectedProjectId: null,
     cancelledExpanded: false,
@@ -386,6 +416,9 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     setState({
       selectedProjectId: null,
       read: selectionRequired(),
+      // The candidate set is re-read on the next entry; it is not a cache of
+      // "the projects I saw last time" (Q1=B).
+      projects: { kind: 'idle' },
       openTaskId: null,
       detail: null,
       statusDialog: null,
@@ -635,6 +668,29 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       }
     },
 
+    async loadProjects() {
+      setState({ projects: { kind: 'loading' } })
+      const result = await source.listProjects()
+      if (!result.ok) {
+        // REC-05: a failed listing is visible and retryable. It never becomes an
+        // empty candidate set and never selects a project by itself.
+        setState({
+          projects: { kind: 'failed', code: result.code, message: result.message },
+          feedback: {
+            kind: 'failure',
+            text: result.message,
+            code: result.code,
+            retry: { kind: 'read' },
+          },
+        })
+        return
+      }
+      const projects: ProjectListState = { kind: 'loaded', projects: result.projects }
+      // A late listing must not clear a board read's own feedback: only the
+      // selection screen owns this response.
+      setState(state.read.kind === 'selection-required' ? { projects, feedback: null } : { projects })
+    },
+
     async load() {
       const requested = state.selectedProjectId
       if (requested === null) {
@@ -837,7 +893,11 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       const retry = feedback.retry
       switch (retry.kind) {
         case 'read':
-          void this.load()
+          // On the selection screen the failed read is the project list; reading
+          // a board without a selection would only bounce back to that state
+          // (Q1=B). Once a project is selected, "read" retries the board.
+          if (state.read.kind === 'selection-required') void this.loadProjects()
+          else void this.load()
           return
         case 'status':
           void runWrite('status', retry.input.taskId, retry, () => source.setStatus(retry.input))

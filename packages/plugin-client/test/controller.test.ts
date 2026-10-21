@@ -21,6 +21,7 @@ import type {
   BoardReadResult,
   BoardSource,
   FormalStatusValue,
+  ProjectListResult,
   ReorderInput,
   StatusChangeInput,
   UndoInput,
@@ -75,6 +76,10 @@ interface FakeSource extends BoardSource {
   reads: number
   /** Project ids the controller asked for, in order (Q1=B: explicit per call). */
   readProjects: string[]
+  /** How many times the candidate list was requested. */
+  projectListCalls: number
+  /** The next answer to `listProjects`. */
+  nextProjectList: ProjectListResult
   statusCalls: StatusChangeInput[]
   reorderCalls: ReorderInput[]
   undoCalls: UndoInput[]
@@ -96,6 +101,8 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
     transport: { kind: 'host', detail: 'test' },
     reads: 0,
     readProjects: [],
+    projectListCalls: 0,
+    nextProjectList: { ok: true, projects: [] },
     statusCalls: [],
     reorderCalls: [],
     undoCalls: [],
@@ -107,6 +114,10 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
       source.reads += 1
       source.readProjects.push(projectId)
       return source.nextRead
+    },
+    async listProjects() {
+      source.projectListCalls += 1
+      return source.nextProjectList
     },
     async setStatus(input) {
       source.statusCalls.push(input)
@@ -585,6 +596,122 @@ describe('selection state (Q1=B: explicit, in-memory, never persisted)', () => {
     expect(second.getState().selectedProjectId).toBeNull()
     expect(second.getState().read.kind).toBe('selection-required')
     expect(source.reads).toBe(1)
+  })
+})
+
+describe('project list state (Q1=B: fresh candidates, explicit selection)', () => {
+  it('goes idle → loading → loaded, and loading a list never selects a project', async () => {
+    const source = fakeSource()
+    let release: (result: ProjectListResult) => void = () => undefined
+    source.listProjects = () => new Promise<ProjectListResult>((resolve) => { release = resolve })
+    const controller = controllerFor(source)
+
+    expect(controller.getState().projects.kind).toBe('idle')
+    const pending = controller.loadProjects()
+    expect(controller.getState().projects.kind).toBe('loading')
+
+    release({
+      ok: true,
+      projects: [
+        { projectId: 'ws-1', title: 'Demo', path: 'C:/demo' },
+        { projectId: 'ws-2', title: 'Demo', path: 'D:/two' },
+      ],
+    })
+    await pending
+
+    const state = controller.getState()
+    expect(state.projects).toEqual({
+      kind: 'loaded',
+      projects: [
+        { projectId: 'ws-1', title: 'Demo', path: 'C:/demo' },
+        { projectId: 'ws-2', title: 'Demo', path: 'D:/two' },
+      ],
+    })
+    // A list is not a selection: no board read, no chosen project, no default.
+    expect(state.read.kind).toBe('selection-required')
+    expect(state.selectedProjectId).toBeNull()
+    expect(source.reads).toBe(0)
+  })
+
+  it('keeps a failed listing retryable and never falls back to an empty list or the first project', async () => {
+    const source = fakeSource()
+    source.nextProjectList = { ok: false, code: 'unavailable', message: '项目清单通道未接通，未读取任何项目。' }
+    const controller = controllerFor(source)
+
+    await controller.loadProjects()
+
+    let state = controller.getState()
+    expect(state.projects).toEqual({
+      kind: 'failed',
+      code: 'unavailable',
+      message: '项目清单通道未接通，未读取任何项目。',
+    })
+    expect(state.feedback?.kind).toBe('failure')
+    if (state.feedback?.kind !== 'failure') throw new Error('unreachable')
+    // F9/F10 shape: no new retry kind; a read retry that routes back to the list.
+    expect(state.feedback.retry).toEqual({ kind: 'read' })
+    // Nothing was guessed or selected by the failure.
+    expect(state.selectedProjectId).toBeNull()
+    expect(state.read.kind).toBe('selection-required')
+    expect(source.reads).toBe(0)
+
+    // retryPending re-reads the list (not a board) and recovers without selecting.
+    source.nextProjectList = { ok: true, projects: [{ projectId: 'ws-1', title: 'Demo', path: 'C:/demo' }] }
+    controller.retryPending()
+    await new Promise((resolve) => { setTimeout(resolve, 0) })
+
+    state = controller.getState()
+    expect(source.projectListCalls).toBe(2)
+    expect(source.reads).toBe(0)
+    expect(state.projects.kind).toBe('loaded')
+    expect(state.selectedProjectId).toBeNull()
+    expect(state.feedback).toBeNull()
+  })
+
+  it('selectProject from the list reads exactly that project and keeps the candidates', async () => {
+    const source = fakeSource()
+    source.nextProjectList = { ok: true, projects: [{ projectId: 'ws-1', title: 'Demo', path: 'C:/demo' }] }
+    const controller = controllerFor(source)
+    await controller.loadProjects()
+
+    await controller.selectProject('ws-1')
+
+    const state = controller.getState()
+    expect(source.readProjects).toEqual(['ws-1'])
+    expect(state.read.kind).toBe('ready')
+    expect(state.selectedProjectId).toBe('ws-1')
+    expect(state.projects.kind).toBe('loaded')
+  })
+
+  it('resetSelection clears both the selection and the candidate list without re-reading', async () => {
+    const source = fakeSource()
+    source.nextProjectList = { ok: true, projects: [{ projectId: 'ws-1', title: 'Demo', path: 'C:/demo' }] }
+    const controller = controllerFor(source)
+    await controller.loadProjects()
+    await controller.selectProject('ws-1')
+
+    controller.resetSelection()
+
+    const state = controller.getState()
+    expect(state.selectedProjectId).toBeNull()
+    expect(state.projects).toEqual({ kind: 'idle' })
+    expect(state.read.kind).toBe('selection-required')
+    expect(source.projectListCalls).toBe(1)
+    expect(source.reads).toBe(1)
+  })
+
+  it('treats an empty candidate list as a legal answer, not a failure and not a selection', async () => {
+    const source = fakeSource()
+    source.nextProjectList = { ok: true, projects: [] }
+    const controller = controllerFor(source)
+
+    await controller.loadProjects()
+
+    const state = controller.getState()
+    expect(state.projects).toEqual({ kind: 'loaded', projects: [] })
+    expect(state.feedback).toBeNull()
+    expect(state.selectedProjectId).toBeNull()
+    expect(source.reads).toBe(0)
   })
 })
 

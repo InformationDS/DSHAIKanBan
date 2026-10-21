@@ -15,6 +15,8 @@ import {
   encodeStatusVersion,
   parseBoardSnapshotValue,
   parseBoardTask,
+  parseProjectListPayload,
+  parseProjectListValue,
   parseReadBoardPayload,
   parseReorderPayload,
   parseSetStatusPayload,
@@ -119,8 +121,7 @@ describe('payload guards: explicit project and required baselines', () => {
   })
 })
 
-describe('snapshot guards: baseline and undo credential', () => {
-  it('parses a snapshot carrying statusRevision and undoTarget', () => {
+describe('snapshot guards: baseline and undo credential', () => {  it('parses a snapshot carrying statusRevision and undoTarget', () => {
     const parsed = parseBoardSnapshotValue(SNAPSHOT)
     expect(parsed).not.toBeNull()
     expect(parsed?.tasks[0]?.statusRevision).toBe(4)
@@ -146,5 +147,43 @@ describe('snapshot guards: baseline and undo credential', () => {
     expect(parseBoardTask({ ...TASK, undoTarget: { appliedUpdateId: 'op-7' } })).toBeNull()
     expect(parseBoardTask({ ...TASK, undoTarget: { statusVersion: '3', appliedUpdateId: 'op-7' } })).toBeNull()
     expect(parseBoardTask({ ...TASK, undoTarget: { statusVersion: 'ver1:3', appliedUpdateId: '' } })).toBeNull()
+  })
+})
+
+describe('project list guards: a candidate set, never a "current project"', () => {
+  it('accepts only an object payload; a listing carries no selection', () => {
+    expect(parseProjectListPayload({})).toEqual({})
+    // A missing payload, a list, a bare string and an id are all malformed:
+    // listing has no way to express "read the current project" (Q1=B).
+    for (const value of [null, undefined, [], ['ws-1'], 'ws-1', 5]) {
+      expect(parseProjectListPayload(value), `accepted ${JSON.stringify(value)}`).toBeNull()
+    }
+  })
+
+  it('parses id/title/path items, keeps an empty list legal, and refuses malformed entries', () => {
+    const projects = [
+      { projectId: 'ws-1', title: 'Demo', path: 'C:/demo' },
+      { projectId: 'ws-2', title: 'Demo', path: 'D:/two' },
+    ]
+    expect(parseProjectListValue({ projects })).toEqual({ projects })
+    // An empty candidate set is a successful answer, not an error.
+    expect(parseProjectListValue({ projects: [] })).toEqual({ projects: [] })
+
+    const malformed: unknown[] = [
+      null,
+      undefined,
+      {},
+      { projects: 'not-an-array' },
+      { projects: [null] },
+      { projects: [{ projectId: '', title: 't', path: 'p' }] },
+      { projects: [{ projectId: 7, title: 't', path: 'p' }] },
+      // Missing title / path: the selector needs both to disambiguate.
+      { projects: [{ projectId: 'ws-1', path: 'p' }] },
+      { projects: [{ projectId: 'ws-1', title: 't' }] },
+      { projects: [{ projectId: 'ws-1', title: 't', path: 7 }] },
+    ]
+    for (const value of malformed) {
+      expect(parseProjectListValue(value), `accepted ${JSON.stringify(value)}`).toBeNull()
+    }
   })
 })

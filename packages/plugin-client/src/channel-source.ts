@@ -19,6 +19,9 @@
  *   "saved" and not "definitely not saved" (REC-03: verify before retrying).
  * - Failure codes are taken from the host's `error.code` when it is one of ours;
  *   anything else is reported as `save-failed` with the host's message.
+ * - The project list is a **candidate set**, read fresh on every entry. A failed
+ *   listing (`unavailable`/`read-failed`) is reported as a failure and never
+ *   collapsed into an empty list; listing never selects anything (Q1=B).
  *
  * @module @aikanban/plugin-client/channel-source
  */
@@ -29,6 +32,7 @@ import type {
   BoardSnapshot,
   BoardSource,
   FormalStatusValue,
+  ProjectListResult,
   ReorderInput,
   StatusChangeInput,
   UndoInput,
@@ -41,6 +45,8 @@ import {
   parseBoardSnapshotValue,
   parseBoardWriteValue,
   parseFormalStatusValue,
+  parseProjectListValue,
+  type ProjectListPayload,
   type ReadBoardPayload,
   type ReorderPayload,
   type SetStatusPayload,
@@ -167,8 +173,7 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
   const write = async (
     endpoint: string,
     payload: SetStatusPayload | ReorderPayload | UndoStatusPayload,
-  ): Promise<WriteResult> => {
-    let result: ConnectionRpcResultLike
+  ): Promise<WriteResult> => {    let result: ConnectionRpcResultLike
     try {
       result = await call(endpoint, payload)
     } catch (error) {
@@ -199,9 +204,43 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
     return { ok: true, snapshot: value.snapshot, undoable: value.undoable }
   }
 
+  /**
+   * List the selectable projects (Q1=B).
+   *
+   * The call goes through the same authenticated channel and carries an empty
+   * payload: listing never selects anything. A transport rejection means the
+   * channel is not registered/connected (no host half is listening), reported as
+   * `unavailable`; a malformed success value is `read-failed`. Neither is ever
+   * turned into an empty candidate list.
+   */
+  const listProjects = async (): Promise<ProjectListResult> => {
+    const payload: ProjectListPayload = {}
+    let result: ConnectionRpcResultLike
+    try {
+      result = await call(BOARD_ENDPOINTS.listProjects, payload)
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'unavailable',
+        message: `项目清单通道未接通，未读取任何项目。（${messageOf(error)}）`,
+      }
+    }
+    if (!result.ok) {
+      return {
+        ok: false,
+        code: readFailureCode(result.error.code),
+        message: result.error.message,
+      }
+    }
+    const value = parseProjectListValue(result.value)
+    if (value === null) return { ok: false, code: 'read-failed', message: MALFORMED_RESPONSE_MESSAGE }
+    return { ok: true, projects: value.projects }
+  }
+
   return {
     transport: { kind: 'host', detail: `connection rpc ${channel}` },
     readBoard,
+    listProjects,
     setStatus: (input: StatusChangeInput) => {
       const payload: SetStatusPayload = {
         taskId: input.taskId,

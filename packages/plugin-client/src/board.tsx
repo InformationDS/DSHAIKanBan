@@ -89,6 +89,12 @@ export interface BoardActions {
   onDialogReason(text: string): void
   onDialogConfirm(): void
   onDialogCancel(): void
+  /** Explicitly select one candidate project (Q1=B: never automatic). */
+  onSelectProject(projectId: string): void
+  /** Re-read the candidate list after a failed/empty listing. */
+  onLoadProjects(): void
+  /** Leave the board and return to the selector; the selection is not kept. */
+  onSwitchProject(): void
 }
 
 /** One status a menu may offer: the id that travels, the label that is shown. */
@@ -382,6 +388,119 @@ function renderDetail(
 }
 
 /**
+ * The project selector (Q1=B).
+ *
+ * The list is the host's candidate set, read fresh on every entry. The panel
+ * must never imply a default, a most-recent, or a recommendation: there is no
+ * selected/pressed/current marker on any entry, and the same constant
+ * explanation is shown regardless of which projects exist. Same-title projects
+ * are told apart by their path.
+ *
+ * @param message - the selection explanation (from the read state).
+ * @param projects - the project-list state.
+ * @param actions - the panel's actions.
+ * @returns the selector node.
+ */
+function renderProjectSelector(
+  message: string,
+  projects: BoardState['projects'],
+  actions: BoardActions,
+): ReactNode {
+  const children: ReactNode[] = [
+    createElement('div', { key: 'title', style: { fontWeight: 600 } }, SELECTION_REQUIRED_TITLE),
+    createElement('div', { key: 'description', style: { fontSize: '12px', marginTop: '4px' } }, message),
+  ]
+
+  if (projects.kind === 'idle' || projects.kind === 'loading') {
+    children.push(createElement(
+      'div',
+      { key: 'projects-loading', 'data-aikanban-projects-loading': 'true', style: { ...MUTED, marginTop: '8px' } },
+      '正在加载项目…',
+    ))
+  } else if (projects.kind === 'failed') {
+    // REC-05: a failed listing is stated and retryable; it is never shown as an
+    // empty list, and no project is selected to "help".
+    children.push(createElement(
+      'div',
+      {
+        key: 'projects-failed',
+        role: 'alert',
+        'data-aikanban-projects-failed': projects.code,
+        style: { fontSize: '12px', marginTop: '8px' },
+      },
+      projects.message,
+    ))
+    children.push(createElement(
+      'button',
+      {
+        key: 'projects-retry',
+        type: 'button',
+        'data-aikanban-projects-retry': 'true',
+        onClick: actions.onLoadProjects,
+        style: { marginTop: '6px' },
+      },
+      '重新加载项目',
+    ))
+  } else if (projects.projects.length === 0) {
+    children.push(createElement(
+      'div',
+      { key: 'projects-empty', role: 'status', 'data-aikanban-projects-empty': 'true', style: { fontSize: '12px', marginTop: '8px' } },
+      '没有可用项目。',
+    ))
+    children.push(createElement(
+      'button',
+      {
+        key: 'projects-refresh',
+        type: 'button',
+        'data-aikanban-projects-refresh': 'true',
+        onClick: actions.onLoadProjects,
+        style: { marginTop: '6px' },
+      },
+      '刷新项目列表',
+    ))
+  } else {
+    children.push(createElement(
+      'div',
+      {
+        key: 'projects',
+        role: 'list',
+        'data-aikanban-project-list': 'true',
+        style: { marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' },
+      },
+      projects.projects.map((project) => createElement(
+        'div',
+        { key: project.projectId, role: 'listitem' },
+        createElement(
+          'button',
+          {
+            type: 'button',
+            'data-aikanban-project': project.projectId,
+            // The accessible name carries id/title/path; no "default"/"recent"
+            // wording is allowed here (Q1=B).
+            'aria-label': `选择项目：${project.title}（${project.path.length > 0 ? project.path : '路径未提供'}）`,
+            onClick: () => { actions.onSelectProject(project.projectId) },
+            style: { textAlign: 'left' },
+          },
+          createElement('span', { style: { fontWeight: 600 } }, project.title),
+          createElement('span', { style: MUTED }, `（${project.path.length > 0 ? project.path : '路径未提供'}）`),
+        ),
+      )),
+    ))
+  }
+
+  return createElement(
+    'section',
+    {
+      key: 'selection-required',
+      role: 'status',
+      'data-aikanban-selection-required': 'true',
+      style: { ...CARD_STYLE, marginTop: '8px' },
+    },
+    children,
+  )
+}
+
+/**
  * The feedback banner (REC-01).
  *
  * @param state - the current panel state.
@@ -464,24 +583,30 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
     ))
   }
 
+  // Q1=B: a selection may be revisited but is never persisted. The entry point
+  // is only rendered once a project was explicitly chosen in this panel session.
+  if (state.selectedProjectId !== null) {
+    children.push(createElement(
+      'button',
+      {
+        key: 'switch-project',
+        type: 'button',
+        'data-aikanban-switch-project': 'true',
+        onClick: actions.onSwitchProject,
+        style: { marginBottom: '8px' },
+      },
+      '切换项目',
+    ))
+  }
+
   const read = state.read
   if (read.kind === 'loading') {
     children.push(createElement('div', { key: 'loading', style: MUTED }, '正在读取看板…'))
   }
   if (read.kind === 'selection-required') {
-    // Q1=B: the explicit empty state. It must never imply a default project
-    // ("all tasks", "recent project", or the first workspace).
-    children.push(createElement(
-      'section',
-      {
-        key: 'selection-required',
-        role: 'status',
-        'data-aikanban-selection-required': 'true',
-        style: { ...CARD_STYLE, marginTop: '8px' },
-      },
-      createElement('div', { key: 'title', style: { fontWeight: 600 } }, SELECTION_REQUIRED_TITLE),
-      createElement('div', { key: 'description', style: { fontSize: '12px', marginTop: '4px' } }, read.message),
-    ))
+    // Q1=B: the explicit selection screen. The candidate set is read fresh and
+    // the panel must never imply a default/recent/first project.
+    children.push(renderProjectSelector(read.message, state.projects, actions))
   }
   if (read.kind === 'unknown-project') {
     children.push(createElement(
@@ -539,7 +664,10 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
       : []
     children.push(renderDetail(state.detail, actions, selectable, state.detail.status, view?.capabilities.undo === true))
   }
-  children.push(renderFeedback(state, actions))
+  // On the selection screen the selector renders the (only possible) listing
+  // failure and its retry inline; echoing it in a second banner would duplicate
+  // the same sentence and action.
+  if (read.kind !== 'selection-required') children.push(renderFeedback(state, actions))
 
   return createElement('div', { 'data-aikanban-panel': 'aikanban', style: { padding: '12px 16px', fontSize: '13px', lineHeight: 1.6 } }, children)
 }
@@ -559,11 +687,13 @@ export function BoardPanel(props: { readonly controller: BoardController }): Rea
   )
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
 
-  // Q1=B: every mount resets to the explicit selection state. A cached
-  // controller must not carry the previous project, view or dialog into this
-  // entry, and nothing is read until a project is explicitly selected.
+  // Q1=B: every mount resets to the explicit selection state and re-reads the
+  // candidate list. A cached controller must not carry the previous project,
+  // view or dialog into this entry, and nothing is read until a project is
+  // explicitly selected. The list is fetched fresh, never from a cache.
   useEffect(() => {
     controller.resetSelection()
+    void controller.loadProjects()
   }, [controller])
 
   const actions: BoardActions = {
@@ -584,6 +714,14 @@ export function BoardPanel(props: { readonly controller: BoardController }): Rea
     onDialogReason: (text) => { controller.setDialogReason(text) },
     onDialogConfirm: () => { controller.confirmStatusDialog() },
     onDialogCancel: () => { controller.cancelStatusDialog() },
+    onSelectProject: (projectId) => { void controller.selectProject(projectId) },
+    onLoadProjects: () => { void controller.loadProjects() },
+    onSwitchProject: () => {
+      // Back to the selector: the selection is dropped, not remembered, and the
+      // candidate list is fetched again (Q1=B).
+      controller.resetSelection()
+      void controller.loadProjects()
+    },
   }
   return renderBoard(state, actions)
 }

@@ -25,7 +25,7 @@
  * @module @aikanban/plugin-client/source
  */
 
-import type { BoardFailureCodeWire } from './wire.js'
+import type { BoardFailureCodeWire, ProjectListItem } from './wire.js'
 import type { BoardCapabilities, BoardReadData, StatusId } from './model.js'
 
 /* ------------------------------------------------------------------ *
@@ -161,6 +161,46 @@ export interface WriteFailure {
 export type WriteResult = WriteSuccess | WriteFailure
 
 /* ------------------------------------------------------------------ *
+ * Project listing (Q1=B: candidate set, explicit selection)
+ * ------------------------------------------------------------------ */
+
+/**
+ * One project offered for explicit selection.
+ *
+ * `projectId` is the workspace id the host's `board/read` accepts. There is
+ * deliberately **no** current/default/last-used flag: the list is only a
+ * candidate set, selection happens on every entry and lives in controller
+ * memory only (Q1=B).
+ */
+export type ProjectChoice = ProjectListItem
+
+/**
+ * A project-list read that succeeded.
+ *
+ * An empty array is a legal answer ("there are no projects here"); it is not an
+ * error and must never be replaced by a fabricated or default project.
+ */
+export interface ProjectListSuccess {
+  readonly ok: true
+  readonly projects: readonly ProjectChoice[]
+}
+
+/**
+ * A project-list read that failed.
+ *
+ * The failure is explicit so the selector can say so and offer a retry; it is
+ * never silently converted into an empty list (REC-05).
+ */
+export interface ProjectListFailure {
+  readonly ok: false
+  readonly code: BoardFailureCode
+  readonly message: string
+}
+
+/** Result of listing the selectable projects. */
+export type ProjectListResult = ProjectListSuccess | ProjectListFailure
+
+/* ------------------------------------------------------------------ *
  * The port
  * ------------------------------------------------------------------ */
 
@@ -172,6 +212,16 @@ export interface BoardSource {
    * of pretending the board is empty.
    */
   readonly transport: { readonly kind: 'host' | 'unavailable'; readonly detail: string }
+
+  /**
+   * List the projects the host offers for explicit selection (Q1=B).
+   *
+   * The list is read **fresh on every entry** and is never cached as a "current
+   * project": selecting one is a separate, explicit act (`selectProject` →
+   * `readBoard`). A failure is a failure — the controller may not fall back to
+   * an empty list or to the first project.
+   */
+  listProjects(): Promise<ProjectListResult>
 
   /**
    * Read the whole board for the **explicitly selected** project.
@@ -200,6 +250,9 @@ export interface BoardSource {
 /** Text the panel shows when no data channel exists. Explicit, never "empty". */
 export const NO_CHANNEL_MESSAGE = '看板数据通道未接通：无法读取任务。这不是空看板。'
 
+/** Text shown when the project list cannot be read because no channel exists. */
+export const NO_CHANNEL_PROJECTS_MESSAGE = '看板数据通道未接通：无法读取项目清单。这不等于「没有可用项目」。'
+
 /**
  * A port with no transport behind it.
  *
@@ -215,6 +268,7 @@ export function createUnavailableBoardSource(detail: string): BoardSource {
   return {
     transport: { kind: 'unavailable', detail },
     readBoard: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_MESSAGE }),
+    listProjects: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_PROJECTS_MESSAGE }),
     setStatus: () => Promise.resolve(failure()),
     reorder: () => Promise.resolve(failure()),
     undoStatusChange: () => Promise.resolve(failure()),

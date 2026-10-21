@@ -203,6 +203,16 @@ describe('F02 channel: protocol round trip (built client bundle ↔ built host h
     const calls: { port: string; input: unknown }[] = []
     const port = {
       readBoard: async (input: unknown) => ({ ok: true as const, snapshot: snapshot() }),
+      listProjects: async () => {
+        calls.push({ port: 'listProjects', input: undefined })
+        return {
+          ok: true as const,
+          projects: [
+            { projectId: 'ws-1', title: 'Demo project', path: 'C:/demo' },
+            { projectId: 'ws-2', title: 'Demo project', path: 'D:/other' },
+          ],
+        }
+      },
       setStatus: async (input: unknown) => { calls.push({ port: 'setStatus', input }); return { ok: true as const, snapshot: snapshot(), undoable: true } },
       reorder: async (input: unknown) => { calls.push({ port: 'reorder', input }); return { ok: true as const, snapshot: snapshot(), undoable: true } },
       undoStatusChange: async (input: unknown) => { calls.push({ port: 'undo', input }); return { ok: true as const, snapshot: snapshot(), undoable: false } },
@@ -238,8 +248,40 @@ describe('F02 channel: protocol round trip (built client bundle ↔ built host h
     expect(result.snapshot.tasks[1]?.undoTarget).toEqual({ statusVersion: 'ver1:2', appliedUpdateId: 'op-prev' })
   })
 
-  it('refuses a board/read without a projectId: invalid-payload and no host read', async () => {
-    const host = await loadHostHalf()
+  it('lists projects through the real handler with an empty payload and no selection', async () => {
+    const { source, transport } = await wire()
+
+    const result = await source.listProjects()
+
+    expect(transport.sent[0]?.channel).toBe('/aikanban')
+    expect(transport.sent[0]?.endpoint).toBe('project/list')
+    // Q1=B: listing carries no project hint; the choice is a separate act.
+    expect(transport.sent[0]?.envelope.payload).toEqual({})
+    expect(result.ok, result.ok ? '' : `listing failed: ${result.code} ${result.message}`).toBe(true)
+    if (!result.ok) throw new Error(result.message)
+    expect(result.projects).toEqual([
+      { projectId: 'ws-1', title: 'Demo project', path: 'C:/demo' },
+      { projectId: 'ws-2', title: 'Demo project', path: 'D:/other' },
+    ])
+  })
+
+  it('reports a failed project listing as a failure, never as an empty candidate set', async () => {
+    const { source } = await wire({
+      listProjects: async () => ({
+        ok: false as const,
+        code: 'unavailable' as const,
+        message: '数据层尚未就绪，项目清单暂不可用。',
+      }),
+    })
+
+    const result = await source.listProjects()
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('a failed listing was reported as an empty candidate set')
+    expect(result.code).toBe('unavailable')
+  })
+
+  it('refuses a board/read without a projectId: invalid-payload and no host read', async () => {    const host = await loadHostHalf()
     let reads = 0
     const handler = host.createBoardChannelHandler({
       readBoard: async () => { reads += 1; return { ok: true, snapshot: snapshot([]) } },

@@ -18,9 +18,10 @@
  *    endpoint's payload is checked before it reaches the data layer. Entering
  *    `blocked` without a reason is refused here as well as in core — the wire
  *    boundary does not get to skip a product rule.
- * 3. **Own no business logic.** Reads, status changes, reorders and undo are
- *    decided by `@aikanban/core` behind {@link HostBoardPort}; this file only
- *    names endpoints, validates input and maps results.
+ * 3. **Own no business logic.** Reads, status changes, reorders, undo, task
+ *    creation, field saves and activity history are decided by `@aikanban/core`
+ *    behind {@link HostBoardPort}; this file only names endpoints, validates
+ *    input (including the `ver1:`/`fver1:` baseline grammars) and maps results.
  *
  * ## Error codes (documented in F02 implementation.md)
  *
@@ -28,6 +29,7 @@
  * | --- | --- |
  * | `unknown-endpoint` | endpoint not in the published set |
  * | `invalid-payload` | payload failed its guard; nothing was read or written |
+ * | `invalid-input` | a management input was refused by core/data layer (blank title, unknown status, bad activity scope/limit, identity collision, …); nothing was written |
  * | `invalid-reason` | entering `blocked` without a non-blank reason |
  * | `read-failed` | the board read failed |
  * | `not-found` | the task does not exist |
@@ -44,18 +46,29 @@ import {
   BOARD_ENDPOINT_LIST,
   BOARD_ENDPOINTS,
   isBlockedReasonValid,
+  parseActivityPayload,
+  parseCreateTaskPayload,
+  parseFieldsVersion,
   parseProjectListPayload,
   parseReadBoardPayload,
   parseReorderPayload,
   parseSetStatusPayload,
   parseStatusVersion,
   parseUndoStatusPayload,
+  parseUpdateFieldsPayload,
+  type ActivityEntryValue,
   type BoardFailureCodeWire,
   type BoardSnapshotValue,
+  type FieldsBaselineWire,
   type FormalStatusValueWire,
+  type KeptFieldInputWire,
+  type KeptTaskInputWire,
   type ProjectListItem,
   type ReadBoardPayload,
 } from '@aikanban/plugin-client/wire'
+
+/** One task as it travels on the wire (the pipeline member type is owned by `wire.ts`). */
+type WireTask = BoardSnapshotValue['tasks'][number]
 
 /* ------------------------------------------------------------------ *
  * The data-layer port
@@ -152,6 +165,116 @@ export interface HostUndoInput {
 }
 
 /**
+ * A `task/create` input after the handler validated the payload.
+ *
+ * `initialStatus` stays an opaque string at the boundary: the status vocabulary
+ * belongs to core, which refuses an unknown one with its own echoed input. The
+ * port has already resolved `projectId` through the host registry before core is
+ * asked (a failed resolution is `unknown-project`, never a guessed home).
+ */
+export interface HostCreateTaskInput {
+  readonly projectId: string
+  readonly requestId: string
+  readonly title: string
+  readonly goal?: string
+  readonly initialStatus?: string
+  readonly blockedReason?: string
+}
+
+/**
+ * A `task/fields.update` input after the handler decoded **both** baselines.
+ *
+ * The wire carries `expectedFieldsVersion: 'fver1:<n>'` and
+ * `expectedStatusVersion: 'ver1:<n>'`; neither encoding crosses this port, so a
+ * data layer only ever sees numbers (SAVE-05, same rule as the status writes).
+ */
+export interface HostUpdateFieldsInput {
+  readonly taskId: string
+  readonly requestId: string
+  readonly expectedFieldsRevision: number
+  readonly expectedStatusRevision: number
+  readonly title?: string
+  /** `null` explicitly clears the goal; absent leaves it unchanged. */
+  readonly goal?: string | null
+}
+
+/** An `activity/read` input after the handler validated the scope and limit. */
+export interface HostActivityInput {
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  readonly limit?: number
+}
+
+/** A creation whose result is known to the data layer. */
+export interface HostCreateTaskSuccess {
+  readonly ok: true
+  readonly outcome: 'created' | 'already-created'
+  /** The created (or already existing) task, already mapped to the wire shape. */
+  readonly task: WireTask
+  /**
+   * The board re-read, or `null` when it failed. `null` means "the creation
+   * landed, the view did not refresh", never an empty board (REC-01/REC-05).
+   */
+  readonly snapshot: BoardSnapshotValue | null
+}
+
+/** A creation that was refused or did not land. Nothing was created. */
+export interface HostCreateTaskFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+  /** The typed input core echoed back, so the form can keep it (F01-R02). */
+  readonly keptInput?: KeptTaskInputWire
+  /** The deterministic id a failed creation would have produced, when core gives it. */
+  readonly taskId?: string
+}
+
+/** Result of a host-side creation. */
+export type HostCreateTaskOutcome = HostCreateTaskSuccess | HostCreateTaskFailure
+
+/** A field save whose result is known (`saved`/`no-change`/`already-applied`). */
+export interface HostUpdateFieldsSuccess {
+  readonly ok: true
+  readonly outcome: 'saved' | 'no-change' | 'already-applied'
+  readonly task: WireTask
+  readonly changed: readonly ('title' | 'goal')[]
+  readonly fieldsRevision: number
+  /** `null` when the save landed but the board re-read failed (view stale). */
+  readonly snapshot: BoardSnapshotValue | null
+}
+
+/** A field save that was refused or failed. Nothing was written. */
+export interface HostUpdateFieldsFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+  readonly current?: FormalStatusValueWire
+  /** The editor's input, kept for "the draft stays in place" (F01-R05). */
+  readonly keptInput?: KeptFieldInputWire
+  /** Expected vs actual SAVE-05 baseline (`stale-baseline` only). */
+  readonly baseline?: { readonly expected: FieldsBaselineWire; readonly actual: FieldsBaselineWire }
+}
+
+/** Result of a host-side field save. */
+export type HostUpdateFieldsOutcome = HostUpdateFieldsSuccess | HostUpdateFieldsFailure
+
+/** An activity read that succeeded. An empty `entries` is a legal empty history. */
+export interface HostActivitySuccess {
+  readonly ok: true
+  readonly entries: readonly ActivityEntryValue[]
+}
+
+/** An activity read that failed. Never an empty history standing in for a failure. */
+export interface HostActivityFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+}
+
+/** Result of a host-side activity read. */
+export type HostActivityOutcome = HostActivitySuccess | HostActivityFailure
+
+/**
  * What the host half needs from the data layer. The core adapter implements it;
  * the payloads arrive already validated **and with the `ver1:` baseline decoded**
  * (a malformed/missing baseline never reaches this port).
@@ -174,6 +297,18 @@ export interface HostBoardPort {
   setStatus(input: HostSetStatusInput, signal?: AbortSignal): Promise<HostWriteOutcome>
   reorder(input: HostReorderInput, signal?: AbortSignal): Promise<HostWriteOutcome>
   undoStatusChange(input: HostUndoInput, signal?: AbortSignal): Promise<HostWriteOutcome>
+  /**
+   * Idempotently create one task in a project that is registered (or
+   * registrable) in the host's workspace registry (F01-R02/R03, REC-02).
+   */
+  createTask(input: HostCreateTaskInput, signal?: AbortSignal): Promise<HostCreateTaskOutcome>
+  /**
+   * Save a task's title/goal under both decoded baselines (F01-R05/R06,
+   * SAVE-05). A stale baseline is a failure with `current` + `baseline`.
+   */
+  updateTaskFields(input: HostUpdateFieldsInput, signal?: AbortSignal): Promise<HostUpdateFieldsOutcome>
+  /** Read the important-change history of one task or project (F01-R07). */
+  readActivity(input: HostActivityInput, signal?: AbortSignal): Promise<HostActivityOutcome>
 }
 
 /* ------------------------------------------------------------------ *
@@ -206,10 +341,18 @@ function detailsOf(current: FormalStatusValueWire | undefined): Record<string, u
  * This check runs **before** the port: a malformed baseline must never reach
  * the data layer (a silent default to 0 would weaken SAVE-05). The code is
  * `invalid-payload`, a host-only protocol code — `HostWriteFailure.code`
- * stays within the eight browser codes, so an adapter cannot return it.
+ * stays within the published browser codes, so an adapter cannot return it.
  */
 const INVALID_BASELINE_MESSAGE =
   'expectedStatusVersion 必须是规范的基线编码 "ver1:<非负整数>"；本次未读取或写入任何内容。'
+
+/**
+ * Host-side reason for refusing a field save whose fields baseline is missing
+ * or not the canonical `fver1:<n>` encoding. Checked before the port for the
+ * same reason as the status baseline (a silent 0 would weaken SAVE-05).
+ */
+const INVALID_FIELDS_BASELINE_MESSAGE =
+  'expectedFieldsVersion 必须是规范的基线编码 "fver1:<非负整数>"；本次未读取或写入任何内容。'
 
 /**
  * Build the channel handler from a data-layer port.
@@ -247,6 +390,105 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
         // The handler never throws: an exploded listing is a read failure, and
         // the browser keeps its selection state instead of fabricating candidates.
         return failure('read-failed', `读取项目清单失败：${messageOf(error)}`)
+      }
+    }
+
+    if (endpoint === BOARD_ENDPOINTS.taskCreate) {
+      const input = parseCreateTaskPayload(payload)
+      if (input === null) {
+        return failure('invalid-payload', 'task/create payload must carry a non-empty projectId and requestId and a string title; nothing was created.')
+      }
+      try {
+        const outcome = await port.createTask(
+          {
+            projectId: input.projectId,
+            requestId: input.requestId,
+            title: input.title,
+            ...(input.goal === undefined ? {} : { goal: input.goal }),
+            ...(input.initialStatus === undefined ? {} : { initialStatus: input.initialStatus }),
+            ...(input.blockedReason === undefined ? {} : { blockedReason: input.blockedReason }),
+          },
+          signal,
+        )
+        if (!outcome.ok) {
+          return failure(outcome.code, outcome.message, {
+            ...(outcome.taskId === undefined ? {} : { taskId: outcome.taskId }),
+            ...(outcome.keptInput === undefined ? {} : { keptInput: outcome.keptInput }),
+          })
+        }
+        // The success value keeps "known result" and "view refreshed" apart:
+        // `snapshot: null` means the creation landed but the re-read failed.
+        return success({ outcome: outcome.outcome, task: outcome.task, snapshot: outcome.snapshot })
+      } catch (error) {
+        return failure('unknown-result', `创建结果未知：${messageOf(error)}；请先核对当前正式状态，不要重复提交。`)
+      }
+    }
+
+    if (endpoint === BOARD_ENDPOINTS.taskFieldsUpdate) {
+      const input = parseUpdateFieldsPayload(payload)
+      if (input === null) {
+        return failure('invalid-payload', 'task/fields.update payload must carry a non-empty taskId, requestId, both field/status baselines and only string fields (goal may be null to clear it).')
+      }
+      // SAVE-05: both baseline grammars are protocol rules checked before the
+      // port; the data layer only ever receives decoded revisions.
+      const expectedFieldsRevision = parseFieldsVersion(input.expectedFieldsVersion)
+      if (expectedFieldsRevision === null) {
+        return failure('invalid-payload', INVALID_FIELDS_BASELINE_MESSAGE)
+      }
+      const expectedStatusRevision = parseStatusVersion(input.expectedStatusVersion)
+      if (expectedStatusRevision === null) {
+        return failure('invalid-payload', INVALID_BASELINE_MESSAGE)
+      }
+      try {
+        const outcome = await port.updateTaskFields(
+          {
+            taskId: input.taskId,
+            requestId: input.requestId,
+            expectedFieldsRevision,
+            expectedStatusRevision,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.goal === undefined ? {} : { goal: input.goal }),
+          },
+          signal,
+        )
+        if (!outcome.ok) {
+          return failure(outcome.code, outcome.message, {
+            ...(outcome.current === undefined ? {} : { current: outcome.current }),
+            ...(outcome.keptInput === undefined ? {} : { keptInput: outcome.keptInput }),
+            ...(outcome.baseline === undefined ? {} : { baseline: outcome.baseline }),
+          })
+        }
+        return success({
+          outcome: outcome.outcome,
+          task: outcome.task,
+          changed: outcome.changed,
+          fieldsRevision: outcome.fieldsRevision,
+          snapshot: outcome.snapshot,
+        })
+      } catch (error) {
+        return failure('unknown-result', `保存结果未知：${messageOf(error)}；请先核对当前正式状态，不要重复提交。`)
+      }
+    }
+
+    if (endpoint === BOARD_ENDPOINTS.activityRead) {
+      const input = parseActivityPayload(payload)
+      if (input === null) {
+        return failure('invalid-payload', 'activity/read payload must carry scopeKind "task" or "project", a non-empty scopeId and an optional non-negative integer limit.')
+      }
+      try {
+        const outcome = await port.readActivity(
+          {
+            scopeKind: input.scopeKind,
+            scopeId: input.scopeId,
+            ...(input.limit === undefined ? {} : { limit: input.limit }),
+          },
+          signal,
+        )
+        // Success value is exactly `{ entries }`: details are passed through
+        // verbatim (the wire parser validates that every value is a string).
+        return outcome.ok ? success({ entries: outcome.entries }) : failure(outcome.code, outcome.message)
+      } catch (error) {
+        return failure('read-failed', `读取活动历史失败：${messageOf(error)}`)
       }
     }
 

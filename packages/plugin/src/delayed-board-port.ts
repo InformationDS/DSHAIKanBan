@@ -23,7 +23,15 @@
  * @module @aikanban/dsh-aikanban/delayed-board-port
  */
 
-import type { HostBoardPort, HostProjectListOutcome, HostReadOutcome, HostWriteOutcome } from './board-channel.js'
+import type {
+  HostActivityOutcome,
+  HostBoardPort,
+  HostCreateTaskOutcome,
+  HostProjectListOutcome,
+  HostReadOutcome,
+  HostUpdateFieldsOutcome,
+  HostWriteOutcome,
+} from './board-channel.js'
 
 /** What the delayed port needs from the data-layer owner. */
 export interface DelayedPortState {
@@ -69,6 +77,30 @@ export function createDelayedBoardPort(state: DelayedPortState, readyPort: HostB
     message: `数据层尚未就绪，项目清单暂不可用${reasonSuffix()}；不会猜测或默认选择项目。`,
   })
 
+  /**
+   * The management writes are gated exactly like the status writes: while the
+   * data layer is not ready nothing may be created or saved, and the answer must
+   * be an explicit failure, never a silent success.
+   */
+  const unavailableCreate = (): HostCreateTaskOutcome => ({
+    ok: false,
+    code: 'unavailable',
+    message: `数据层尚未就绪，创建未执行${reasonSuffix()}；未创建任何任务。`,
+  })
+
+  const unavailableFields = (): HostUpdateFieldsOutcome => ({
+    ok: false,
+    code: 'unavailable',
+    message: `数据层尚未就绪，本次保存未执行${reasonSuffix()}；正式值未改变。`,
+  })
+
+  /** Activity history is a read: no data layer means "unavailable", not "no history". */
+  const unavailableActivity = (): HostActivityOutcome => ({
+    ok: false,
+    code: 'unavailable',
+    message: `数据层尚未就绪，活动历史暂不可用${reasonSuffix()}；不显示空历史。`,
+  })
+
   return {
     async readBoard(input, signal) {
       return state.coreReady() ? readyPort.readBoard(input, signal) : unavailableRead()
@@ -84,6 +116,15 @@ export function createDelayedBoardPort(state: DelayedPortState, readyPort: HostB
     },
     async undoStatusChange(input) {
       return state.coreReady() ? readyPort.undoStatusChange(input) : unavailableWrite()
+    },
+    async createTask(input, signal) {
+      return state.coreReady() ? readyPort.createTask(input, signal) : unavailableCreate()
+    },
+    async updateTaskFields(input, signal) {
+      return state.coreReady() ? readyPort.updateTaskFields(input, signal) : unavailableFields()
+    },
+    async readActivity(input, signal) {
+      return state.coreReady() ? readyPort.readActivity(input, signal) : unavailableActivity()
     },
   }
 }

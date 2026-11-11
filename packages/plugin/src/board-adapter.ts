@@ -1,14 +1,14 @@
 /**
- * The core → `HostBoardPort` adapter (slice A, P5b).
+ * The core → `HostBoardPort` adapter (slice A + slice B).
  *
  * ## What this module is, and is not
  *
  * It is the one place where a validated, **already decoded** channel payload
  * becomes a `@aikanban/core` call, and where a core outcome becomes the wire's
- * eight failure codes plus a board snapshot. It owns no business rule: status
- * transitions, baselines, idempotency and undo identity are decided by core
- * (`packages/core/src/planning.ts`). The only decisions taken here are the ones
- * the wire contract assigns to the host half:
+ * nine failure codes plus a board snapshot. It owns no business rule: status
+ * transitions, baselines, idempotency, task creation and undo identity are
+ * decided by core (`packages/core/src/planning.ts`). The only decisions taken
+ * here are the ones the wire contract assigns to the host half:
  *
  * 1. **Project resolution** (§3.1): `workspaceRegistry.get(projectId)` — no
  *    fallback, no "current project", no first item. A project that cannot be
@@ -32,21 +32,32 @@
  *    host workspace registry — never from core's "already registered" list — and
  *    listing selects, registers, caches and writes nothing. The ids it returns
  *    are exactly the ids {@link createHostBoardPort}'s read path resolves.
+ * 7. **Task creation** (`task/create`, F01-R02/R03): project resolution first,
+ *    then `core.createTask`; the outcome value separates "the result is known"
+ *    from "the view refreshed" (`snapshot: null`), keeping REC-01 and REC-05.
+ * 8. **Field save** (`task/fields.update`, F01-R05/R06): both SAVE-05 baselines
+ *    are decoded by the handler before this module; a `baseline-changed` outcome
+ *    becomes `stale-baseline` with `current` and both expected/actual baselines.
+ * 9. **Activity read** (`activity/read`, F01-R07): history is read-only, passed
+ *    through with its `details` bag verbatim; an empty history is a success.
  *
  * ## What does not cross this boundary
  *
- * The `ver1:<n>` encoding never reaches this module: the handler validates and
- * decodes it before calling the port, so a write can only carry
- * `expectedStatusRevision: number`. The undo credential's two identities are
- * likewise plain values here (`operationId` = this undo, `appliedUpdateId` =
- * the write being undone); this module never re-derives one from the other.
+ * The `ver1:`/`fver1:` encodings never reach this module: the handler validates
+ * and decodes them before calling the port, so a write can only carry numeric
+ * revisions. The undo credential's two identities are likewise plain values here
+ * (`operationId` = this undo, `appliedUpdateId` = the write being undone); this
+ * module never re-derives one from the other.
  *
  * @module @aikanban/dsh-aikanban/board-adapter
  */
 
 import type {
+  ActivityEntry,
   BoardReadResult,
+  FieldsBaseline,
   KanbanCore,
+  KeptTaskInput,
   ProjectView,
   StatusSnapshot,
   TaskStatus,
@@ -54,21 +65,32 @@ import type {
   WorkScopeAvailability,
 } from '@aikanban/core'
 import {
+  encodeFieldsVersion,
   encodeStatusVersion,
+  type ActivityEntryValue,
   type BoardFailureCodeWire,
   type BoardSnapshotValue,
+  type FieldsBaselineWire,
   type FormalStatusValueWire,
+  type KeptFieldInputWire,
+  type KeptTaskInputWire,
   type ProjectListItem,
   type ReadBoardPayload,
 } from '@aikanban/plugin-client/wire'
 
 import type {
+  HostActivityInput,
+  HostActivityOutcome,
   HostBoardPort,
+  HostCreateTaskInput,
+  HostCreateTaskOutcome,
   HostProjectListOutcome,
   HostReadOutcome,
   HostReorderInput,
   HostSetStatusInput,
   HostUndoInput,
+  HostUpdateFieldsInput,
+  HostUpdateFieldsOutcome,
   HostWriteOutcome,
 } from './board-channel.js'
 
@@ -135,6 +157,47 @@ function readFailure(code: BoardFailureCodeWire, message: string): HostReadOutco
 
 function writeFailure(code: BoardFailureCodeWire, message: string, current?: FormalStatusValueWire): HostWriteOutcome {
   return current === undefined ? { ok: false, code, message } : { ok: false, code, message, current }
+}
+
+/** The typed creation input core echoed, mapped to the wire shape verbatim. */
+function keptTaskInputOf(input: KeptTaskInput): KeptTaskInputWire {
+  return {
+    title: input.title,
+    goal: input.goal,
+    initialStatus: input.initialStatus,
+    blockedReason: input.blockedReason,
+  }
+}
+
+/** The editor's input, mapped to the wire shape (both values may be `null`). */
+function keptFieldInputOf(input: { readonly title?: string | null; readonly goal?: string | null }): KeptFieldInputWire {
+  return { title: input.title ?? null, goal: input.goal ?? null }
+}
+
+/** One SAVE-05 baseline, both halves encoded for the wire. */
+function fieldsBaselineOf(baseline: FieldsBaseline): FieldsBaselineWire {
+  return {
+    fieldsVersion: encodeFieldsVersion(baseline.fieldsRevision),
+    statusVersion: encodeStatusVersion(baseline.statusRevision),
+  }
+}
+
+/** The formal current status of a task, as a failure's `current`. */
+function formalStatusOf(task: TaskView): FormalStatusValueWire {
+  return { status: task.status, statusVersion: encodeStatusVersion(task.statusRevision) }
+}
+
+/** One activity entry, `details` passed through verbatim (§3 `Record<string,string>`). */
+function activityEntryOf(entry: ActivityEntry): ActivityEntryValue {
+  return {
+    activityId: entry.activityId,
+    at: entry.at,
+    scopeKind: entry.scopeKind,
+    scopeId: entry.scopeId,
+    code: entry.code,
+    summary: entry.summary,
+    details: { ...entry.details },
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -472,6 +535,256 @@ export function createHostBoardPort(deps: HostBoardAdapterDeps): HostBoardPort {
         return { ok: true, projects: registry.list().map(projectItemOf) }
       } catch (error) {
         return { ok: false, code: 'read-failed', message: `读取项目清单失败：${messageOf(error)}` }
+      }
+    },
+
+    /**
+     * Idempotently create one task (F01-R02/R03, REC-02).
+     *
+     * Order is fixed by §3.1: resolve + register the project with the host
+     * registry **first** (a project core does not know would otherwise be
+     * `unknown-project` after a pointless validation), then let core decide the
+     * title/status/blocked-reason rules. A landed creation re-reads the board;
+     * a failed re-read returns `snapshot: null` — the task exists, the view is
+     * stale, and that must not be misreported as a failed creation or an empty
+     * board (REC-01/REC-05).
+     */
+    async createTask(input: HostCreateTaskInput): Promise<HostCreateTaskOutcome> {
+      try {
+        const core = deps.core()
+        if (core === null) {
+          return { ok: false, code: 'unavailable', message: '数据层尚未就绪，创建未执行；未创建任何任务。' }
+        }
+        const resolution = await resolveProject(input.projectId)
+        if (!resolution.ok) {
+          if (resolution.code === 'unknown-project') {
+            return { ok: false, code: 'unknown-project', message: resolution.message }
+          }
+          return { ok: false, code: 'save-failed', message: `项目登记失败，创建未执行：${resolution.message}` }
+        }
+
+        let outcome: Awaited<ReturnType<KanbanCore['createTask']>>
+        try {
+          outcome = await core.createTask({
+            projectId: resolution.project.projectId,
+            requestId: input.requestId,
+            title: input.title,
+            ...(input.goal === undefined ? {} : { goal: input.goal }),
+            // The status vocabulary is core's: a non-empty string is accepted at
+            // the wire, and core decides `invalid-status` (§9.2).
+            ...(input.initialStatus === undefined ? {} : { initialStatus: input.initialStatus as TaskStatus }),
+            ...(input.blockedReason === undefined ? {} : { blockedReason: input.blockedReason }),
+          })
+        } catch (error) {
+          return { ok: false, code: 'unknown-result', message: `创建结果未知：${messageOf(error)}；${VERIFY_FIRST}` }
+        }
+
+        switch (outcome.status) {
+          case 'created':
+          case 'already-created': {
+            const read = readSnapshot(core, resolution.project.projectId, resolution.project.availability)
+            return {
+              ok: true,
+              outcome: outcome.status,
+              task: taskOf(outcome.task),
+              snapshot: read.ok ? read.snapshot : null,
+            }
+          }
+          case 'rejected': {
+            const keptInput = keptTaskInputOf(outcome.keptInput)
+            switch (outcome.code) {
+              case 'unknown-project':
+                return { ok: false, code: 'unknown-project', message: outcome.message, keptInput }
+              case 'blocked-reason-required':
+                // A blank blocked reason is its own product rule, not a generic
+                // invalid input (§6.3 keeps `invalid-reason`).
+                return { ok: false, code: 'invalid-reason', message: outcome.message, keptInput }
+              case 'invalid-title':
+              case 'invalid-input':
+              case 'invalid-status':
+              case 'request-id-collision':
+                return { ok: false, code: 'invalid-input', message: outcome.message, keptInput }
+            }
+          }
+          case 'failed':
+            // `failed`: core writes nothing durable, so this is a plain save
+            // failure, never a fabricated success.
+            return {
+              ok: false,
+              code: 'save-failed',
+              message: `创建失败：${outcome.message}；未创建任何任务。`,
+              keptInput: keptTaskInputOf(outcome.keptInput),
+              taskId: outcome.taskId,
+            }
+        }
+        return { ok: false, code: 'save-failed', message: '创建结果无法识别；未创建任何任务。' }
+      } catch (error) {
+        return { ok: false, code: 'unknown-result', message: `创建结果未知：${messageOf(error)}；${VERIFY_FIRST}` }
+      }
+    },
+
+    /**
+     * Save a task's title/goal under both SAVE-05 baselines (F01-R05/R06).
+     *
+     * Pre-read → resolve project → call core with the decoded baselines. The
+     * outcomes map per §9.2: `saved`/`no-change`/`already-applied` re-read the
+     * board; `baseline-changed` is `stale-baseline` with both baselines and the
+     * formal current status; `unknown-task` is `not-found`; refusals are
+     * `invalid-input` with the echoed input; `failed` is `save-failed`. No
+     * automatic retry is performed anywhere.
+     */
+    async updateTaskFields(input: HostUpdateFieldsInput): Promise<HostUpdateFieldsOutcome> {
+      try {
+        const core = deps.core()
+        if (core === null) {
+          return { ok: false, code: 'unavailable', message: '数据层尚未就绪，本次保存未执行；正式值未改变。' }
+        }
+        const pre = preReadTask(core, input.taskId)
+        if (!pre.ok) {
+          const failureOutcome = pre.outcome
+          if (failureOutcome.ok) {
+            return { ok: false, code: 'unknown-result', message: '保存结果未知；请先核对当前正式状态。' }
+          }
+          return {
+            ok: false,
+            code: failureOutcome.code,
+            message: failureOutcome.message,
+            ...(failureOutcome.current === undefined ? {} : { current: failureOutcome.current }),
+          }
+        }
+        const resolved = await resolveForWrite(core, pre.task)
+        if (!resolved.ok) {
+          const failureOutcome = resolved.outcome
+          if (failureOutcome.ok) {
+            return { ok: false, code: 'unknown-result', message: '保存结果未知；请先核对当前正式状态。' }
+          }
+          return {
+            ok: false,
+            code: failureOutcome.code,
+            message: failureOutcome.message,
+            ...(failureOutcome.current === undefined ? {} : { current: failureOutcome.current }),
+          }
+        }
+
+        let outcome: Awaited<ReturnType<KanbanCore['updateTaskFields']>>
+        try {
+          outcome = await core.updateTaskFields({
+            taskId: input.taskId,
+            requestId: input.requestId,
+            expected: {
+              fieldsRevision: input.expectedFieldsRevision,
+              statusRevision: input.expectedStatusRevision,
+            },
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.goal === undefined ? {} : { goal: input.goal }),
+          })
+        } catch (error) {
+          return { ok: false, code: 'unknown-result', message: `保存结果未知：${messageOf(error)}；${VERIFY_FIRST}` }
+        }
+
+        switch (outcome.status) {
+          case 'saved':
+          case 'no-change':
+          case 'already-applied': {
+            const read = readSnapshot(core, resolved.project.projectId, resolved.project.availability)
+            const fieldsRevision =
+              outcome.status === 'saved'
+                ? outcome.fieldsRevision
+                : outcome.status === 'already-applied'
+                  ? outcome.appliedFieldsRevision
+                  : outcome.task.fieldsRevision
+            return {
+              ok: true,
+              outcome: outcome.status,
+              task: taskOf(outcome.task),
+              changed: outcome.status === 'saved' ? [...outcome.changed] : [],
+              fieldsRevision,
+              snapshot: read.ok ? read.snapshot : null,
+            }
+          }
+          case 'baseline-changed':
+            return {
+              ok: false,
+              code: 'stale-baseline',
+              message: '字段保存被拒绝：任务已被其他操作更新，本次未写入；正式值见 current 与 baseline。',
+              current: formalStatusOf(outcome.task),
+              baseline: {
+                expected: fieldsBaselineOf(outcome.expected),
+                actual: fieldsBaselineOf(outcome.actual),
+              },
+              keptInput: keptFieldInputOf(input),
+            }
+          case 'rejected':
+            if (outcome.code === 'unknown-task') {
+              return {
+                ok: false,
+                code: 'not-found',
+                message: `任务 '${input.taskId}' 不存在；本次未写入。`,
+                keptInput: keptFieldInputOf(outcome.keptInput),
+              }
+            }
+            return {
+              ok: false,
+              code: 'invalid-input',
+              message: outcome.message,
+              keptInput: keptFieldInputOf(outcome.keptInput),
+            }
+          case 'failed': {
+            const current = outcome.task === null ? freshCurrent(core, input.taskId, pre.task) : formalStatusOf(outcome.task)
+            return {
+              ok: false,
+              code: 'save-failed',
+              message: `保存失败：${outcome.message}；正式值未改变。`,
+              keptInput: keptFieldInputOf(outcome.keptInput),
+              ...(current === undefined ? {} : { current }),
+            }
+          }
+        }
+        return { ok: false, code: 'save-failed', message: '保存结果无法识别；正式值未改变。' }
+      } catch (error) {
+        return { ok: false, code: 'unknown-result', message: `保存结果未知：${messageOf(error)}；${VERIFY_FIRST}` }
+      }
+    },
+
+    /**
+     * Read one scope's important-change history (F01-R07/SAVE-08).
+     *
+     * `details` is passed through verbatim as `Record<string,string>`; the wire
+     * parser is the authority that every value really is a string. An empty
+     * array is a legal empty history and is never turned into a failure or
+     * replaced with fabricated entries. No project registration or write happens
+     * here: history is read-only.
+     */
+    async readActivity(input: HostActivityInput): Promise<HostActivityOutcome> {
+      try {
+        const core = deps.core()
+        if (core === null) {
+          return { ok: false, code: 'unavailable', message: '数据层尚未就绪，活动历史暂不可用；不显示空历史。' }
+        }
+        // Defensive: the handler's payload guard already refuses other scopes,
+        // but this port must stay honest for a direct caller too.
+        if (input.scopeKind !== 'task' && input.scopeKind !== 'project') {
+          return { ok: false, code: 'invalid-input', message: '活动历史读取被拒绝：scopeKind 只允许 task 或 project。' }
+        }
+        if (typeof input.scopeId !== 'string' || input.scopeId.length === 0) {
+          return { ok: false, code: 'invalid-input', message: '活动历史读取被拒绝：缺少范围 id。' }
+        }
+        if (input.limit !== undefined && (!Number.isInteger(input.limit) || input.limit < 0)) {
+          return { ok: false, code: 'invalid-input', message: '活动历史读取被拒绝：limit 必须是非负整数。' }
+        }
+        let entries: readonly ActivityEntry[]
+        try {
+          entries = core.readActivity({
+            scopeKind: input.scopeKind,
+            scopeId: input.scopeId,
+            ...(input.limit === undefined ? {} : { limit: input.limit }),
+          })
+        } catch (error) {
+          return { ok: false, code: 'read-failed', message: `读取活动历史失败：${messageOf(error)}` }
+        }
+        return { ok: true, entries: entries.map(activityEntryOf) }
+      } catch (error) {
+        return { ok: false, code: 'read-failed', message: `读取活动历史失败：${messageOf(error)}` }
       }
     },
 

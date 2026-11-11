@@ -33,6 +33,7 @@ import {
   createMemoryMedium,
   createMemoryStoragePort,
   scopeKey,
+  taskIdOf,
   type KanbanCore,
   type StoragePort,
 } from '@aikanban/core'
@@ -133,6 +134,49 @@ function taskIn(snapshot: Snapshot, taskId: string): SnapshotTask {
   return task
 }
 
+/** Parse a `task/create` success value through the wire parser's snapshot guard. */
+function createValueOf(result: BoardRpcResult): {
+  outcome: string
+  task: SnapshotTask
+  snapshot: Snapshot | null
+} {
+  const raw = successOf(result) as { outcome?: unknown; task?: unknown; snapshot?: unknown }
+  if (typeof raw.outcome !== 'string') throw new Error('a create success must carry an outcome')
+  if (raw.task === null || typeof raw.task !== 'object') throw new Error('a create success must carry the task')
+  const task = { ...(raw.task as SnapshotTask) }
+  const snapshot = raw.snapshot === null ? null : snapshotOf(raw.snapshot)
+  return { outcome: raw.outcome, task, snapshot }
+}
+
+/** Parse a `task/fields.update` success value through the wire parser's snapshot guard. */
+function updateValueOf(result: BoardRpcResult): {
+  outcome: string
+  task: SnapshotTask
+  changed: readonly string[]
+  fieldsRevision: number
+  snapshot: Snapshot | null
+} {
+  const raw = successOf(result) as {
+    outcome?: unknown
+    task?: unknown
+    changed?: unknown
+    fieldsRevision?: unknown
+    snapshot?: unknown
+  }
+  if (typeof raw.outcome !== 'string') throw new Error('an update success must carry an outcome')
+  if (raw.task === null || typeof raw.task !== 'object') throw new Error('an update success must carry the task')
+  if (!Array.isArray(raw.changed)) throw new Error('an update success must carry the changed list')
+  if (typeof raw.fieldsRevision !== 'number') throw new Error('an update success must carry a numeric fieldsRevision')
+  const snapshot = raw.snapshot === null ? null : snapshotOf(raw.snapshot)
+  return {
+    outcome: raw.outcome,
+    task: { ...(raw.task as SnapshotTask) },
+    changed: raw.changed as readonly string[],
+    fieldsRevision: raw.fieldsRevision,
+    snapshot,
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Harness: real core over a fault-injecting memory port, real adapter, real handler
  * ------------------------------------------------------------------ */
@@ -151,7 +195,7 @@ interface CoreFaults {
   armAfterWrite: boolean
 }
 
-const WRITE_METHODS = new Set<string>(['setTaskStatus', 'reorderTask', 'undoStatusChange'])
+const WRITE_METHODS = new Set<string>(['setTaskStatus', 'reorderTask', 'undoStatusChange', 'createTask', 'updateTaskFields'])
 
 function faultyStorage(faults: StorageFaults): StoragePort {
   const memory = createMemoryStoragePort(createMemoryMedium())
@@ -370,6 +414,42 @@ function undoPayload(
 /** The `current` payload handler puts in `details` for stale-baseline/save-failed. */
 function currentOf(failure: FailureBody): unknown {
   return failure.details['current']
+}
+
+function createPayload(
+  projectId: string,
+  requestId: string,
+  title: string,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return { projectId, requestId, title, ...extra }
+}
+
+function fieldsPayload(
+  taskId: string,
+  requestId: string,
+  expectedFieldsVersion: string,
+  expectedStatusVersion: string,
+  fields: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return { taskId, requestId, expectedFieldsVersion, expectedStatusVersion, ...fields }
+}
+
+interface ActivityEntryBody {
+  readonly activityId: string
+  readonly at: string
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  readonly code: string
+  readonly summary: string
+  readonly details: Record<string, string>
+}
+
+/** The handler's `activity/read` value, parsed through the wire guards indirectly. */
+function activityOf(result: BoardRpcResult): readonly ActivityEntryBody[] {
+  const raw = successOf(result) as { entries?: unknown }
+  if (!Array.isArray(raw.entries)) throw new Error('activity/read success must carry an entries array')
+  return raw.entries as readonly ActivityEntryBody[]
 }
 
 /* ------------------------------------------------------------------ *
@@ -1048,6 +1128,582 @@ describe('post-write re-read failure: classify by whether the write landed', () 
 })
 
 /* ------------------------------------------------------------------ *
+ * task/create (slice B, F01-R02/R03, REC-02)
+ * ------------------------------------------------------------------ */
+
+describe('task/create: idempotent creation over the real core', () => {
+  it('registers the project first, creates the task and returns the re-read snapshot', async () => {
+    const harness = createHarness()
+    // Core knows no project yet: creation must register it before writing.
+    expect(harness.core.listProjects()).toEqual([])
+
+    const result = await harness.handler(
+      'task/create',
+      createPayload('ws-1', 'create-1', '任务 A', { goal: '把 S1 接通' }),
+      SIGNAL,
+    )
+
+    const value = createValueOf(result)
+    expect(value.outcome).toBe('created')
+    expect(value.snapshot).not.toBeNull()
+    const snapshot = value.snapshot as Snapshot
+    expect(snapshot.tasks).toHaveLength(1)
+    expect(value.task.taskId).toBe(taskIdOf({ projectId: 'ws-1', requestId: 'create-1' }))
+    expect(value.task).toMatchObject({
+      projectId: 'ws-1',
+      title: '任务 A',
+      goal: '把 S1 接通',
+      status: 'todo',
+      fieldsRevision: 0,
+      statusRevision: 0,
+      undoTarget: null,
+      archived: false,
+    })
+    // The creation is durable, not just reported.
+    expect(harness.core.readTask({ taskId: value.task.taskId })?.title).toBe('任务 A')
+    expect(harness.core.listProjects().map((project) => project.projectId)).toEqual(['ws-1'])
+  })
+
+  it('honours initialStatus/blockedReason and lets core record the blocked state', async () => {
+    const harness = createHarness()
+
+    const result = await harness.handler(
+      'task/create',
+      createPayload('ws-1', 'create-blocked', '阻塞任务', { initialStatus: 'blocked', blockedReason: '等待确认' }),
+      SIGNAL,
+    )
+
+    const value = createValueOf(result)
+    expect(value.task.status).toBe('blocked')
+    expect(value.task.blockedReason).toBe('等待确认')
+    const stored = harness.core.readTask({ taskId: value.task.taskId })
+    expect(stored?.status).toBe('blocked')
+    expect(stored?.blockedReason).toBe('等待确认')
+  })
+
+  it('treats a replayed creation as already-created instead of a second task', async () => {
+    const harness = createHarness()
+    const payload = createPayload('ws-1', 'create-1', '任务 A')
+
+    const first = createValueOf(await harness.handler('task/create', payload, SIGNAL))
+    const second = createValueOf(await harness.handler('task/create', payload, SIGNAL))
+
+    expect(first.outcome).toBe('created')
+    expect(second.outcome).toBe('already-created')
+    expect(second.task.taskId).toBe(first.task.taskId)
+    expect(second.snapshot?.tasks).toHaveLength(1)
+    const board = harness.core.readBoard({ projectId: 'ws-1', workScope: { availability: 'ok' } })
+    expect(board.status === 'ok' ? board.tasks : []).toHaveLength(1)
+    // One creation means one history entry, not two (REC-02).
+    const entries = activityOf(await harness.handler('activity/read', { scopeKind: 'task', scopeId: first.task.taskId }, SIGNAL))
+    expect(entries.filter((entry) => entry.code === 'task-created')).toHaveLength(1)
+  })
+
+  it('refuses a blank title as invalid-input and echoes the typed input', async () => {
+    const harness = createHarness()
+
+    const result = await harness.handler('task/create', createPayload('ws-1', 'create-bad', '   '), SIGNAL)
+
+    const failure = failureOf(result)
+    expect(failure.code).toBe('invalid-input')
+    expect(failure.details['keptInput']).toEqual({
+      title: '   ',
+      goal: '',
+      initialStatus: 'todo',
+      blockedReason: null,
+    })
+    // Nothing was created; there is no half-finished task.
+    const board = harness.core.readBoard({ projectId: 'ws-1', workScope: { availability: 'ok' } })
+    expect(board.status === 'ok' ? board.tasks : []).toEqual([])
+  })
+
+  it('keeps invalid-reason for a blocked creation without a reason', async () => {
+    const harness = createHarness()
+
+    const result = await harness.handler(
+      'task/create',
+      createPayload('ws-1', 'create-blocked', '阻塞任务', { initialStatus: 'blocked', blockedReason: '  ' }),
+      SIGNAL,
+    )
+
+    const failure = failureOf(result)
+    expect(failure.code).toBe('invalid-reason')
+    expect(failure.details['keptInput']).toMatchObject({ initialStatus: 'blocked' })
+  })
+
+  it('maps an unknown initial status to invalid-input with the echo', async () => {
+    const harness = createHarness()
+
+    const result = await harness.handler(
+      'task/create',
+      createPayload('ws-1', 'create-status', '任务', { initialStatus: 'archived' }),
+      SIGNAL,
+    )
+
+    const failure = failureOf(result)
+    expect(failure.code).toBe('invalid-input')
+    expect(failure.details['keptInput']).toMatchObject({ initialStatus: 'archived' })
+  })
+
+  it('reports an unregistered project as unknown-project and creates nothing', async () => {
+    const harness = createHarness()
+
+    const result = await harness.handler('task/create', createPayload('ws-missing', 'create-1', '任务'), SIGNAL)
+
+    expect(failureOf(result).code).toBe('unknown-project')
+    expect(harness.core.listProjects()).toEqual([])
+  })
+
+  it('answers created + re-read failure with the task and a null snapshot, never an empty board', async () => {
+    const harness = createHarness({ armAfterWrite: true })
+
+    const result = await harness.handler('task/create', createPayload('ws-1', 'create-1', '任务 A'), SIGNAL)
+
+    // The result is KNOWN (created); only the view refresh failed. This must not
+    // be disguised as a failed creation (REC-01).
+    const value = createValueOf(result)
+    expect(value.outcome).toBe('created')
+    expect(value.snapshot).toBeNull()
+    expect(harness.core.readTask({ taskId: value.task.taskId })?.title).toBe('任务 A')
+  })
+
+  it('maps a failed creation write to save-failed with the echoed input, never success', async () => {
+    const harness = createHarness()
+    const taskId = taskIdOf({ projectId: 'ws-1', requestId: 'create-fail' })
+    harness.storageFaults.write = (table, key) =>
+      table === AIKANBAN_TABLES.scopeState && key === scopeKey('task', taskId)
+        ? new Error('injected create write failure')
+        : undefined
+
+    const result = await harness.handler('task/create', createPayload('ws-1', 'create-fail', '任务'), SIGNAL)
+
+    const failure = failureOf(result)
+    expect(failure.code).toBe('save-failed')
+    expect(failure.details['taskId']).toBe(taskId)
+    expect(failure.details['keptInput']).toMatchObject({ title: '任务' })
+    expect(harness.core.readTask({ taskId })).toBeNull()
+  })
+
+  it('refuses a payload without an address before any project is resolved', async () => {
+    const harness = createHarness()
+
+    for (const payload of [{}, null, { projectId: 'ws-1', requestId: 'op', title: 5 }]) {
+      const result = await harness.handler('task/create', payload, SIGNAL)
+      expect(failureOf(result).code, `payload ${JSON.stringify(payload)}`).toBe('invalid-payload')
+    }
+    expect(harness.core.listProjects()).toEqual([])
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * task/fields.update (slice B, F01-R05/R06, SAVE-05)
+ * ------------------------------------------------------------------ */
+
+describe('task/fields.update: baselines, outcomes and echoes', () => {
+  it('saves title and goal under the current baselines and returns the re-read snapshot', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+
+    const result = await harness.handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-1', 'fver1:0', 'ver1:0', { title: '新标题', goal: '新目标' }),
+      SIGNAL,
+    )
+
+    const value = updateValueOf(result)
+    expect(value.outcome).toBe('saved')
+    expect(value.changed).toEqual(['title', 'goal'])
+    expect(value.fieldsRevision).toBe(1)
+    expect(value.snapshot).not.toBeNull()
+    expect(taskIn(value.snapshot as Snapshot, taskId)).toMatchObject({ title: '新标题', goal: '新目标' })
+    // Durable: the stored task carries the new fields and the advanced revision.
+    const stored = harness.core.readTask({ taskId })
+    expect(stored?.title).toBe('新标题')
+    expect(stored?.goal).toBe('新目标')
+    expect(stored?.fieldsRevision).toBe(1)
+  })
+
+  it('clears the goal with goal=null (F01: a goal may be cleared)', async () => {
+    const harness = createHarness()
+    await seedProject(harness)
+    const created = await harness.core.createTask({
+      projectId: 'ws-1',
+      requestId: 'create-1',
+      title: '任务',
+      goal: '旧目标',
+    })
+    if (created.status === 'rejected' || created.status === 'failed') throw new Error('seed create failed')
+
+    const result = await harness.handler(
+      'task/fields.update',
+      fieldsPayload(created.taskId, 'field-clear', 'fver1:0', 'ver1:0', { goal: null }),
+      SIGNAL,
+    )
+
+    const value = updateValueOf(result)
+    expect(value.outcome).toBe('saved')
+    expect(value.changed).toEqual(['goal'])
+    expect(value.task.goal).toBe('')
+    expect(harness.core.readTask({ taskId: created.taskId })?.goal).toBe('')
+  })
+
+  it('reports no-change for an unchanged title, without bumping the revision', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+
+    const result = await harness.handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-noop', 'fver1:0', 'ver1:0', { title: 'Task A' }),
+      SIGNAL,
+    )
+
+    const value = updateValueOf(result)
+    expect(value.outcome).toBe('no-change')
+    expect(value.changed).toEqual([])
+    expect(value.fieldsRevision).toBe(0)
+    expect(harness.core.readTask({ taskId })?.fieldsRevision).toBe(0)
+  })
+
+  it('treats a replayed save id as already-applied, not as a second change', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const payload = fieldsPayload(taskId, 'field-1', 'fver1:0', 'ver1:0', { title: '新标题' })
+
+    expect((await harness.handler('task/fields.update', payload, SIGNAL)).ok).toBe(true)
+    const retried = updateValueOf(await harness.handler('task/fields.update', payload, SIGNAL))
+
+    expect(retried.outcome).toBe('already-applied')
+    expect(retried.changed).toEqual([])
+    expect(retried.fieldsRevision).toBe(1)
+    expect(harness.core.readTask({ taskId })?.fieldsRevision).toBe(1)
+  })
+
+  it('refuses a stale fields baseline with stale-baseline + current + expected/actual baselines', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    expect((await harness.handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-1', 'fver1:0', 'ver1:0', { title: '第一次' }),
+      SIGNAL,
+    )).ok).toBe(true)
+
+    // A second editor still holds the old fields baseline.
+    const result = await harness.handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-2', 'fver1:0', 'ver1:0', { title: '第二次' }),
+      SIGNAL,
+    )
+
+    const failure = failureOf(result)
+    expect(failure.code).toBe('stale-baseline')
+    expect(currentOf(failure)).toEqual({ status: 'todo', statusVersion: 'ver1:0' })
+    expect(failure.details['baseline']).toEqual({
+      expected: { fieldsVersion: 'fver1:0', statusVersion: 'ver1:0' },
+      actual: { fieldsVersion: 'fver1:1', statusVersion: 'ver1:0' },
+    })
+    expect(failure.details['keptInput']).toEqual({ title: '第二次', goal: null })
+    // REC-01: the stale save did not overwrite anything.
+    expect(harness.core.readTask({ taskId })?.title).toBe('第一次')
+    expect(harness.core.readTask({ taskId })?.fieldsRevision).toBe(1)
+  })
+
+  it('also refuses when only the status baseline moved underneath the editor', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    expect((await harness.handler('task/status.set', setPayload(taskId, 'doing', 'op-1', 'ver1:0'), SIGNAL)).ok).toBe(true)
+
+    const result = await harness.handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-1', 'fver1:0', 'ver1:0', { title: '新标题' }),
+      SIGNAL,
+    )
+
+    const failure = failureOf(result)
+    expect(failure.code).toBe('stale-baseline')
+    expect(currentOf(failure)).toEqual({ status: 'doing', statusVersion: 'ver1:1' })
+    expect((failure.details['baseline'] as { actual: unknown }).actual).toEqual({
+      fieldsVersion: 'fver1:0',
+      statusVersion: 'ver1:1',
+    })
+  })
+
+  it('refuses a blank title as invalid-input and keeps the echoed input', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+
+    const result = await harness.handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-bad', 'fver1:0', 'ver1:0', { title: '   ' }),
+      SIGNAL,
+    )
+
+    const failure = failureOf(result)
+    expect(failure.code).toBe('invalid-input')
+    expect(failure.details['keptInput']).toEqual({ title: '   ', goal: null })
+    expect(harness.core.readTask({ taskId })?.fieldsRevision).toBe(0)
+  })
+
+  it('refuses "nothing to save" with invalid-input and an empty echo', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+
+    const result = await harness.handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-empty', 'fver1:0', 'ver1:0'),
+      SIGNAL,
+    )
+
+    const failure = failureOf(result)
+    expect(failure.code).toBe('invalid-input')
+    expect(failure.details['keptInput']).toEqual({ title: null, goal: null })
+  })
+
+  it('maps an unknown task to not-found', async () => {
+    const harness = createHarness()
+
+    const result = await harness.handler(
+      'task/fields.update',
+      fieldsPayload('missing', 'field-1', 'fver1:0', 'ver1:0', { title: 'X' }),
+      SIGNAL,
+    )
+
+    expect(failureOf(result).code).toBe('not-found')
+  })
+
+  it('refuses missing/malformed fver1/ver1 baselines with invalid-payload before the port', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    let calls = 0
+    const port: HostBoardPort = {
+      ...harness.adapter,
+      updateTaskFields: async () => {
+        calls += 1
+        return { ok: false, code: 'save-failed', message: 'the port must not be called' }
+      },
+    }
+    const handler = createBoardChannelHandler(port)
+    const cases: Record<string, unknown>[] = [
+      { taskId, requestId: 'f', expectedStatusVersion: 'ver1:0', title: 'X' },
+      { taskId, requestId: 'f', expectedFieldsVersion: 'fver1:01', expectedStatusVersion: 'ver1:0', title: 'X' },
+      { taskId, requestId: 'f', expectedFieldsVersion: 'fver1:0', title: 'X' },
+      { taskId, requestId: 'f', expectedFieldsVersion: 'fver1:0', expectedStatusVersion: 'ver1:-1', title: 'X' },
+      { taskId, requestId: 'f', expectedFieldsVersion: '3', expectedStatusVersion: 'ver1:0', title: 'X' },
+    ]
+    for (const payload of cases) {
+      const result = await handler('task/fields.update', payload, SIGNAL)
+      expect(failureOf(result).code, `payload ${JSON.stringify(payload)}`).toBe('invalid-payload')
+    }
+    // F5/SAVE-05: a malformed baseline never reaches the data layer.
+    expect(calls).toBe(0)
+    expect(harness.core.readTask({ taskId })?.title).toBe('Task A')
+  })
+
+  it('maps a failed save to save-failed with current and the echoed input', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    harness.storageFaults.write = (table, key) =>
+      table === AIKANBAN_TABLES.scopeState && key === scopeKey('task', taskId)
+        ? new Error('injected field write failure')
+        : undefined
+
+    const result = await harness.handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-fail', 'fver1:0', 'ver1:0', { title: '新标题' }),
+      SIGNAL,
+    )
+
+    const failure = failureOf(result)
+    expect(failure.code).toBe('save-failed')
+    expect(currentOf(failure)).toEqual({ status: 'todo', statusVersion: 'ver1:0' })
+    expect(failure.details['keptInput']).toEqual({ title: '新标题', goal: null })
+    expect(harness.core.readTask({ taskId })?.title).toBe('Task A')
+  })
+
+  it('answers saved + re-read failure with the task and a null snapshot', async () => {
+    const harness = createHarness({ armAfterWrite: true })
+    const taskId = await seedProjectAndTask(harness)
+
+    const result = await harness.handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-1', 'fver1:0', 'ver1:0', { title: '新标题' }),
+      SIGNAL,
+    )
+
+    const value = updateValueOf(result)
+    expect(value.outcome).toBe('saved')
+    expect(value.snapshot).toBeNull()
+    expect(value.fieldsRevision).toBe(1)
+    expect(harness.core.readTask({ taskId })?.title).toBe('新标题')
+  })
+
+  it('answers unavailable before the data layer is ready and forwards afterwards', async () => {
+    const harness = createHarness()
+    const state = { ready: false, reason: null as string | null }
+    const delayed = createDelayedBoardPort(
+      { coreReady: () => state.ready, failureReason: () => state.reason },
+      harness.adapter,
+    )
+    const handler = createBoardChannelHandler(delayed)
+    const taskId = await seedProjectAndTask(harness)
+
+    const before = await handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-1', 'fver1:0', 'ver1:0', { title: 'X' }),
+      SIGNAL,
+    )
+    expect(failureOf(before).code).toBe('unavailable')
+    expect(harness.core.readTask({ taskId })?.title).toBe('Task A')
+
+    state.ready = true
+    const after = await handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-1', 'fver1:0', 'ver1:0', { title: 'X' }),
+      SIGNAL,
+    )
+    expect(updateValueOf(after).outcome).toBe('saved')
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * activity/read (slice B, F01-R07/SAVE-08)
+ * ------------------------------------------------------------------ */
+
+describe('activity/read: newest first, scope isolation and empty legality', () => {
+  it('returns a task scope newest first with string-only details', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    expect((await harness.handler('task/status.set', setPayload(taskId, 'doing', 'op-1', 'ver1:0'), SIGNAL)).ok).toBe(true)
+    expect((await harness.handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-1', 'fver1:0', 'ver1:1', { title: '新标题' }),
+      SIGNAL,
+    )).ok).toBe(true)
+
+    const entries = activityOf(await harness.handler('activity/read', { scopeKind: 'task', scopeId: taskId }, SIGNAL))
+
+    expect(entries.map((entry) => entry.code)).toEqual(['task-title-changed', 'task-status-changed', 'task-created'])
+    for (const entry of entries) {
+      expect(entry.scopeKind).toBe('task')
+      expect(entry.scopeId).toBe(taskId)
+      expect(typeof entry.activityId).toBe('string')
+      expect(entry.at.length).toBeGreaterThan(0)
+      expect(typeof entry.summary).toBe('string')
+      for (const value of Object.values(entry.details)) expect(typeof value).toBe('string')
+    }
+    expect(entries[1]?.details).toMatchObject({ from: 'todo', to: 'doing', requestId: 'op-1' })
+  })
+
+  it('honours limit (newest N) and treats unknown scopes as legal empty histories', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    await harness.handler('task/status.set', setPayload(taskId, 'doing', 'op-1', 'ver1:0'), SIGNAL)
+    await harness.handler(
+      'task/fields.update',
+      fieldsPayload(taskId, 'field-1', 'fver1:0', 'ver1:1', { title: '新标题' }),
+      SIGNAL,
+    )
+
+    const limited = activityOf(await harness.handler('activity/read', { scopeKind: 'task', scopeId: taskId, limit: 2 }, SIGNAL))
+    expect(limited.map((entry) => entry.code)).toEqual(['task-title-changed', 'task-status-changed'])
+    expect(activityOf(await harness.handler('activity/read', { scopeKind: 'task', scopeId: taskId, limit: 0 }, SIGNAL))).toEqual([])
+
+    // An unknown task/project id is an empty history, not not-found and not an error.
+    expect(activityOf(await harness.handler('activity/read', { scopeKind: 'task', scopeId: 'nope' }, SIGNAL))).toEqual([])
+    expect(activityOf(await harness.handler('activity/read', { scopeKind: 'project', scopeId: 'nope' }, SIGNAL))).toEqual([])
+  })
+
+  it('keeps project and task histories separate', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+
+    const projectEntries = activityOf(await harness.handler('activity/read', { scopeKind: 'project', scopeId: 'ws-1' }, SIGNAL))
+    const taskEntries = activityOf(await harness.handler('activity/read', { scopeKind: 'task', scopeId: taskId }, SIGNAL))
+
+    expect(projectEntries.map((entry) => entry.code)).toEqual(['project-registered'])
+    expect(projectEntries[0]?.details).toMatchObject({ projectId: 'ws-1', path: 'C:/demo' })
+    expect(taskEntries.map((entry) => entry.code)).toEqual(['task-created'])
+    // No cross-contamination: a task's creation is not project history.
+    expect(projectEntries.some((entry) => entry.code === 'task-created')).toBe(false)
+  })
+
+  it('refuses an invalid scope or limit at the handler with invalid-payload', async () => {
+    const harness = createHarness()
+    let reads = 0
+    const port: HostBoardPort = {
+      ...harness.adapter,
+      readActivity: async () => {
+        reads += 1
+        return { ok: true, entries: [] }
+      },
+    }
+    const handler = createBoardChannelHandler(port)
+    const cases: Record<string, unknown>[] = [
+      {},
+      { scopeKind: 'board', scopeId: 'x' },
+      { scopeKind: 'task', scopeId: '' },
+      { scopeKind: 'task', scopeId: 'x', limit: -1 },
+      { scopeKind: 'task', scopeId: 'x', limit: 1.5 },
+    ]
+    for (const payload of cases) {
+      const result = await handler('activity/read', payload, SIGNAL)
+      expect(failureOf(result).code, `payload ${JSON.stringify(payload)}`).toBe('invalid-payload')
+    }
+    expect(reads).toBe(0)
+  })
+
+  it('maps direct invalid scope/limit port calls to invalid-input (adapter branch)', async () => {
+    const harness = createHarness()
+
+    await expect(harness.adapter.readActivity({ scopeKind: 'board', scopeId: 'x' } as never)).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid-input',
+    })
+    await expect(harness.adapter.readActivity({ scopeKind: 'task', scopeId: '' })).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid-input',
+    })
+    await expect(harness.adapter.readActivity({ scopeKind: 'task', scopeId: 'x', limit: -2 })).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid-input',
+    })
+  })
+
+  it('turns a throwing data layer into read-failed without throwing the handler', async () => {
+    const harness = createHarness()
+    const throwing: HostBoardPort = {
+      ...harness.adapter,
+      readActivity: async () => { throw new Error('activity store exploded') },
+    }
+    const handler = createBoardChannelHandler(throwing)
+
+    const result = await handler('activity/read', { scopeKind: 'task', scopeId: 'task-1' }, SIGNAL)
+
+    const failure = failureOf(result)
+    expect(failure.code).toBe('read-failed')
+    expect(failure.message).toContain('activity store exploded')
+  })
+
+  it('answers unavailable before the data layer is ready and forwards afterwards', async () => {
+    const harness = createHarness()
+    const state = { ready: false, reason: 'domain not opened' }
+    const delayed = createDelayedBoardPort(
+      { coreReady: () => state.ready, failureReason: () => state.reason },
+      harness.adapter,
+    )
+    const handler = createBoardChannelHandler(delayed)
+    const taskId = await seedProjectAndTask(harness)
+
+    const before = await handler('activity/read', { scopeKind: 'task', scopeId: taskId }, SIGNAL)
+    expect(failureOf(before).code).toBe('unavailable')
+    expect(failureOf(before).message).toContain('domain not opened')
+
+    state.ready = true
+    const after = activityOf(await handler('activity/read', { scopeKind: 'task', scopeId: taskId }, SIGNAL))
+    expect(after.map((entry) => entry.code)).toEqual(['task-created'])
+  })
+})
+
+/* ------------------------------------------------------------------ *
  * The handler never throws (§6: 适配层/handler 不得抛)
  * ------------------------------------------------------------------ */
 
@@ -1065,6 +1721,18 @@ describe('the board channel handler never throws', () => {
       { endpoint: 'task/reorder', payload: { taskId, status: 'todo', operationId: 'op', expectedStatusVersion: 'ver1:0' }, code: 'invalid-payload' },
       { endpoint: 'task/reorder', payload: { taskId, status: 'todo', toIndex: -1, operationId: 'op', expectedStatusVersion: 'ver1:0' }, code: 'invalid-payload' },
       { endpoint: 'task/status.undo', payload: { taskId, operationId: 'op', expectedStatusVersion: 'ver1:0' }, code: 'invalid-payload' },
+      // Slice B: the payload guards of the three management endpoints run
+      // before the port, so none of these may write or throw.
+      { endpoint: 'task/create', payload: {}, code: 'invalid-payload' },
+      { endpoint: 'task/create', payload: null, code: 'invalid-payload' },
+      { endpoint: 'task/create', payload: { projectId: 'ws-1', requestId: 'r', title: 5 }, code: 'invalid-payload' },
+      { endpoint: 'task/fields.update', payload: { taskId, requestId: 'r', expectedFieldsVersion: 'fver1:0' }, code: 'invalid-payload' },
+      { endpoint: 'task/fields.update', payload: { taskId, requestId: 'r', expectedFieldsVersion: 'fver1:0', expectedStatusVersion: 'ver1:0', title: null }, code: 'invalid-payload' },
+      { endpoint: 'task/fields.update', payload: { taskId, requestId: 'r', expectedFieldsVersion: 'fver1:01', expectedStatusVersion: 'ver1:0' }, code: 'invalid-payload' },
+      { endpoint: 'task/fields.update', payload: { taskId, requestId: 'r', expectedFieldsVersion: 'fver1:0', expectedStatusVersion: 'ver1:-1' }, code: 'invalid-payload' },
+      { endpoint: 'activity/read', payload: { scopeKind: 'board', scopeId: 'x' }, code: 'invalid-payload' },
+      { endpoint: 'activity/read', payload: { scopeKind: 'task', scopeId: '' }, code: 'invalid-payload' },
+      { endpoint: 'activity/read', payload: { scopeKind: 'task', scopeId: taskId, limit: -1 }, code: 'invalid-payload' },
       { endpoint: 'board/nope', payload: {}, code: 'unknown-endpoint' },
       { endpoint: 'board/read', payload: 42, code: 'invalid-payload' },
     ]
@@ -1109,16 +1777,23 @@ describe('the delayed-ready wrapper', () => {
       harness.adapter,
     )
     const handler = createBoardChannelHandler(delayed)
-    await seedProjectAndTask(harness)
+    const seededTaskId = await seedProjectAndTask(harness)
 
     const before = await handler('board/read', { projectId: 'ws-1' }, SIGNAL)
     expect(failureOf(before).code).toBe('unavailable')
     const writeBefore = await handler('task/status.set', setPayload('t1', 'doing', 'op-1', 'ver1:0'), SIGNAL)
     expect(failureOf(writeBefore).code).toBe('unavailable')
+    const createBefore = await handler('task/create', createPayload('ws-1', 'create-delayed', 'Delayed'), SIGNAL)
+    expect(failureOf(createBefore).code).toBe('unavailable')
+    const activityBefore = await handler('activity/read', { scopeKind: 'task', scopeId: seededTaskId }, SIGNAL)
+    expect(failureOf(activityBefore).code).toBe('unavailable')
 
     state.ready = true
     const after = snapshotOf(successOf(await handler('board/read', { projectId: 'ws-1' }, SIGNAL)))
     expect(after.project.projectId).toBe('ws-1')
     expect(after.tasks).toHaveLength(1)
+    const created = createValueOf(await handler('task/create', createPayload('ws-1', 'create-delayed', 'Delayed'), SIGNAL))
+    expect(created.outcome).toBe('created')
+    expect(activityOf(await handler('activity/read', { scopeKind: 'task', scopeId: seededTaskId }, SIGNAL)).length).toBeGreaterThan(0)
   })
 })

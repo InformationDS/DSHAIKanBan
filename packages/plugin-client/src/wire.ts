@@ -13,11 +13,12 @@
  *
  * ## What travels, and what must not
  *
- * Only plain JSON crosses: board snapshots, task cards, write results and
- * failure codes. No drafts, no records, no history text, and no functions. The
- * transport's own envelope carries a domain failure as `{ok:false,
- * error:{code,message,details}}`, which is exactly the shape the UI needs in
- * order to tell an unconfirmed change apart from a confirmed one.
+ * Only plain JSON crosses: board snapshots, task cards, write results, activity
+ * entries and failure codes. No drafts, no record bodies, no conversation
+ * content, and no functions. The transport's own envelope carries a domain
+ * failure as `{ok:false, error:{code,message,details}}`, which is exactly the
+ * shape the UI needs in order to tell an unconfirmed change apart from a
+ * confirmed one.
  *
  * ## Guards, not trust
  *
@@ -59,6 +60,13 @@ export { isBlockedReasonValid, normalizeReason } from './model.js'
  */
 export const BOARD_FAILURE_CODES = [
   'invalid-reason',
+  /**
+   * The input was refused before anything was written (blank title, unknown
+   * status, missing field values, a creation whose identity collides). The
+   * refusal echoes what the user typed (`keptInput`) so the form can keep it.
+   * Slice B added this code; it is **not** a transport or storage failure.
+   */
+  'invalid-input',
   'not-found',
   'save-failed',
   'stale-baseline',
@@ -105,6 +113,19 @@ export const BOARD_ENDPOINTS = {
   setStatus: 'task/status.set',
   reorder: 'task/reorder',
   undoStatusChange: 'task/status.undo',
+  /**
+   * Idempotent task creation (F01-R02/R03). `requestId` is minted by the UI and
+   * reused verbatim by a retry (REC-02); the host resolves the project through
+   * its workspace registry before core creates anything.
+   */
+  taskCreate: 'task/create',
+  /**
+   * Substantive title/goal save (F01-R05/R06). Carries the SAVE-05 field and
+   * status baselines; a stale baseline is refused, never overwritten.
+   */
+  taskFieldsUpdate: 'task/fields.update',
+  /** Important-change history for one task or one project (F01-R07/SAVE-08). */
+  activityRead: 'activity/read',
 } as const
 
 /** One endpoint name. */
@@ -191,6 +212,67 @@ export interface UndoStatusPayload {
   readonly appliedUpdateId: string
 }
 
+/**
+ * `task/create` payload.
+ *
+ * `requestId` is the identity of **this creation intent** (minted by the UI,
+ * reused verbatim by a retry — REC-02). The host resolves `projectId` through
+ * its workspace registry first: an unregistered project is `unknown-project`,
+ * never a guessed home. The title may be blank on the wire; core refuses it with
+ * `invalid-title` and the refusal echoes the typed input.
+ */
+export interface CreateTaskPayload {
+  readonly projectId: string
+  readonly requestId: string
+  readonly title: string
+  /** Optional goal; absent means the empty goal core stores. */
+  readonly goal?: string
+  /** Opaque status id; core owns the vocabulary and refuses an unknown one. */
+  readonly initialStatus?: string
+  /** Required by core when `initialStatus === 'blocked'` (F02-R02). */
+  readonly blockedReason?: string
+}
+
+/**
+ * `task/fields.update` payload.
+ *
+ * Two baselines travel because a title/goal save must not overwrite a status
+ * change that happened meanwhile (SAVE-05): `expectedFieldsVersion` is encoded
+ * as `fver1:<n>` (see {@link encodeFieldsVersion}) and `expectedStatusVersion`
+ * as `ver1:<n>`. The host handler validates both grammars before the data layer
+ * is called; a missing/malformed one is `invalid-payload` and nothing is written.
+ *
+ * `goal: null` explicitly clears the goal (core normalises it to `''`);
+ * an **absent** `goal` means "leave the goal unchanged". `title` cannot be
+ * cleared: a blank title is refused by core (`invalid-title`).
+ */
+export interface UpdateFieldsPayload {
+  readonly taskId: string
+  /** Identity of this save intent; reused verbatim by a retry (REC-02). */
+  readonly requestId: string
+  /** Required field baseline, encoded by {@link encodeFieldsVersion}. */
+  readonly expectedFieldsVersion: string
+  /** Required status baseline, encoded by {@link encodeStatusVersion}. */
+  readonly expectedStatusVersion: string
+  /** Absent means "leave the title unchanged". */
+  readonly title?: string
+  /** Absent means "leave the goal unchanged"; `null` clears it. */
+  readonly goal?: string | null
+}
+
+/**
+ * `activity/read` payload.
+ *
+ * `scopeKind` is restricted to the two scopes core keeps history for. An empty
+ * `entries` answer is a legal empty history — never an error. `limit` is an
+ * optional non-negative integer (0 is legal and returns no entries).
+ */
+export interface ActivityPayload {
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  readonly limit?: number
+}
+
 /* ------------------------------------------------------------------ *
  * Status version encoding (`ver1:<n>`)
  * ------------------------------------------------------------------ */
@@ -226,6 +308,49 @@ export function encodeStatusVersion(revision: number): string {
 export function parseStatusVersion(value: unknown): number | null {
   if (typeof value !== 'string' || !STATUS_VERSION_PATTERN.test(value)) return null
   return Number(value.slice(STATUS_VERSION_PREFIX.length))
+}
+
+/* ------------------------------------------------------------------ *
+ * Fields version encoding (`fver1:<n>`)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Prefix of the string encoding a fields revision travels as.
+ *
+ * Same shape as {@link STATUS_VERSION_PREFIX} on purpose: two independent
+ * baselines (fields and status) travel side by side and must never be confused
+ * with one another, so the two encodings use distinct prefixes.
+ */
+export const FIELDS_VERSION_PREFIX = 'fver1:'
+
+const FIELDS_VERSION_PATTERN = /^fver1:(0|[1-9]\d*)$/
+
+/**
+ * Encode a fields revision for the wire.
+ *
+ * @param revision - a non-negative integer revision from the data layer.
+ * @returns the canonical `fver1:<n>` string.
+ */
+export function encodeFieldsVersion(revision: number): string {
+  if (!Number.isInteger(revision) || revision < 0) {
+    throw new RangeError(`fields revision must be a non-negative integer, got ${String(revision)}`)
+  }
+  return `${FIELDS_VERSION_PREFIX}${String(revision)}`
+}
+
+/**
+ * Decode a fields revision read off the wire.
+ *
+ * Strict on purpose (`0` or a non-zero-leading decimal): a malformed baseline is
+ * a caller bug and must be refused, never defaulted to 0 (that would silently
+ * weaken SAVE-05 for title/goal edits).
+ *
+ * @param value - untrusted wire value.
+ * @returns the revision, or null when it is not a canonical `fver1:<n>`.
+ */
+export function parseFieldsVersion(value: unknown): number | null {
+  if (typeof value !== 'string' || !FIELDS_VERSION_PATTERN.test(value)) return null
+  return Number(value.slice(FIELDS_VERSION_PREFIX.length))
 }
 
 /* ------------------------------------------------------------------ *
@@ -279,6 +404,106 @@ export type ProjectListItem = BoardProjectChoice
  */
 export interface ProjectListValue {
   readonly projects: readonly ProjectListItem[]
+}
+
+/* ------------------------------------------------------------------ *
+ * Slice-B values (management endpoints)
+ * ------------------------------------------------------------------ */
+
+/**
+ * `task/create` success value.
+ *
+ * The creation's own result is **known** (core returned `task`, and `outcome`
+ * says whether it was this request or an idempotent replay). `snapshot` is
+ * `null` when the creation landed but the authoritative board re-read failed:
+ * that is a stale view, not a failed creation and never an empty board.
+ */
+export interface CreateTaskValue {
+  readonly outcome: 'created' | 'already-created'
+  /** The created (or already existing) task, exactly as core returned it. */
+  readonly task: BoardTask
+  /** The post-write board read, or `null` when it failed (view not refreshed). */
+  readonly snapshot: BoardSnapshotValue | null
+}
+
+/**
+ * `task/fields.update` success value.
+ *
+ * `saved`/`no-change`/`already-applied` are all *known* results; only the view
+ * freshness varies (`snapshot: null` ⇒ re-read failed). `changed` is empty for
+ * `no-change` and `already-applied`; `fieldsRevision` is the task's current
+ * fields revision, the next save's baseline.
+ */
+export interface UpdateFieldsValue {
+  readonly outcome: 'saved' | 'no-change' | 'already-applied'
+  readonly task: BoardTask
+  readonly changed: readonly ('title' | 'goal')[]
+  readonly fieldsRevision: number
+  readonly snapshot: BoardSnapshotValue | null
+}
+
+/** One important change in the activity history. */
+export interface ActivityEntryValue {
+  readonly activityId: string
+  readonly at: string
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  /** Machine-readable change kind; core owns the vocabulary. */
+  readonly code: string
+  /** Display text captured at the moment of the change. */
+  readonly summary: string
+  /** Machine-readable detail bag; every value is a string (JSON-safe). */
+  readonly details: Readonly<Record<string, string>>
+}
+
+/**
+ * `activity/read` success value, newest first.
+ *
+ * An empty array is a legal empty history (a task/project with no important
+ * changes yet) and must never be turned into an error.
+ */
+export interface ActivityValue {
+  readonly entries: readonly ActivityEntryValue[]
+}
+
+/** The input a refused creation echoed back (F01-R02: never lose the typing). */
+export interface KeptTaskInputWire {
+  readonly title: string
+  readonly goal: string
+  readonly initialStatus: string
+  readonly blockedReason: string | null
+}
+
+/** The input a refused field save echoed back (F01-R05). */
+export interface KeptFieldInputWire {
+  readonly title: string | null
+  readonly goal: string | null
+}
+
+/** One SAVE-05 field baseline as it travels in a failure's `details`. */
+export interface FieldsBaselineWire {
+  readonly fieldsVersion: string
+  readonly statusVersion: string
+}
+
+/** `details` of a `task/create` failure. */
+export interface CreateTaskFailureDetails {
+  /** The deterministic id the failed creation would have produced (core gives it). */
+  readonly taskId?: string
+  readonly keptInput?: KeptTaskInputWire
+}
+
+/**
+ * `details` of a `task/fields.update` failure.
+ *
+ * `baseline` carries both the expected and the actual field/status baseline so
+ * the editor can show what changed underneath it; `current` is the formal status
+ * for the standard "someone else changed this" presentation.
+ */
+export interface UpdateFieldsFailureDetails {
+  readonly current?: FormalStatusValueWire
+  readonly keptInput?: KeptFieldInputWire
+  readonly baseline?: { readonly expected: FieldsBaselineWire; readonly actual: FieldsBaselineWire }
 }
 
 /* ------------------------------------------------------------------ *
@@ -595,6 +820,212 @@ export function parseProjectListValue(value: unknown): ProjectListValue | null {
 }
 
 /* ------------------------------------------------------------------ *
+ * Slice-B value guards
+ * ------------------------------------------------------------------ */
+
+function parseNullableSnapshot(value: unknown): BoardSnapshotValue | null | typeof MALFORMED {
+  if (value === null) return null
+  const snapshot = parseBoardSnapshotValue(value)
+  return snapshot === null ? MALFORMED : snapshot
+}
+
+function parseChangedFields(value: unknown): readonly ('title' | 'goal')[] | null {
+  if (!Array.isArray(value)) return null
+  const changed: ('title' | 'goal')[] = []
+  for (const entry of value) {
+    if (entry !== 'title' && entry !== 'goal') return null
+    changed.push(entry)
+  }
+  return changed
+}
+
+/**
+ * Parse a `task/create` success value.
+ *
+ * `snapshot` is required but nullable: `null` is the honest "the creation
+ * landed, the view did not refresh" answer. A missing/malformed snapshot or task
+ * is a protocol violation (the caller reports a failure, never an empty board).
+ *
+ * @param value - untrusted value.
+ * @returns the value, or null when malformed.
+ */
+export function parseCreateTaskValue(value: unknown): CreateTaskValue | null {
+  if (!isRecord(value)) return null
+  const outcome = value['outcome']
+  if (outcome !== 'created' && outcome !== 'already-created') return null
+  const task = parseBoardTask(value['task'])
+  if (task === null) return null
+  const snapshot = parseNullableSnapshot(value['snapshot'])
+  if (snapshot === MALFORMED) return null
+  return { outcome, task, snapshot }
+}
+
+/**
+ * Parse a `task/fields.update` success value.
+ *
+ * @param value - untrusted value.
+ * @returns the value, or null when malformed.
+ */
+export function parseUpdateFieldsValue(value: unknown): UpdateFieldsValue | null {
+  if (!isRecord(value)) return null
+  const outcome = value['outcome']
+  if (outcome !== 'saved' && outcome !== 'no-change' && outcome !== 'already-applied') return null
+  const task = parseBoardTask(value['task'])
+  if (task === null) return null
+  const changed = parseChangedFields(value['changed'])
+  if (changed === null) return null
+  const fieldsRevision = value['fieldsRevision']
+  if (typeof fieldsRevision !== 'number' || !Number.isInteger(fieldsRevision) || fieldsRevision < 0) return null
+  const snapshot = parseNullableSnapshot(value['snapshot'])
+  if (snapshot === MALFORMED) return null
+  return { outcome, task, changed, fieldsRevision, snapshot }
+}
+
+function parseActivityEntry(value: unknown): ActivityEntryValue | null {
+  if (!isRecord(value)) return null
+  const { activityId, at, scopeKind, scopeId, code, summary } = value
+  if (!isString(activityId) || activityId.length === 0) return null
+  if (!isString(at) || at.length === 0) return null
+  if (scopeKind !== 'task' && scopeKind !== 'project') return null
+  if (!isString(scopeId) || scopeId.length === 0) return null
+  if (!isString(code) || code.length === 0) return null
+  if (!isString(summary)) return null
+  const rawDetails = value['details']
+  if (!isRecord(rawDetails)) return null
+  const details: Record<string, string> = {}
+  for (const [key, entry] of Object.entries(rawDetails)) {
+    if (typeof entry !== 'string') return null
+    details[key] = entry
+  }
+  return { activityId, at, scopeKind, scopeId, code, summary, details }
+}
+
+/**
+ * Parse an `activity/read` success value.
+ *
+ * An empty `entries` array is legal (nothing important happened yet). Detail
+ * values must all be strings: the wire carries `Record<string, string>` and a
+ * non-string value would be a contract violation, not something to coerce.
+ *
+ * @param value - untrusted value.
+ * @returns the value, or null when malformed.
+ */
+export function parseActivityValue(value: unknown): ActivityValue | null {
+  if (!isRecord(value)) return null
+  const entries = value['entries']
+  if (!Array.isArray(entries)) return null
+  const parsed: ActivityEntryValue[] = []
+  for (const entry of entries) {
+    const item = parseActivityEntry(entry)
+    if (item === null) return null
+    parsed.push(item)
+  }
+  return { entries: parsed }
+}
+
+/**
+ * Parse the `keptInput` of a refused creation.
+ *
+ * @param value - untrusted value.
+ * @returns the echoed input, or null when malformed.
+ */
+export function parseKeptTaskInput(value: unknown): KeptTaskInputWire | null {
+  if (!isRecord(value)) return null
+  const title = value['title']
+  const goal = value['goal']
+  const initialStatus = value['initialStatus']
+  const blockedReason = value['blockedReason']
+  if (!isString(title) || !isString(goal)) return null
+  if (!isStatusId(initialStatus)) return null
+  if (blockedReason !== null && !isString(blockedReason)) return null
+  return { title, goal, initialStatus, blockedReason }
+}
+
+/**
+ * Parse the `keptInput` of a refused field save.
+ *
+ * @param value - untrusted value.
+ * @returns the echoed input, or null when malformed.
+ */
+export function parseKeptFieldInput(value: unknown): KeptFieldInputWire | null {
+  if (!isRecord(value)) return null
+  const title = value['title']
+  const goal = value['goal']
+  if (title !== null && !isString(title)) return null
+  if (goal !== null && !isString(goal)) return null
+  return { title, goal }
+}
+
+/**
+ * Parse one SAVE-05 baseline out of failure details.
+ *
+ * Both encodings are validated (`fver1:<n>` / `ver1:<n>`): a malformed baseline
+ * must not be shown as if it were a version the UI could trust.
+ *
+ * @param value - untrusted value.
+ * @returns the baseline, or null when malformed.
+ */
+export function parseFieldsBaselineValue(value: unknown): FieldsBaselineWire | null {
+  if (!isRecord(value)) return null
+  const fieldsVersion = value['fieldsVersion']
+  const statusVersion = value['statusVersion']
+  if (!isString(fieldsVersion) || parseFieldsVersion(fieldsVersion) === null) return null
+  if (!isString(statusVersion) || parseStatusVersion(statusVersion) === null) return null
+  return { fieldsVersion, statusVersion }
+}
+
+/**
+ * Parse the `details` of a `task/create` failure.
+ *
+ * Tolerant like the existing `current` extraction: a malformed optional field is
+ * dropped, because losing the echo cannot make a refusal look like a success.
+ *
+ * @param value - untrusted value.
+ * @returns the details, or null when the container is not an object.
+ */
+export function parseCreateTaskFailureDetails(value: unknown): CreateTaskFailureDetails | null {
+  if (!isRecord(value)) return null
+  const rawKept = value['keptInput']
+  const keptInput = rawKept === undefined ? undefined : (parseKeptTaskInput(rawKept) ?? undefined)
+  const taskId = value['taskId']
+  return {
+    ...(isString(taskId) ? { taskId } : {}),
+    ...(keptInput === undefined ? {} : { keptInput }),
+  }
+}
+
+/**
+ * Parse the `details` of a `task/fields.update` failure.
+ *
+ * Tolerant like {@link parseCreateTaskFailureDetails}; a malformed baseline pair
+ * is dropped rather than represented with invented versions.
+ *
+ * @param value - untrusted value.
+ * @returns the details, or null when the container is not an object.
+ */
+export function parseUpdateFieldsFailureDetails(value: unknown): UpdateFieldsFailureDetails | null {
+  if (!isRecord(value)) return null
+  const currentRaw = value['current']
+  const current = currentRaw === undefined ? undefined : (parseFormalStatusValue(currentRaw) ?? undefined)
+  const keptRaw = value['keptInput']
+  const keptInput = keptRaw === undefined ? undefined : (parseKeptFieldInput(keptRaw) ?? undefined)
+  const baselineRaw = value['baseline']
+  let baseline: UpdateFieldsFailureDetails['baseline']
+  if (baselineRaw !== undefined) {
+    if (!isRecord(baselineRaw)) return null
+    const expected = parseFieldsBaselineValue(baselineRaw['expected'])
+    const actual = parseFieldsBaselineValue(baselineRaw['actual'])
+    if (expected === null || actual === null) return null
+    baseline = { expected, actual }
+  }
+  return {
+    ...(current === undefined ? {} : { current }),
+    ...(keptInput === undefined ? {} : { keptInput }),
+    ...(baseline === undefined ? {} : { baseline }),
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * Payload guards (host half)
  * ------------------------------------------------------------------ */
 
@@ -716,5 +1147,103 @@ export function parseUndoStatusPayload(value: unknown): UndoStatusPayload | null
     operationId,
     expectedStatusVersion,
     appliedUpdateId,
+  }
+}
+
+/**
+ * Parse a `task/create` payload.
+ *
+ * Shape-level only: `title` may be blank (core owns the title rule and refuses
+ * it with `invalid-title`), and `initialStatus` is an opaque id (core owns the
+ * status vocabulary). What the host insists on is a usable address
+ * (`projectId`, `requestId`) and a string title, so core can decide the rest
+ * with its own echo of the input.
+ *
+ * @param value - untrusted payload.
+ * @returns the payload, or null when malformed.
+ */
+export function parseCreateTaskPayload(value: unknown): CreateTaskPayload | null {
+  if (!isRecord(value)) return null
+  const projectId = value['projectId']
+  const requestId = value['requestId']
+  const title = value['title']
+  if (!isString(projectId) || projectId.length === 0) return null
+  if (!isString(requestId) || requestId.length === 0) return null
+  if (!isString(title)) return null
+  const goal = value['goal']
+  if (goal !== undefined && !isString(goal)) return null
+  const initialStatus = value['initialStatus']
+  if (initialStatus !== undefined && !isStatusId(initialStatus)) return null
+  const blockedReason = value['blockedReason']
+  if (blockedReason !== undefined && !isString(blockedReason)) return null
+  return {
+    projectId,
+    requestId,
+    title,
+    ...(goal === undefined ? {} : { goal }),
+    ...(initialStatus === undefined ? {} : { initialStatus }),
+    ...(blockedReason === undefined ? {} : { blockedReason }),
+  }
+}
+
+/**
+ * Parse a `task/fields.update` payload.
+ *
+ * Both baselines are required at the shape level; their `fver1:`/`ver1:`
+ * grammars are validated by the host handler before the data layer is called
+ * (SAVE-05). `goal: null` is meaningful (clear the goal) and is therefore kept
+ * distinct from an absent `goal` (leave unchanged). At least one of
+ * `title`/`goal` is not enforced here: core owns that refusal and echoes it as
+ * `invalid-input` with `keptInput`.
+ *
+ * @param value - untrusted payload.
+ * @returns the payload, or null when malformed.
+ */
+export function parseUpdateFieldsPayload(value: unknown): UpdateFieldsPayload | null {
+  if (!isRecord(value)) return null
+  const taskId = value['taskId']
+  const requestId = value['requestId']
+  if (!isString(taskId) || taskId.length === 0) return null
+  if (!isString(requestId) || requestId.length === 0) return null
+  const expectedFieldsVersion = value['expectedFieldsVersion']
+  const expectedStatusVersion = value['expectedStatusVersion']
+  if (!isString(expectedFieldsVersion) || expectedFieldsVersion.length === 0) return null
+  if (!isString(expectedStatusVersion) || expectedStatusVersion.length === 0) return null
+  const title = value['title']
+  if (title !== undefined && !isString(title)) return null
+  const goal = value['goal']
+  if (goal !== undefined && goal !== null && !isString(goal)) return null
+  return {
+    taskId,
+    requestId,
+    expectedFieldsVersion,
+    expectedStatusVersion,
+    ...(title === undefined ? {} : { title }),
+    ...(goal === undefined ? {} : { goal }),
+  }
+}
+
+/**
+ * Parse an `activity/read` payload.
+ *
+ * `scopeKind` is restricted to the two scopes core keeps history for (an
+ * arbitrary scope id is not a place history could live); `limit` is an optional
+ * non-negative integer, and 0 is legal.
+ *
+ * @param value - untrusted payload.
+ * @returns the payload, or null when malformed.
+ */
+export function parseActivityPayload(value: unknown): ActivityPayload | null {
+  if (!isRecord(value)) return null
+  const scopeKind = value['scopeKind']
+  if (scopeKind !== 'task' && scopeKind !== 'project') return null
+  const scopeId = value['scopeId']
+  if (!isString(scopeId) || scopeId.length === 0) return null
+  const limit = optionalIndex(value['limit'])
+  if (limit === null) return null
+  return {
+    scopeKind,
+    scopeId,
+    ...(limit === undefined ? {} : { limit }),
   }
 }

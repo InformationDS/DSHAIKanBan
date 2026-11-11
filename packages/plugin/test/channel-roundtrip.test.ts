@@ -84,6 +84,28 @@ const COLUMNS = [
 
 const CAPABILITIES = { statusChange: true, reorder: true, undo: true }
 
+/** Slice-B activity rows: newest first, details are always strings. */
+const ACTIVITY = [
+  {
+    activityId: 'act-2',
+    at: '2026-11-11T01:00:00.000Z',
+    scopeKind: 'task',
+    scopeId: 'task-1',
+    code: 'task-title-changed',
+    summary: '标题已更新',
+    details: { taskId: 'task-1', from: 'First task', to: 'Renamed', requestId: 'field-1' },
+  },
+  {
+    activityId: 'act-1',
+    at: '2026-11-11T00:00:00.000Z',
+    scopeKind: 'task',
+    scopeId: 'task-1',
+    code: 'task-created',
+    summary: '任务已创建',
+    details: { projectId: 'ws-1', taskId: 'task-1', status: 'todo', goal: 'Ship F02' },
+  },
+]
+
 /** A snapshot as the host half sends it. */
 function snapshot(tasks: readonly unknown[] = [TODO_TASK, DOING_TASK]) {
   return { project: PROJECT, tasks, columns: COLUMNS, boardToken: 'tok-1', capabilities: CAPABILITIES }
@@ -216,6 +238,30 @@ describe('F02 channel: protocol round trip (built client bundle ↔ built host h
       setStatus: async (input: unknown) => { calls.push({ port: 'setStatus', input }); return { ok: true as const, snapshot: snapshot(), undoable: true } },
       reorder: async (input: unknown) => { calls.push({ port: 'reorder', input }); return { ok: true as const, snapshot: snapshot(), undoable: true } },
       undoStatusChange: async (input: unknown) => { calls.push({ port: 'undo', input }); return { ok: true as const, snapshot: snapshot(), undoable: false } },
+      createTask: async (input: unknown) => {
+        calls.push({ port: 'createTask', input })
+        return {
+          ok: true as const,
+          outcome: 'created' as const,
+          task: { ...TODO_TASK, fieldsRevision: 0 },
+          snapshot: snapshot([{ ...TODO_TASK, fieldsRevision: 0 }, DOING_TASK]),
+        }
+      },
+      updateTaskFields: async (input: unknown) => {
+        calls.push({ port: 'updateFields', input })
+        return {
+          ok: true as const,
+          outcome: 'saved' as const,
+          task: { ...TODO_TASK, title: 'Renamed', fieldsRevision: 1 },
+          changed: ['title'] as const,
+          fieldsRevision: 1,
+          snapshot: snapshot([{ ...TODO_TASK, title: 'Renamed', fieldsRevision: 1 }, DOING_TASK]),
+        }
+      },
+      readActivity: async (input: unknown) => {
+        calls.push({ port: 'readActivity', input })
+        return { ok: true as const, entries: ACTIVITY }
+      },
       ...portOverrides,
     }
 
@@ -500,6 +546,202 @@ describe('F02 channel: protocol round trip (built client bundle ↔ built host h
     // One attempt: the adapter never retries a write by itself (F9/F10/D6).
     expect(attempts).toBe(1)
     // A7: the text must not tell the user to "retry later"; verification first.
+    expect(result.message).not.toContain('后重试')
+    expect(result.message).toContain('不要重复提交')
+  })
+
+  it('creates a task through the real bundle and parses the re-read snapshot', async () => {
+    const { source, transport, calls } = await wire()
+
+    const result = await source.createTask({ projectId: 'ws-1', requestId: 'create-1', title: 'New task', goal: 'g' })
+
+    expect(transport.sent[0]?.endpoint).toBe('task/create')
+    expect(transport.sent[0]?.envelope.payload).toEqual({
+      projectId: 'ws-1',
+      requestId: 'create-1',
+      title: 'New task',
+      goal: 'g',
+    })
+    expect(calls).toEqual([{
+      port: 'createTask',
+      input: { projectId: 'ws-1', requestId: 'create-1', title: 'New task', goal: 'g' },
+    }])
+    expect(result.ok, result.ok ? '' : `create failed: ${result.code} ${result.message}`).toBe(true)
+    if (!result.ok) throw new Error(result.message)
+    expect(result.outcome).toBe('created')
+    expect(result.task.taskId).toBe('task-1')
+    expect(result.snapshot?.tasks).toHaveLength(2)
+  })
+
+  it('keeps the creation echo on an invalid-input refusal', async () => {
+    const rejection = {
+      title: '   ',
+      goal: '',
+      initialStatus: 'todo',
+      blockedReason: null,
+    }
+    const { source } = await wire({
+      createTask: async () => ({
+        ok: false as const,
+        code: 'invalid-input' as const,
+        message: '标题必填',
+        keptInput: rejection,
+      }),
+    })
+
+    const refused = await source.createTask({ projectId: 'ws-1', requestId: 'create-bad', title: '   ' })
+    expect(refused.ok).toBe(false)
+    if (refused.ok) throw new Error('a refused creation was reported as success')
+    expect(refused.code).toBe('invalid-input')
+    expect(refused.keptInput).toEqual(rejection)
+  })
+
+  it('decodes both fver1/ver1 baselines before the data layer on task/fields.update', async () => {
+    const { source, transport, calls } = await wire()
+
+    const result = await source.updateTaskFields({
+      taskId: 'task-1',
+      requestId: 'field-1',
+      expectedFieldsVersion: 'fver1:3',
+      expectedStatusVersion: 'ver1:2',
+      title: 'Renamed',
+      goal: null,
+    })
+
+    expect(transport.sent[0]?.endpoint).toBe('task/fields.update')
+    // The wire contract still carries the encoded baselines…
+    expect(transport.sent[0]?.envelope.payload).toEqual({
+      taskId: 'task-1',
+      requestId: 'field-1',
+      expectedFieldsVersion: 'fver1:3',
+      expectedStatusVersion: 'ver1:2',
+      title: 'Renamed',
+      goal: null,
+    })
+    // …while the data layer only ever receives decoded numbers (SAVE-05).
+    expect(calls[0]?.input).toEqual({
+      taskId: 'task-1',
+      requestId: 'field-1',
+      expectedFieldsRevision: 3,
+      expectedStatusRevision: 2,
+      title: 'Renamed',
+      goal: null,
+    })
+    expect(result.ok, result.ok ? '' : `save failed: ${result.code} ${result.message}`).toBe(true)
+    if (!result.ok) throw new Error(result.message)
+    expect(result.outcome).toBe('saved')
+    expect(result.changed).toEqual(['title'])
+    expect(result.fieldsRevision).toBe(1)
+  })
+
+  it('surfaces stale-baseline with current, both baselines and the kept input', async () => {
+    const keptInput = { title: 'Renamed', goal: null }
+    const baseline = {
+      expected: { fieldsVersion: 'fver1:2', statusVersion: 'ver1:3' },
+      actual: { fieldsVersion: 'fver1:3', statusVersion: 'ver1:4' },
+    }
+    const { source } = await wire({
+      updateTaskFields: async () => ({
+        ok: false as const,
+        code: 'stale-baseline' as const,
+        message: '字段保存被拒绝。',
+        current: { status: 'doing', statusVersion: 'ver1:4' },
+        keptInput,
+        baseline,
+      }),
+    })
+
+    const result = await source.updateTaskFields({
+      taskId: 'task-1',
+      requestId: 'field-2',
+      expectedFieldsVersion: 'fver1:2',
+      expectedStatusVersion: 'ver1:3',
+      title: 'Renamed',
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('a stale save was reported as success')
+    expect(result.code).toBe('stale-baseline')
+    expect(result.current).toEqual({ status: 'doing', statusVersion: 'ver1:4' })
+    expect(result.baseline).toEqual(baseline)
+    expect(result.keptInput).toEqual(keptInput)
+  })
+
+  it('keeps a landed-but-unrefreshed save distinguishable from a failure', async () => {
+    const { source } = await wire({
+      updateTaskFields: async () => ({
+        ok: true as const,
+        outcome: 'saved' as const,
+        task: { ...TODO_TASK, title: 'Renamed', fieldsRevision: 1 },
+        changed: ['title'] as const,
+        fieldsRevision: 1,
+        snapshot: null,
+      }),
+    })
+
+    const result = await source.updateTaskFields({
+      taskId: 'task-1',
+      requestId: 'field-3',
+      expectedFieldsVersion: 'fver1:0',
+      expectedStatusVersion: 'ver1:0',
+      title: 'Renamed',
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.message)
+    expect(result.snapshot).toBeNull()
+    expect(result.task.title).toBe('Renamed')
+    expect(result.fieldsRevision).toBe(1)
+  })
+
+  it('reads activity history through the endpoint and preserves string-only details', async () => {
+    const { source, transport, calls } = await wire()
+
+    const result = await source.loadActivity({ scopeKind: 'project', scopeId: 'ws-1', limit: 2 })
+
+    expect(transport.sent[0]?.endpoint).toBe('activity/read')
+    expect(transport.sent[0]?.envelope.payload).toEqual({ scopeKind: 'project', scopeId: 'ws-1', limit: 2 })
+    expect(calls).toEqual([{ port: 'readActivity', input: { scopeKind: 'project', scopeId: 'ws-1', limit: 2 } }])
+    expect(result.ok, result.ok ? '' : `activity failed: ${result.code} ${result.message}`).toBe(true)
+    if (!result.ok) throw new Error(result.message)
+    expect(result.entries).toEqual(ACTIVITY)
+    for (const entry of result.entries) {
+      expect(entry.scopeKind).toBe('task')
+      for (const value of Object.values(entry.details)) expect(typeof value).toBe('string')
+    }
+  })
+
+  it('refuses an invalid activity scope before the data layer', async () => {
+    const { handler, calls } = await wire()
+    const result = await handler(
+      'activity/read',
+      { scopeKind: 'board', scopeId: 'x' },
+      new AbortController().signal,
+    ) as RpcFailure
+
+    expect(result.ok).toBe(false)
+    expect(result.error.code).toBe('invalid-payload')
+    expect(calls).toEqual([])
+  })
+
+  it('reports an unconfirmed creation attempt exactly once as unknown-result', async () => {
+    const client = loadClientHalf()
+    let attempts = 0
+    const source = client.createChannelBoardSource({
+      rpc: {
+        call: async () => {
+          attempts += 1
+          throw new Error('socket dropped')
+        },
+      },
+    })
+
+    const result = await source.createTask({ projectId: 'ws-1', requestId: 'create-1', title: 'Task' })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('an unknown creation was reported as success')
+    expect(result.code).toBe('unknown-result')
+    expect(attempts).toBe(1)
     expect(result.message).not.toContain('后重试')
     expect(result.message).toContain('不要重复提交')
   })

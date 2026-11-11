@@ -21,12 +21,24 @@
  * 3. **Never re-apply an operation on retry as a new operation.** `operationId`
  *    is the identity of one user intent; a retry reuses it so the data layer can
  *    deduplicate (REC-02, SAVE-06).
+ * 4. **Never turn a landed write into a failed one because the view refresh
+ *    failed.** `createTask`/`updateTaskFields` return `ok: true` with
+ *    `snapshot: null` when the write landed and only the re-read failed
+ *    (REC-01); a refused/failed write is `ok: false` with an explicit code.
  *
  * @module @aikanban/plugin-client/source
  */
 
-import type { BoardFailureCodeWire, ProjectListItem } from './wire.js'
-import type { BoardCapabilities, BoardReadData, StatusId } from './model.js'
+import type {
+  BoardFailureCodeWire,
+  ActivityEntryValue,
+  FieldsBaselineWire,
+  KeptFieldInputWire,
+  KeptTaskInputWire,
+  ProjectListItem,
+  UpdateFieldsFailureDetails,
+} from './wire.js'
+import type { BoardCapabilities, BoardReadData, BoardTask, StatusId } from './model.js'
 
 /* ------------------------------------------------------------------ *
  * Inputs
@@ -82,6 +94,64 @@ export interface UndoInput {
   readonly appliedUpdateId: string
 }
 
+/**
+ * One task creation (F01-R02/R03).
+ *
+ * `requestId` is this creation's identity; a retry reuses it so the data layer
+ * recognises the double click instead of creating a second task (REC-02). The
+ * project is the **explicitly selected** one — the source never resolves a
+ * "current project".
+ */
+export interface CreateTaskInput {
+  readonly projectId: string
+  /** Identity of this creation intent; reused verbatim by a retry. */
+  readonly requestId: string
+  readonly title: string
+  readonly goal?: string
+  /** Opaque status id; absent means core's default (`todo`). */
+  readonly initialStatus?: StatusId
+  /** Required by the data layer when `initialStatus` is the blocked status. */
+  readonly blockedReason?: string
+}
+
+/**
+ * One substantive title/goal save (F01-R05/R06).
+ *
+ * Both baselines are required: the SAVE-05 rule is "save exactly the version the
+ * user was looking at", so a missing baseline must never be sent (the host
+ * refuses it; the UI must refuse earlier and re-read).
+ */
+export interface UpdateFieldsInput {
+  readonly taskId: string
+  /** Identity of this save intent; reused verbatim by a retry (REC-02). */
+  readonly requestId: string
+  /** Task's `fieldsRevision` at the time the editor opened, as `fver1:<n>`. */
+  readonly expectedFieldsVersion: string
+  /** Task's `statusRevision` at the time the editor opened, as `ver1:<n>`. */
+  readonly expectedStatusVersion: string
+  /** Absent means "leave the title unchanged". */
+  readonly title?: string
+  /** Absent means "leave the goal unchanged"; `null` clears the goal. */
+  readonly goal?: string | null
+}
+
+/** One activity-history read (F01-R07/SAVE-08). */
+export interface ActivityInput {
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  /** Optional cap on the newest-first list; 0 is legal. */
+  readonly limit?: number
+}
+
+/** The input a refused creation echoed back (F01-R02: never lose the typing). */
+export type KeptCreateInput = KeptTaskInputWire
+
+/** The input a refused field save echoed back (F01-R05). */
+export type KeptFieldInput = KeptFieldInputWire
+
+/** One SAVE-05 field baseline in a source-level failure. */
+export type FieldsBaseline = FieldsBaselineWire
+
 /* ------------------------------------------------------------------ *
  * Results
  * ------------------------------------------------------------------ */
@@ -92,6 +162,9 @@ export interface UndoInput {
  * with the host half, so a code cannot exist on one side only.
  *
  * - `invalid-reason` — entering blocked without a reason.
+ * - `invalid-input` — a management input was refused by the data layer
+ *   (blank title, unknown status, invalid activity scope/limit, identity
+ *   collision); nothing was written and `keptInput` may be present.
  * - `not-found` — the task no longer exists.
  * - `save-failed` — the write did not land; the formal value is unchanged.
  * - `stale-baseline` — someone else changed the task first; undo cannot apply.
@@ -159,6 +232,108 @@ export interface WriteFailure {
 
 /** Result of a status change or a reorder. */
 export type WriteResult = WriteSuccess | WriteFailure
+
+/* ------------------------------------------------------------------ *
+ * Management results (slice B): creation, field save, activity history
+ * ------------------------------------------------------------------ */
+
+/**
+ * A creation whose result is **known**.
+ *
+ * `snapshot` is `null` exactly when the creation landed but the authoritative
+ * board re-read failed. That is a stale view — the task exists — so it must not
+ * be presented as either a failed creation or an empty board (REC-01/REC-05);
+ * the caller keeps its old view and offers a read retry.
+ */
+export interface CreateTaskSuccess {
+  readonly ok: true
+  /** The created (or already existing) task, as the data layer returned it. */
+  readonly task: BoardTask
+  /** Whether this request created the task or recognised a replay (REC-02). */
+  readonly outcome: 'created' | 'already-created'
+  /** Board re-read, or `null` when it failed (the view was not refreshed). */
+  readonly snapshot: BoardSnapshot | null
+}
+
+/**
+ * A creation that did not land (or whose outcome is unknown).
+ *
+ * `keptInput` is present whenever the data layer echoed the typed input, so a
+ * refused form can restore everything the user typed without a second source.
+ */
+export interface CreateTaskFailure {
+  readonly ok: false
+  readonly code: BoardFailureCode
+  readonly message: string
+  readonly keptInput?: KeptCreateInput
+}
+
+/** Result of creating one task. */
+export type CreateTaskResult = CreateTaskSuccess | CreateTaskFailure
+
+/**
+ * A field save whose result is **known** (`saved` / `no-change` /
+ * `already-applied`).
+ *
+ * `snapshot === null` means the save landed but the board re-read failed; the
+ * task object still carries the authoritative fields, so the UI can keep the
+ * user's confirmation without inventing a board.
+ */
+export interface UpdateFieldsSuccess {
+  readonly ok: true
+  readonly outcome: 'saved' | 'no-change' | 'already-applied'
+  readonly task: BoardTask
+  /** Which user-owned fields actually changed (empty for no-change/replay). */
+  readonly changed: readonly ('title' | 'goal')[]
+  /** The task's current fields revision — the next save's baseline. */
+  readonly fieldsRevision: number
+  /** Board re-read, or `null` when it failed (the view was not refreshed). */
+  readonly snapshot: BoardSnapshot | null
+}
+
+/**
+ * A field save that was refused or failed. Nothing was written.
+ *
+ * `stale-baseline` carries both baselines (`baseline.expected` / `baseline.actual`)
+ * and the formal current status; `keptInput` carries the editor's input so a
+ * failed save can leave the draft in place (F01-R05).
+ */
+export interface UpdateFieldsFailure {
+  readonly ok: false
+  readonly code: BoardFailureCode
+  readonly message: string
+  /** The formal value to display instead of the attempted one. */
+  readonly current?: FormalStatusValue
+  readonly keptInput?: KeptFieldInput
+  readonly baseline?: UpdateFieldsFailureDetails['baseline']
+}
+
+/** Result of saving a task's title/goal. */
+export type UpdateFieldsResult = UpdateFieldsSuccess | UpdateFieldsFailure
+
+/** One important change in the activity history (newest first). */
+export type ActivityEntry = ActivityEntryValue
+
+/**
+ * An activity-history read that succeeded.
+ *
+ * `entries: []` is a legal empty history (nothing important happened yet); it is
+ * not an error and must not be replaced with fabricated entries.
+ */
+export interface ActivitySuccess {
+  readonly ok: true
+  readonly entries: readonly ActivityEntry[]
+}
+
+/** An activity-history read that failed. Never silently an empty history. */
+export interface ActivityFailure {
+  readonly ok: false
+  readonly code: BoardFailureCode
+  readonly message: string
+}
+
+/** Result of reading the activity history. */
+export type ActivityResult = ActivitySuccess | ActivityFailure
 
 /* ------------------------------------------------------------------ *
  * Project listing (Q1=B: candidate set, explicit selection)
@@ -241,6 +416,31 @@ export interface BoardSource {
 
   /** Undo a status change, if the host still considers it undoable. */
   undoStatusChange(input: UndoInput): Promise<WriteResult>
+
+  /**
+   * Create one task in the explicitly selected project (F01-R02/R03).
+   *
+   * `requestId` makes the operation idempotent: a retry reuses it and the data
+   * layer answers `already-created` instead of creating a second task (REC-02).
+   * A failure echoes the typed input (`keptInput`); an `ok: true` result with
+   * `snapshot: null` means the creation landed but the view was not refreshed.
+   */
+  createTask(input: CreateTaskInput): Promise<CreateTaskResult>
+
+  /**
+   * Save a task's title and/or goal under both SAVE-05 baselines
+   * (F01-R05/R06). Never merges silently: a stale baseline is a failure with
+   * the expected/actual baselines and the formal current status.
+   */
+  updateTaskFields(input: UpdateFieldsInput): Promise<UpdateFieldsResult>
+
+  /**
+   * Read the important-change history for one task or project (F01-R07).
+   *
+   * Newest first, optionally capped by `limit`. An empty array is a legal empty
+   * history; a failed read is a failure and never an empty history.
+   */
+  loadActivity(input: ActivityInput): Promise<ActivityResult>
 }
 
 /* ------------------------------------------------------------------ *
@@ -252,6 +452,15 @@ export const NO_CHANNEL_MESSAGE = '看板数据通道未接通：无法读取任
 
 /** Text shown when the project list cannot be read because no channel exists. */
 export const NO_CHANNEL_PROJECTS_MESSAGE = '看板数据通道未接通：无法读取项目清单。这不等于「没有可用项目」。'
+
+/** Text shown when a creation cannot be sent because no channel exists. */
+export const NO_CHANNEL_CREATE_MESSAGE = '看板数据通道未接通：无法创建任务，未创建任何任务。'
+
+/** Text shown when a field save cannot be sent because no channel exists. */
+export const NO_CHANNEL_FIELDS_MESSAGE = '看板数据通道未接通：无法保存字段，正式值未改变。'
+
+/** Text shown when the activity history cannot be read because no channel exists. */
+export const NO_CHANNEL_ACTIVITY_MESSAGE = '看板数据通道未接通：无法读取活动历史。这不等于「没有活动」。'
 
 /**
  * A port with no transport behind it.
@@ -272,6 +481,9 @@ export function createUnavailableBoardSource(detail: string): BoardSource {
     setStatus: () => Promise.resolve(failure()),
     reorder: () => Promise.resolve(failure()),
     undoStatusChange: () => Promise.resolve(failure()),
+    createTask: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_CREATE_MESSAGE }),
+    updateTaskFields: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_FIELDS_MESSAGE }),
+    loadActivity: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_ACTIVITY_MESSAGE }),
   }
 }
 

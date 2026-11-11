@@ -27,30 +27,44 @@
  */
 
 import type {
+  ActivityInput,
+  ActivityResult,
   BoardFailureCode,
   BoardReadResult,
   BoardSnapshot,
   BoardSource,
+  CreateTaskInput,
+  CreateTaskResult,
   FormalStatusValue,
   ProjectListResult,
   ReorderInput,
   StatusChangeInput,
   UndoInput,
+  UpdateFieldsInput,
+  UpdateFieldsResult,
   WriteResult,
 } from './source.js'
 import {
   BOARD_CHANNEL,
   BOARD_ENDPOINTS,
   isBoardFailureCode,
+  parseActivityValue,
   parseBoardSnapshotValue,
   parseBoardWriteValue,
+  parseCreateTaskFailureDetails,
+  parseCreateTaskValue,
   parseFormalStatusValue,
   parseProjectListValue,
+  parseUpdateFieldsFailureDetails,
+  parseUpdateFieldsValue,
+  type ActivityPayload,
+  type CreateTaskPayload,
   type ProjectListPayload,
   type ReadBoardPayload,
   type ReorderPayload,
   type SetStatusPayload,
   type UndoStatusPayload,
+  type UpdateFieldsPayload,
 } from './wire.js'
 
 /* ------------------------------------------------------------------ *
@@ -237,6 +251,149 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
     return { ok: true, projects: value.projects }
   }
 
+  /**
+   * Create one task (F01-R02/R03).
+   *
+   * An unconfirmed transport is `unknown-result` (REC-03: verify before
+   * resubmitting). A known success value with `snapshot: null` is **not** an
+   * error: the creation landed and only the view refresh failed.
+   */
+  const createTask = async (input: CreateTaskInput): Promise<CreateTaskResult> => {
+    // A creation without a project is a caller bug, not a request to guess.
+    if (typeof input.projectId !== 'string' || input.projectId.length === 0) {
+      return { ok: false, code: 'invalid-input', message: '创建被拒绝：没有显式选择的项目 id；宿主不会猜测项目，未创建任何任务。' }
+    }
+    const payload: CreateTaskPayload = {
+      projectId: input.projectId,
+      requestId: input.requestId,
+      title: input.title,
+      ...(input.goal === undefined ? {} : { goal: input.goal }),
+      ...(input.initialStatus === undefined ? {} : { initialStatus: input.initialStatus }),
+      ...(input.blockedReason === undefined ? {} : { blockedReason: input.blockedReason }),
+    }
+    let result: ConnectionRpcResultLike
+    try {
+      result = await call(BOARD_ENDPOINTS.taskCreate, payload)
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'unknown-result',
+        message: `创建结果未知，请先核对当前正式状态，不要重复提交。（${messageOf(error)}）`,
+      }
+    }
+    if (!result.ok) {
+      const details = parseCreateTaskFailureDetails(result.error.details)
+      const keptInput = details?.keptInput
+      return {
+        ok: false,
+        code: isBoardFailureCode(result.error.code) ? result.error.code : 'save-failed',
+        message: result.error.message,
+        ...(keptInput === undefined ? {} : { keptInput }),
+      }
+    }
+    const value = parseCreateTaskValue(result.value)
+    if (value === null) {
+      return { ok: false, code: 'unknown-result', message: `${MALFORMED_RESPONSE_MESSAGE}请先核对当前正式状态，不要重复提交。` }
+    }
+    return { ok: true, task: value.task, outcome: value.outcome, snapshot: value.snapshot }
+  }
+
+  /**
+   * Save a task's title/goal under both SAVE-05 baselines (F01-R05/R06).
+   *
+   * An unconfirmed transport is `unknown-result`; a known result with
+   * `snapshot: null` means the save landed but the view refresh failed. A
+   * `stale-baseline` failure carries the expected/actual baselines and the
+   * formal current status so the editor can show what changed.
+   */
+  const updateTaskFields = async (input: UpdateFieldsInput): Promise<UpdateFieldsResult> => {
+    if (typeof input.taskId !== 'string' || input.taskId.length === 0) {
+      return { ok: false, code: 'invalid-input', message: '保存被拒绝：缺少任务 id；正式值未改变。' }
+    }
+    const payload: UpdateFieldsPayload = {
+      taskId: input.taskId,
+      requestId: input.requestId,
+      expectedFieldsVersion: input.expectedFieldsVersion,
+      expectedStatusVersion: input.expectedStatusVersion,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.goal === undefined ? {} : { goal: input.goal }),
+    }
+    let result: ConnectionRpcResultLike
+    try {
+      result = await call(BOARD_ENDPOINTS.taskFieldsUpdate, payload)
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'unknown-result',
+        message: `保存结果未知，请先核对当前正式状态，不要重复提交。（${messageOf(error)}）`,
+      }
+    }
+    if (!result.ok) {
+      const details = parseUpdateFieldsFailureDetails(result.error.details)
+      const current = details?.current
+      const keptInput = details?.keptInput
+      const baseline = details?.baseline
+      return {
+        ok: false,
+        code: isBoardFailureCode(result.error.code) ? result.error.code : 'save-failed',
+        message: result.error.message,
+        ...(current === undefined ? {} : { current }),
+        ...(keptInput === undefined ? {} : { keptInput }),
+        ...(baseline === undefined ? {} : { baseline }),
+      }
+    }
+    const value = parseUpdateFieldsValue(result.value)
+    if (value === null) {
+      return { ok: false, code: 'unknown-result', message: `${MALFORMED_RESPONSE_MESSAGE}请先核对当前正式状态，不要重复提交。` }
+    }
+    return {
+      ok: true,
+      outcome: value.outcome,
+      task: value.task,
+      changed: value.changed,
+      fieldsRevision: value.fieldsRevision,
+      snapshot: value.snapshot,
+    }
+  }
+
+  /**
+   * Read the important-change history (F01-R07).
+   *
+   * Read failures are narrowed like every other read: `unavailable`,
+   * `unknown-project` or `read-failed`. An empty `entries` array is a legal
+   * empty history and is passed through unchanged.
+   */
+  const loadActivity = async (input: ActivityInput): Promise<ActivityResult> => {
+    // The wire allows two scopes only; refuse locally so a caller bug cannot
+    // reach the host with a scope core does not keep history for.
+    if (input.scopeKind !== 'task' && input.scopeKind !== 'project') {
+      return { ok: false, code: 'invalid-input', message: '活动历史读取被拒绝：scopeKind 只允许 task 或 project。' }
+    }
+    if (typeof input.scopeId !== 'string' || input.scopeId.length === 0) {
+      return { ok: false, code: 'invalid-input', message: '活动历史读取被拒绝：缺少范围 id。' }
+    }
+    if (input.limit !== undefined && (!Number.isInteger(input.limit) || input.limit < 0)) {
+      return { ok: false, code: 'invalid-input', message: '活动历史读取被拒绝：limit 必须是非负整数。' }
+    }
+    const payload: ActivityPayload = {
+      scopeKind: input.scopeKind,
+      scopeId: input.scopeId,
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+    }
+    let result: ConnectionRpcResultLike
+    try {
+      result = await call(BOARD_ENDPOINTS.activityRead, payload)
+    } catch (error) {
+      return { ok: false, code: 'read-failed', message: `${MALFORMED_RESPONSE_MESSAGE}（${messageOf(error)}）` }
+    }
+    if (!result.ok) {
+      return { ok: false, code: readFailureCode(result.error.code), message: result.error.message }
+    }
+    const value = parseActivityValue(result.value)
+    if (value === null) return { ok: false, code: 'read-failed', message: MALFORMED_RESPONSE_MESSAGE }
+    return { ok: true, entries: value.entries }
+  }
+
   return {
     transport: { kind: 'host', detail: `connection rpc ${channel}` },
     readBoard,
@@ -271,6 +428,9 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
       }
       return write(BOARD_ENDPOINTS.undoStatusChange, payload)
     },
+    createTask,
+    updateTaskFields,
+    loadActivity,
   }
 }
 

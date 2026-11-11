@@ -17,17 +17,30 @@ import {
   type BoardState,
 } from '../src/controller.js'
 import type {
+  ActivityInput,
+  ActivityResult,
   BoardFailureCode,
   BoardReadResult,
   BoardSource,
+  CreateTaskInput,
+  CreateTaskResult,
   FormalStatusValue,
   ProjectListResult,
   ReorderInput,
   StatusChangeInput,
   UndoInput,
+  UpdateFieldsInput,
+  UpdateFieldsResult,
   WriteResult,
 } from '../src/source.js'
-import type { TaskDetailView } from '../src/model.js'
+import {
+  BLOCKED_REASON_REQUIRED_MESSAGE,
+  FIELD_TITLE_REQUIRED_MESSAGE,
+  FIELDS_BASELINE_MISSING_MESSAGE,
+  NO_FIELD_CHANGE_MESSAGE,
+  TASK_TITLE_REQUIRED_MESSAGE,
+  type TaskDetailView,
+} from '../src/model.js'
 
 const CAPABILITIES = { statusChange: true, reorder: true, undo: true }
 
@@ -83,8 +96,14 @@ interface FakeSource extends BoardSource {
   statusCalls: StatusChangeInput[]
   reorderCalls: ReorderInput[]
   undoCalls: UndoInput[]
+  createCalls: CreateTaskInput[]
+  updateCalls: UpdateFieldsInput[]
+  activityCalls: ActivityInput[]
   nextRead: BoardReadResult
   nextWrite: WriteResult
+  nextCreate: CreateTaskResult
+  nextUpdate: UpdateFieldsResult
+  nextActivity: ActivityResult
   /** When true, `setStatus` stays pending until `release()` is called. */
   holdWrites: boolean
   release(): void
@@ -106,8 +125,26 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
     statusCalls: [],
     reorderCalls: [],
     undoCalls: [],
+    createCalls: [],
+    updateCalls: [],
+    activityCalls: [],
     nextRead: options.read ?? { ok: true, snapshot: snapshot() as never },
     nextWrite: options.write ?? { ok: true, snapshot: snapshot() as never, undoable: true },
+    nextCreate: {
+      ok: true,
+      outcome: 'created',
+      task: task('t3', 'todo', 0) as never,
+      snapshot: snapshot() as never,
+    },
+    nextUpdate: {
+      ok: true,
+      outcome: 'saved',
+      task: task('t1', 'todo', 0, { title: 'Edited', fieldsRevision: 1 }) as never,
+      changed: ['title'],
+      fieldsRevision: 1,
+      snapshot: snapshot() as never,
+    },
+    nextActivity: { ok: true, entries: [] },
     holdWrites: false,
     release: () => undefined,
     async readBoard(projectId) {
@@ -131,6 +168,18 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
     async undoStatusChange(input) {
       source.undoCalls.push(input)
       return source.nextWrite
+    },
+    async createTask(input) {
+      source.createCalls.push(input)
+      return source.nextCreate
+    },
+    async updateTaskFields(input) {
+      source.updateCalls.push(input)
+      return source.nextUpdate
+    },
+    async loadActivity(input) {
+      source.activityCalls.push(input)
+      return source.nextActivity
     },
   }
   void options.capabilities
@@ -830,5 +879,647 @@ describe('undo from the read snapshot (Q2=A: refresh-safe)', () => {
     await Promise.resolve()
 
     expect(source.undoCalls).toHaveLength(0)
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Slice B: creation, field edit, activity history
+ * ------------------------------------------------------------------ */
+
+/** Let every pending microtask chain settle (source calls are promises). */
+async function flush(): Promise<void> {
+  await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+}
+
+/** A read whose first task carries the SAVE-05 field baseline. */
+function editableRead(): BoardReadResult {
+  return {
+    ok: true,
+    snapshot: snapshot({
+      tasks: [
+        task('t1', 'todo', 0, { title: '标题一', goal: '旧目标', fieldsRevision: 2, statusRevision: 3 }),
+        task('t2', 'doing', 0),
+      ],
+    }) as never,
+  }
+}
+
+/** One data-layer activity entry. */
+function activityEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    activityId: 'a1',
+    at: '2026-11-10T06:00:00.000Z',
+    scopeKind: 'task',
+    scopeId: 't1',
+    code: 'created',
+    summary: '任务已创建',
+    details: {},
+    ...overrides,
+  }
+}
+
+describe('task creation (F01-R02/R04: one intent, one task)', () => {
+  it('opens a form on a ready board with the first column as initial status, submits once with a minted request id and applies the snapshot', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+
+    controller.openCreateForm()
+    const form = controller.getState().createForm
+    expect(form).not.toBeNull()
+    expect(form?.initialStatus).toBe('todo')
+    // One identity per form session, minted when the form opened (REC-02).
+    expect(form?.requestId).toBe('op-1')
+
+    controller.setCreateTitle('  新任务  ')
+    controller.setCreateGoal(' 目标说明 ')
+    source.nextCreate = {
+      ok: true,
+      outcome: 'created',
+      task: task('t3', 'todo', 2, { title: '新任务' }) as never,
+      snapshot: snapshot({
+        tasks: [task('t1', 'todo', 0), task('t2', 'doing', 0), task('t3', 'todo', 2)],
+      }) as never,
+    }
+    await controller.submitCreateTask()
+
+    expect(source.createCalls).toEqual([{
+      projectId: 'ws-1',
+      requestId: 'op-1',
+      title: '新任务',
+      goal: '目标说明',
+      initialStatus: 'todo',
+    }])
+    const state = controller.getState()
+    expect(state.createForm).toBeNull()
+    expect(state.feedback?.kind).toBe('success')
+    if (state.feedback?.kind !== 'success') throw new Error('unreachable')
+    expect(state.feedback.text).toContain('已创建')
+    expect(shownTasks(state, 'todo')).toEqual(['t1', 't3'])
+  })
+
+  it('names an idempotent replay instead of claiming a second creation', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    controller.openCreateForm()
+    controller.setCreateTitle('已有任务')
+    source.nextCreate = {
+      ok: true,
+      outcome: 'already-created',
+      task: task('t3', 'todo', 0, { title: '已有任务' }) as never,
+      snapshot: snapshot() as never,
+    }
+    await controller.submitCreateTask()
+
+    const feedback = controller.getState().feedback
+    expect(feedback?.kind).toBe('success')
+    if (feedback?.kind !== 'success') throw new Error('unreachable')
+    expect(feedback.text).toContain('已存在')
+    expect(source.createCalls).toHaveLength(1)
+  })
+
+  it('refuses a blank title locally: no request, error in place', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    controller.openCreateForm()
+    controller.setCreateTitle('   ')
+    await controller.submitCreateTask()
+
+    expect(source.createCalls).toHaveLength(0)
+    expect(controller.getState().createForm?.error).toBe(TASK_TITLE_REQUIRED_MESSAGE)
+    // The form stays open with the typed value.
+    expect(controller.getState().createForm?.title).toBe('   ')
+  })
+
+  it('refuses a blocked initial status without a reason locally, then sends the real reason once provided', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    controller.openCreateForm()
+    controller.setCreateTitle('阻塞任务')
+    controller.setCreateStatus('blocked')
+    await controller.submitCreateTask()
+
+    expect(source.createCalls).toHaveLength(0)
+    expect(controller.getState().createForm?.error).toBe(BLOCKED_REASON_REQUIRED_MESSAGE)
+
+    controller.setCreateBlockedReason('  等待上游接口  ')
+    await controller.submitCreateTask()
+    expect(source.createCalls).toHaveLength(1)
+    expect(source.createCalls[0]).toMatchObject({
+      title: '阻塞任务',
+      initialStatus: 'blocked',
+      blockedReason: '等待上游接口',
+    })
+  })
+
+  it('restores every typed value from keptInput when the data layer refuses the input', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    controller.openCreateForm()
+    controller.setCreateTitle('原输入')
+    source.nextCreate = {
+      ok: false,
+      code: 'invalid-input',
+      message: '标题无效：未写入任何内容。',
+      keptInput: { title: '保留的标题', goal: '保留的目标', initialStatus: 'doing', blockedReason: null },
+    }
+    await controller.submitCreateTask()
+
+    const state = controller.getState()
+    expect(state.createForm?.title).toBe('保留的标题')
+    expect(state.createForm?.goal).toBe('保留的目标')
+    expect(state.createForm?.initialStatus).toBe('doing')
+    expect(state.createForm?.error).toContain('标题无效')
+    expect(state.feedback?.kind).toBe('failure')
+    if (state.feedback?.kind !== 'failure') throw new Error('unreachable')
+    // A refused input is fixed by the user, not replayed by a button.
+    expect(state.feedback.retry).toBeNull()
+  })
+
+  it('keeps the old view and reports "created, view not refreshed" when the re-read failed: not a failure, no replay', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    controller.openCreateForm()
+    controller.setCreateTitle('新任务')
+    source.nextCreate = {
+      ok: true,
+      outcome: 'created',
+      task: task('t3', 'todo', 0, { title: '新任务' }) as never,
+      snapshot: null,
+    }
+    await controller.submitCreateTask()
+
+    let state = controller.getState()
+    expect(state.createForm).toBeNull()
+    expect(state.feedback?.kind).toBe('stale-view')
+    if (state.feedback?.kind !== 'stale-view') throw new Error('unreachable')
+    expect(state.feedback.text).toContain('已创建')
+    expect(state.feedback.text).toContain('视图未刷新')
+    // The unrefreshed board still shows exactly what it showed before.
+    expect(shownTasks(state, 'todo')).toEqual(['t1'])
+
+    const readsBefore = source.reads
+    controller.retryPending()
+    await flush()
+    state = controller.getState()
+    expect(source.reads).toBe(readsBefore + 1)
+    expect(source.createCalls).toHaveLength(1)
+    expect(state.feedback).toBeNull()
+  })
+
+  it('offers only a re-read after an unknown creation result and never re-creates on retry', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    controller.openCreateForm()
+    controller.setCreateTitle('不确定的任务')
+    source.nextCreate = { ok: false, code: 'unknown-result', message: '创建结果未知，请先核对。' }
+    await controller.submitCreateTask()
+
+    let state = controller.getState()
+    expect(state.createForm).not.toBeNull()
+    expect(state.feedback?.kind).toBe('failure')
+    if (state.feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(state.feedback.code).toBe('unknown-result')
+    expect(state.feedback.retry).toEqual({ kind: 'read' })
+
+    controller.retryPending()
+    await flush()
+    state = controller.getState()
+    expect(source.createCalls).toHaveLength(1)
+    expect(state.createForm?.title).toBe('不确定的任务')
+  })
+
+  it('reuses the same request id when a confirmed non-landing creation is retried', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    controller.openCreateForm()
+    controller.setCreateTitle('可重试任务')
+    source.nextCreate = { ok: false, code: 'save-failed', message: '创建失败：未创建任何任务。' }
+    await controller.submitCreateTask()
+
+    let state = controller.getState()
+    expect(state.feedback?.kind).toBe('failure')
+    if (state.feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(state.feedback.retry?.kind).toBe('create')
+    const firstId = source.createCalls[0]?.requestId
+
+    source.nextCreate = {
+      ok: true,
+      outcome: 'created',
+      task: task('t3', 'todo', 0, { title: '可重试任务' }) as never,
+      snapshot: snapshot() as never,
+    }
+    controller.retryPending()
+    await flush()
+
+    expect(source.createCalls).toHaveLength(2)
+    expect(source.createCalls[1]?.requestId).toBe(firstId)
+    state = controller.getState()
+    expect(state.createForm).toBeNull()
+    expect(state.feedback?.kind).toBe('success')
+  })
+
+  it('opens no creation form and sends nothing while the board is not ready', async () => {
+    const source = fakeSource()
+    const controller = controllerFor(source)
+
+    controller.openCreateForm()
+    expect(controller.getState().createForm).toBeNull()
+    await controller.submitCreateTask()
+    expect(source.createCalls).toHaveLength(0)
+    expect(source.reads).toBe(0)
+  })
+})
+
+describe('task field editing (F01-R05/R06: SAVE-05 baselines, draft kept)', () => {
+  it('captures both baselines, saves only the changed field and applies the snapshot', async () => {
+    const source = fakeSource({ read: editableRead() })
+    const controller = await loadedController(source)
+
+    controller.openDetail('t1')
+    controller.openFieldEdit()
+    let state = controller.getState()
+    expect(state.fieldEdit?.expectedFieldsVersion).toBe('fver1:2')
+    expect(state.fieldEdit?.expectedStatusVersion).toBe('ver1:3')
+    expect(state.fieldEdit?.title).toBe('标题一')
+    expect(state.fieldEdit?.goal).toBe('旧目标')
+    expect(state.fieldEdit?.requestId).toBe('op-1')
+
+    controller.setEditTitle('新标题')
+    source.nextUpdate = {
+      ok: true,
+      outcome: 'saved',
+      task: task('t1', 'todo', 0, { title: '新标题', goal: '旧目标', fieldsRevision: 3, statusRevision: 3 }) as never,
+      changed: ['title'],
+      fieldsRevision: 3,
+      snapshot: snapshot({
+        tasks: [
+          task('t1', 'todo', 0, { title: '新标题', goal: '旧目标', fieldsRevision: 3, statusRevision: 3 }),
+          task('t2', 'doing', 0),
+        ],
+      }) as never,
+    }
+    await controller.saveFieldEdit()
+
+    expect(source.updateCalls).toEqual([{
+      taskId: 't1',
+      requestId: 'op-1',
+      expectedFieldsVersion: 'fver1:2',
+      expectedStatusVersion: 'ver1:3',
+      title: '新标题',
+    }])
+    state = controller.getState()
+    expect(state.fieldEdit).toBeNull()
+    expect(state.detail?.title).toBe('新标题')
+    expect(state.feedback?.kind).toBe('success')
+    if (state.feedback?.kind !== 'success') throw new Error('unreachable')
+    expect(state.feedback.text).toContain('任务标题')
+  })
+
+  it('clears the goal with null and sends no title when only the goal changed', async () => {
+    const source = fakeSource({ read: editableRead() })
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    controller.openFieldEdit()
+    controller.setEditGoal('   ')
+    await controller.saveFieldEdit()
+
+    expect(source.updateCalls).toEqual([{
+      taskId: 't1',
+      requestId: 'op-1',
+      expectedFieldsVersion: 'fver1:2',
+      expectedStatusVersion: 'ver1:3',
+      goal: null,
+    }])
+  })
+
+  it('sends no write when nothing changed and says so', async () => {
+    const source = fakeSource({ read: editableRead() })
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    controller.openFieldEdit()
+    await controller.saveFieldEdit()
+
+    expect(source.updateCalls).toHaveLength(0)
+    const state = controller.getState()
+    expect(state.fieldEdit).not.toBeNull()
+    expect(state.feedback).toEqual({ kind: 'validation', text: NO_FIELD_CHANGE_MESSAGE })
+  })
+
+  it('refuses a blank title locally, keeping the draft and the error in place', async () => {
+    const source = fakeSource({ read: editableRead() })
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    controller.openFieldEdit()
+    controller.setEditTitle('   ')
+    await controller.saveFieldEdit()
+
+    expect(source.updateCalls).toHaveLength(0)
+    const state = controller.getState()
+    expect(state.fieldEdit?.error).toBe(FIELD_TITLE_REQUIRED_MESSAGE)
+    expect(state.fieldEdit?.title).toBe('   ')
+  })
+
+  it('updates the detail from the returned task and reports "saved, view not refreshed" when snapshot is null', async () => {
+    const source = fakeSource({ read: editableRead() })
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    controller.openFieldEdit()
+    controller.setEditTitle('新标题')
+    source.nextUpdate = {
+      ok: true,
+      outcome: 'saved',
+      task: task('t1', 'todo', 0, { title: '新标题', goal: '旧目标', fieldsRevision: 3, statusRevision: 3 }) as never,
+      changed: ['title'],
+      fieldsRevision: 3,
+      snapshot: null,
+    }
+    await controller.saveFieldEdit()
+
+    const state = controller.getState()
+    expect(state.fieldEdit).toBeNull()
+    expect(state.feedback?.kind).toBe('stale-view')
+    if (state.feedback?.kind !== 'stale-view') throw new Error('unreachable')
+    expect(state.feedback.text).toContain('已保存')
+    expect(state.feedback.text).toContain('视图未刷新')
+    // The one task is the data layer's new copy; the board token/read state is kept.
+    expect(state.detail?.title).toBe('新标题')
+    const view = viewOf(state)
+    expect(view?.columns.find((column) => column.status === 'todo')?.tasks[0]?.title).toBe('新标题')
+  })
+
+  it('does not promote a failed read to ready when the save landed but the view stayed stale', async () => {
+    const source = fakeSource({ read: editableRead() })
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    // A transient read failure keeps the known board (REC-05).
+    source.nextRead = { ok: false, code: 'read-failed', message: '读取失败' }
+    await controller.load()
+    expect(controller.getState().read.kind).toBe('failed')
+
+    controller.openFieldEdit()
+    expect(controller.getState().fieldEdit).not.toBeNull()
+    controller.setEditTitle('新标题')
+    source.nextUpdate = {
+      ok: true,
+      outcome: 'saved',
+      task: task('t1', 'todo', 0, { title: '新标题', goal: '旧目标', fieldsRevision: 3, statusRevision: 3 }) as never,
+      changed: ['title'],
+      fieldsRevision: 3,
+      snapshot: null,
+    }
+    await controller.saveFieldEdit()
+
+    const state = controller.getState()
+    expect(state.read.kind).toBe('failed')
+    expect(state.feedback?.kind).toBe('stale-view')
+    // The open detail has the authoritative copy; the board itself was not read.
+    expect(state.detail?.title).toBe('新标题')
+  })
+
+  it('shows a stale baseline with both versions, keeps the draft and offers only a re-read', async () => {
+    const source = fakeSource({ read: editableRead() })
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    controller.openFieldEdit()
+    controller.setEditTitle('新标题')
+    source.nextUpdate = {
+      ok: false,
+      code: 'stale-baseline',
+      message: '字段保存被拒绝：任务已被其他操作更新，本次未写入。',
+      current: { status: 'doing', statusVersion: 'ver1:9' },
+      baseline: {
+        expected: { fieldsVersion: 'fver1:2', statusVersion: 'ver1:3' },
+        actual: { fieldsVersion: 'fver1:5', statusVersion: 'ver1:9' },
+      },
+      keptInput: { title: '新标题', goal: null },
+    }
+    await controller.saveFieldEdit()
+
+    let state = controller.getState()
+    expect(state.fieldEdit?.title).toBe('新标题')
+    expect(state.fieldEdit?.goal).toBe('旧目标')
+    expect(state.feedback?.kind).toBe('failure')
+    if (state.feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(state.feedback.code).toBe('stale-baseline')
+    expect(state.feedback.retry).toEqual({ kind: 'read' })
+    expect(state.feedback.text).toContain('期望字段版本')
+    expect(state.feedback.text).toContain('实际')
+
+    const updatesBefore = source.updateCalls.length
+    source.nextRead = {
+      ok: true,
+      snapshot: snapshot({
+        tasks: [
+          task('t1', 'doing', 0, { title: '标题一', goal: '旧目标', fieldsRevision: 5, statusRevision: 9 }),
+          task('t2', 'doing', 0),
+        ],
+      }) as never,
+    }
+    controller.retryPending()
+    await flush()
+    state = controller.getState()
+    expect(source.updateCalls).toHaveLength(updatesBefore)
+    // The re-read rebases the editor on the new version and keeps the draft.
+    expect(state.fieldEdit?.expectedFieldsVersion).toBe('fver1:5')
+    expect(state.fieldEdit?.title).toBe('新标题')
+  })
+
+  it('keeps the draft on a save-failed and replays the same request id on retry', async () => {
+    const source = fakeSource({ read: editableRead() })
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    controller.openFieldEdit()
+    controller.setEditTitle('新标题')
+    source.nextUpdate = {
+      ok: false,
+      code: 'save-failed',
+      message: '保存失败：正式值未改变。',
+      keptInput: { title: '新标题', goal: null },
+    }
+    await controller.saveFieldEdit()
+
+    let state = controller.getState()
+    expect(state.fieldEdit?.title).toBe('新标题')
+    expect(state.feedback?.kind).toBe('failure')
+    if (state.feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(state.feedback.retry?.kind).toBe('fields')
+    const firstId = source.updateCalls[0]?.requestId
+
+    source.nextUpdate = {
+      ok: true,
+      outcome: 'saved',
+      task: task('t1', 'todo', 0, { title: '新标题', goal: '旧目标', fieldsRevision: 3, statusRevision: 3 }) as never,
+      changed: ['title'],
+      fieldsRevision: 3,
+      snapshot: snapshot() as never,
+    }
+    controller.retryPending()
+    await flush()
+    expect(source.updateCalls).toHaveLength(2)
+    expect(source.updateCalls[1]?.requestId).toBe(firstId)
+    expect(controller.getState().fieldEdit).toBeNull()
+  })
+
+  it('offers only a re-read after an unknown field-save result and never replays the write', async () => {
+    const source = fakeSource({ read: editableRead() })
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    controller.openFieldEdit()
+    controller.setEditTitle('新标题')
+    source.nextUpdate = { ok: false, code: 'unknown-result', message: '保存结果未知，请先核对。' }
+    await controller.saveFieldEdit()
+
+    let state = controller.getState()
+    expect(state.fieldEdit).not.toBeNull()
+    expect(state.feedback?.kind).toBe('failure')
+    if (state.feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(state.feedback.retry).toEqual({ kind: 'read' })
+
+    controller.retryPending()
+    await flush()
+    state = controller.getState()
+    expect(source.updateCalls).toHaveLength(1)
+    expect(state.fieldEdit).not.toBeNull()
+  })
+
+  it('refuses to open the editor without a fieldsRevision baseline and asks for a re-read', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    controller.openFieldEdit()
+
+    const state = controller.getState()
+    expect(state.fieldEdit).toBeNull()
+    expect(state.feedback?.kind).toBe('failure')
+    if (state.feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(state.feedback.text).toBe(FIELDS_BASELINE_MISSING_MESSAGE)
+    expect(state.feedback.retry).toEqual({ kind: 'read' })
+    expect(source.updateCalls).toHaveLength(0)
+  })
+})
+
+describe('activity history (F01-R07: explicit, honest, scoped)', () => {
+  it('loads the open task activity on demand and maps entries newest-first', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    const entries = [
+      activityEntry({ activityId: 'a2', at: '2026-11-11T06:00:00.000Z', code: 'goal-changed', summary: '目标已修改' }),
+      activityEntry(),
+    ]
+    source.nextActivity = { ok: true, entries }
+    controller.openDetail('t1')
+
+    await controller.loadTaskActivity()
+
+    expect(source.activityCalls).toEqual([{ scopeKind: 'task', scopeId: 't1' }])
+    const state = controller.getState()
+    expect(state.taskActivity.kind).toBe('ready')
+    if (state.taskActivity.kind !== 'ready') throw new Error('unreachable')
+    expect(state.taskActivity.entries.map((entry) => entry.activityId)).toEqual(['a2', 'a1'])
+    expect(state.taskActivity.entries[0]?.time).toBe('2026-11-11 06:00:00')
+    expect(state.taskActivity.entries[1]?.summary).toBe('任务已创建')
+  })
+
+  it('renders an empty history as a legal empty state, never as a failure', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    source.nextActivity = { ok: true, entries: [] }
+    controller.openDetail('t1')
+
+    await controller.loadTaskActivity()
+
+    const state = controller.getState()
+    expect(state.taskActivity).toEqual({ kind: 'ready', scopeId: 't1', entries: [] })
+    expect(state.feedback).toBeNull()
+  })
+
+  it('states a failed history with its code/message and reloads only when asked', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    source.nextActivity = { ok: false, code: 'read-failed', message: '活动历史读取失败。' }
+    controller.openDetail('t1')
+    await controller.loadTaskActivity()
+
+    let state = controller.getState()
+    expect(state.taskActivity.kind).toBe('failed')
+    if (state.taskActivity.kind !== 'failed') throw new Error('unreachable')
+    expect(state.taskActivity.code).toBe('read-failed')
+    expect(state.taskActivity.message).toBe('活动历史读取失败。')
+    expect(source.activityCalls).toHaveLength(1)
+
+    source.nextActivity = { ok: true, entries: [activityEntry()] }
+    await controller.loadTaskActivity()
+    state = controller.getState()
+    expect(state.taskActivity.kind).toBe('ready')
+    expect(source.activityCalls).toHaveLength(2)
+  })
+
+  it('loads the project activity for the explicitly selected project', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    source.nextActivity = { ok: true, entries: [activityEntry({ scopeKind: 'project', scopeId: 'ws-1' })] }
+
+    await controller.loadProjectActivity()
+
+    expect(source.activityCalls).toEqual([{ scopeKind: 'project', scopeId: 'ws-1' }])
+    const state = controller.getState()
+    expect(state.projectActivity.kind).toBe('ready')
+    expect(state.taskActivity).toEqual({ kind: 'idle' })
+  })
+
+  it('resets the task activity when the detail changes and the project activity when the project changes', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await controller.loadTaskActivity()
+    await controller.loadProjectActivity()
+    expect(controller.getState().taskActivity.kind).toBe('ready')
+    expect(controller.getState().projectActivity.kind).toBe('ready')
+
+    controller.openDetail('t2')
+    expect(controller.getState().taskActivity).toEqual({ kind: 'idle' })
+    expect(controller.getState().projectActivity.kind).toBe('ready')
+
+    source.nextRead = {
+      ok: true,
+      snapshot: snapshot({ project: { ...PROJECT, projectId: 'ws-2' } }) as never,
+    }
+    await controller.selectProject('ws-2')
+    expect(controller.getState().projectActivity).toEqual({ kind: 'idle' })
+  })
+
+  it('ignores a second load while one request is in flight (no automatic repetition)', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    let calls = 0
+    let release: (result: ActivityResult) => void = () => undefined
+    source.loadActivity = () => {
+      calls += 1
+      return new Promise<ActivityResult>((resolve) => { release = resolve })
+    }
+    controller.openDetail('t1')
+
+    const first = controller.loadTaskActivity()
+    const second = controller.loadTaskActivity()
+    release({ ok: true, entries: [] })
+    await Promise.all([first, second])
+
+    expect(calls).toBe(1)
+    expect(controller.getState().taskActivity.kind).toBe('ready')
+  })
+
+  it('drops a late activity response whose detail is no longer open', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    let release: (result: ActivityResult) => void = () => undefined
+    source.loadActivity = () => new Promise<ActivityResult>((resolve) => { release = resolve })
+    controller.openDetail('t1')
+    const pending = controller.loadTaskActivity()
+
+    controller.openDetail('t2')
+    release({ ok: true, entries: [activityEntry()] })
+    await pending
+
+    expect(controller.getState().taskActivity).toEqual({ kind: 'idle' })
   })
 })

@@ -34,12 +34,29 @@
  */
 
 import {
+  ACTIVITY_FAILED_TEXT,
   BLOCKED_REASON_KEEPS_STATUS_MESSAGE,
   BLOCKED_REASON_REQUIRED_MESSAGE,
+  BLOCKED_STATUS_ID,
   buildBoardView,
+  createdStaleViewText,
+  createdTaskText,
+  defaultInitialStatus,
+  deriveActivityEntries,
   deriveTaskDetail,
+  fieldsSavedText,
+  fieldsStaleViewText,
   isBlockedReasonValid,
+  normalizeReason,
+  restoreCreateDraft,
   statusLabelOf,
+  validateCreateDraft,
+  validateFieldDraft,
+  FIELDS_ALREADY_APPLIED_TEXT,
+  FIELDS_BASELINE_MISSING_MESSAGE,
+  FIELDS_NO_CHANGE_TEXT,
+  NO_FIELD_CHANGE_MESSAGE,
+  type ActivityEntryView,
   type BoardCapabilities,
   type BoardTask,
   type BoardView,
@@ -48,18 +65,23 @@ import {
 } from './model.js'
 import {
   nextOperationId,
+  type ActivityResult,
   type BoardFailureCode,
   type BoardReadResult,
   type BoardSnapshot,
   type BoardSource,
+  type CreateTaskInput,
+  type CreateTaskResult,
   type FormalStatusValue,
   type ProjectChoice,
   type ReorderInput,
   type StatusChangeInput,
   type UndoInput,
+  type UpdateFieldsInput,
+  type UpdateFieldsResult,
   type WriteResult,
 } from './source.js'
-import { encodeStatusVersion } from './wire.js'
+import { encodeFieldsVersion, encodeStatusVersion } from './wire.js'
 
 /* ------------------------------------------------------------------ *
  * State
@@ -67,16 +89,22 @@ import { encodeStatusVersion } from './wire.js'
 
 /** What the panel is currently doing. */
 export interface BoardBusy {
-  readonly kind: 'read' | 'status' | 'reorder' | 'undo'
+  readonly kind: 'read' | 'status' | 'reorder' | 'undo' | 'create' | 'fields'
   readonly taskId?: string
 }
 
-/** A retryable failed intent. `read` re-reads the board. */
+/**
+ * A retryable failed intent. `read` re-reads the board; `create`/`fields` replay
+ * the *same* input (same operation id) only where the data layer confirmed that
+ * nothing landed (`save-failed`/`unavailable`).
+ */
 export type RetryIntent =
   | { readonly kind: 'read' }
   | { readonly kind: 'status'; readonly input: StatusChangeInput }
   | { readonly kind: 'reorder'; readonly input: ReorderInput }
   | { readonly kind: 'undo'; readonly input: UndoInput }
+  | { readonly kind: 'create'; readonly input: CreateTaskInput }
+  | { readonly kind: 'fields'; readonly input: UpdateFieldsInput }
 
 /**
  * The undo affordance attached to a successful change.
@@ -158,6 +186,13 @@ export type BoardFeedback =
   | { readonly kind: 'draft'; readonly text: string }
   | { readonly kind: 'failure'; readonly text: string; readonly code: BoardFailureCode; readonly retry: RetryIntent | null }
   | { readonly kind: 'undo-blocked'; readonly text: string; readonly current: FormalStatusValue }
+  /**
+   * The write **landed** but the authoritative re-read failed (`snapshot: null`).
+   * It is deliberately neither `success` (the view did not change) nor `failure`
+   * (the write is not a failure): the only honest action is a re-read, and a
+   * write replay is forbidden (REC-01/REC-05).
+   */
+  | { readonly kind: 'stale-view'; readonly text: string }
 
 /** The blocked-reason dialog. */
 export interface StatusDialogState {
@@ -171,6 +206,53 @@ export interface StatusDialogState {
   /** True after a submit with an invalid reason. */
   readonly invalidReason: boolean
 }
+
+/**
+ * The creation form (F01-R02/R03).
+ *
+ * The `requestId` is minted when the form opens and reused by every submit of
+ * the same intent (a fixed typing error, a `save-failed` retry). It is never
+ * minted per keystroke (REC-02: one intent, one result).
+ */
+export interface CreateFormState {
+  readonly title: string
+  readonly goal: string
+  /** One of the board's column ids; `''` when the read carried no columns. */
+  readonly initialStatus: string
+  readonly blockedReason: string
+  /** In-place refusal/validation text; the typed values stay untouched. */
+  readonly error: string | null
+  readonly requestId: string
+}
+
+/**
+ * The inline title/goal editor (F01-R05/R06).
+ *
+ * Both SAVE-05 baselines are captured when the editor opens, so a save always
+ * writes exactly the version the user was looking at. A re-read refreshes them
+ * (the user is then looking at the new version) without losing the draft.
+ */
+export interface FieldEditState {
+  readonly taskId: string
+  readonly title: string
+  readonly goal: string
+  /** In-place refusal/validation text; the typed values stay untouched. */
+  readonly error: string | null
+  readonly requestId: string
+  readonly expectedFieldsVersion: string
+  readonly expectedStatusVersion: string
+}
+
+/**
+ * One activity-history area's state. `idle` is "not requested"; a failure is
+ * visible and retryable, and an empty `ready` list is a legal empty history —
+ * never a failure, never fabricated entries (F01-R07).
+ */
+export type ActivityState =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'loading'; readonly scopeId: string }
+  | { readonly kind: 'ready'; readonly scopeId: string; readonly entries: readonly ActivityEntryView[] }
+  | { readonly kind: 'failed'; readonly scopeId: string; readonly code: BoardFailureCode; readonly message: string }
 
 /** Everything the panel renders from. Immutable: a new object on every change. */
 export interface BoardState {
@@ -193,6 +275,14 @@ export interface BoardState {
   readonly openTaskId: string | null
   readonly detail: TaskDetailView | null
   readonly statusDialog: StatusDialogState | null
+  /** The open creation form, or `null` when it is closed. */
+  readonly createForm: CreateFormState | null
+  /** The open inline field editor, or `null` when it is closed. */
+  readonly fieldEdit: FieldEditState | null
+  /** The activity area rendered inside the open task's detail. */
+  readonly taskActivity: ActivityState
+  /** The activity area rendered under the project header. */
+  readonly projectActivity: ActivityState
   readonly feedback: BoardFeedback | null
   readonly busy: BoardBusy | null
 }
@@ -224,6 +314,9 @@ export const UNKNOWN_PROJECT_MESSAGE = '项目信息不可用：该项目尚未�
 /** Shown when the data layer cannot serve a flow the UI was asked to start. */
 export const CAPABILITY_MISSING_MESSAGE = '该操作的数据接口尚未接入，未做任何修改。'
 
+/** Shown when a creation is submitted but the board is not in its ready state. */
+export const CREATE_FORM_NOT_READY_MESSAGE = '看板尚未就绪：未创建任何任务。'
+
 /** Shown when the host refuses an undo because later changes exist (F02-R04). */
 export function undoBlockedText(current: FormalStatusValue, label?: string): string {
   const shown = label !== undefined && label.length > 0 ? label : current.status
@@ -252,6 +345,8 @@ export function writeFailedText(code: BoardFailureCode): string {
       return '任务已不存在，未做任何修改。'
     case 'invalid-reason':
       return BLOCKED_REASON_REQUIRED_MESSAGE
+    case 'invalid-input':
+      return '输入无效：未写入任何数据，已填内容已保留。'
     case 'unavailable':
       return '看板数据通道未接通：未读取或修改任何内容。'
     case 'read-failed':
@@ -353,6 +448,56 @@ export interface BoardController {
    * refresh, because the credential comes from the read snapshot).
    */
   undoTaskChange(taskId: string): void
+
+  /* ----- slice B: creation, field edit, activity history ----- */
+
+  /**
+   * Open the creation form on a ready board. Mints the creation's request id
+   * once; a later submit of the same intent reuses it (REC-02). A board that is
+   * not `ready` (selection screen, failed read) opens no form and sends nothing.
+   */
+  openCreateForm(): void
+  /** Close the creation form. Refused while a creation is in flight. */
+  closeCreateForm(): void
+  setCreateTitle(text: string): void
+  setCreateGoal(text: string): void
+  /** Pick the initial column (one of the board's column ids). */
+  setCreateStatus(status: string): void
+  setCreateBlockedReason(text: string): void
+  /**
+   * Validate and submit the creation. A blank title, or a blocked initial status
+   * without a reason, is refused locally and no request is sent (F01-R02).
+   */
+  submitCreateTask(): Promise<void>
+
+  /**
+   * Open the inline title/goal editor for the task currently in the detail. The
+   * SAVE-05 baselines are captured here; a task without a `fieldsRevision` is
+   * refused with a re-read (never a fabricated baseline).
+   */
+  openFieldEdit(): void
+  /** Close the inline editor. Refused while a field save is in flight. */
+  closeFieldEdit(): void
+  setEditTitle(text: string): void
+  setEditGoal(text: string): void
+  /**
+   * Save the changed title/goal (absent field = unchanged; empty goal = clear).
+   * No request is sent when nothing changed.
+   */
+  saveFieldEdit(): Promise<void>
+
+  /**
+   * Load the open task's important-change history (scopeKind `task`). Explicit
+   * only: nothing loads automatically, and a second call while one is in flight
+   * is ignored.
+   */
+  loadTaskActivity(): Promise<void>
+  /** Hide the task activity area (resets it to idle; no request). */
+  closeTaskActivity(): void
+  /** Load the selected project's activity history (scopeKind `project`). */
+  loadProjectActivity(): Promise<void>
+  /** Hide the project activity area (resets it to idle; no request). */
+  closeProjectActivity(): void
 }
 
 /**
@@ -380,6 +525,10 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     openTaskId: null,
     detail: null,
     statusDialog: null,
+    createForm: null,
+    fieldEdit: null,
+    taskActivity: { kind: 'idle' },
+    projectActivity: { kind: 'idle' },
     feedback: null,
     busy: null,
   }
@@ -422,6 +571,10 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       openTaskId: null,
       detail: null,
       statusDialog: null,
+      createForm: null,
+      fieldEdit: null,
+      taskActivity: { kind: 'idle' },
+      projectActivity: { kind: 'idle' },
       feedback: null,
       busy: null,
     })
@@ -466,6 +619,29 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const view = buildBoardView(snapshot)
     const openTaskId = state.openTaskId
     const task = openTaskId === null ? undefined : snapshot.tasks.find((item) => item.taskId === openTaskId)
+    // A reopened/refreshed read is a new version of the task: the editor's
+    // SAVE-05 baselines move to it, while the user's draft is left untouched. A
+    // task that disappeared takes its editor with it.
+    const edit = state.fieldEdit
+    let nextEdit = edit
+    if (edit !== null) {
+      const editTask = snapshot.tasks.find((item) => item.taskId === edit.taskId)
+      if (editTask === undefined) {
+        nextEdit = null
+      } else if (editTask.fieldsRevision !== undefined) {
+        nextEdit = {
+          ...edit,
+          expectedFieldsVersion: encodeFieldsVersion(editTask.fieldsRevision),
+          expectedStatusVersion: encodeStatusVersion(editTask.statusRevision),
+        }
+      }
+    }
+    // The activity areas belong to exactly one scope: losing that scope (the
+    // detail closed, its task gone) resets the area instead of showing another
+    // task's entries under it.
+    const activityOwner = task === undefined ? null : openTaskId
+    const taskActivityReset = state.taskActivity.kind !== 'idle'
+      && (activityOwner === null || state.taskActivity.scopeId !== activityOwner)
     setState({
       read: {
         kind: 'ready',
@@ -478,6 +654,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       // showing a stale copy of it.
       openTaskId: task === undefined ? null : openTaskId,
       detail: task === undefined ? null : deriveTaskDetail(task),
+      ...(nextEdit === edit ? {} : { fieldEdit: nextEdit }),
+      ...(taskActivityReset ? { taskActivity: { kind: 'idle' as const } } : {}),
     })
   }
 
@@ -658,6 +836,266 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     void runWrite('status', input.taskId, { kind: 'status', input: change }, () => source.setStatus(change))
   }
 
+  /* ------------------------------------------------------------------ *
+   * Slice B: creation, field edit and activity history
+   * ------------------------------------------------------------------ */
+
+  /** One failure sentence: the data layer's own message, or the local fallback. */
+  const failureText = (code: BoardFailureCode, message: string): string =>
+    message.trim().length > 0 ? message : writeFailedText(code)
+
+  /** The status ids the board's columns offer to the creation form. */
+  const creationStatuses = (): readonly string[] => {
+    const read = state.read
+    return read.kind === 'ready' ? read.view.columns.map((column) => column.status) : []
+  }
+
+  /**
+   * Replace one task in the view currently on screen with the data layer's
+   * authoritative copy.
+   *
+   * Used when a write landed but the board re-read failed (`snapshot: null`):
+   * the board token stays, while the task's own fields are known to be new.
+   */
+  const applyTaskToView = (task: BoardTask): void => {
+    const view = currentView()
+    // Only a genuinely ready read may be refreshed in place. A kept view that
+    // belongs to a failed read stays failed (the board was not re-read); only the
+    // task in the open detail gets the authoritative copy.
+    if (view === null || state.read.kind !== 'ready') {
+      if (state.openTaskId === task.taskId) setState({ detail: deriveTaskDetail(task) })
+      return
+    }
+    const tasks = view.columns.flatMap((column) => column.tasks).map((item) =>
+      item.taskId === task.taskId ? task : item,
+    )
+    const snapshot: BoardSnapshot = {
+      project: view.project,
+      tasks,
+      columns: view.columns.map((column) => ({
+        status: column.status,
+        label: column.label,
+        collapsedByDefault: column.collapsedByDefault,
+        tasks: tasks.filter((item) => item.status === column.status),
+      })),
+      boardToken: view.boardToken,
+      capabilities: view.capabilities,
+    }
+    applySnapshot(snapshot)
+  }
+
+  /** Edit a creation draft field; typing clears the previous in-place error. */
+  const patchCreateForm = (patch: Partial<CreateFormState>): void => {
+    const form = state.createForm
+    if (form === null || state.busy?.kind === 'create') return
+    setState({ createForm: { ...form, error: null, ...patch } })
+  }
+
+  /** Edit a field draft; typing clears the previous in-place error. */
+  const patchFieldEdit = (patch: Partial<FieldEditState>): void => {
+    const edit = state.fieldEdit
+    if (edit === null || state.busy?.kind === 'fields') return
+    setState({ fieldEdit: { ...edit, error: null, ...patch } })
+  }
+
+  const runCreateTask = async (input: CreateTaskInput): Promise<void> => {
+    if (state.busy !== null) return
+    setState({ busy: { kind: 'create' }, feedback: null })
+    let result: CreateTaskResult
+    try {
+      result = await source.createTask(input)
+    } catch (error) {
+      // An unconfirmed creation may have landed: only a re-read is honest.
+      const message = error instanceof Error ? error.message : String(error)
+      setState({
+        busy: null,
+        feedback: {
+          kind: 'failure',
+          text: `创建结果未知：${message}；请先重新读取，不要重复提交。`,
+          code: 'unknown-result',
+          retry: { kind: 'read' },
+        },
+      })
+      return
+    }
+
+    if (result.ok) {
+      if (result.snapshot !== null) {
+        applySnapshot(result.snapshot)
+        setState({
+          busy: null,
+          createForm: null,
+          feedback: { kind: 'success', text: createdTaskText(result.outcome, result.task.title) },
+        })
+      } else {
+        // The creation landed; only the view refresh failed (REC-01). This is a
+        // confirmation, not a failure, and the write is never re-sent.
+        setState({
+          busy: null,
+          createForm: null,
+          feedback: { kind: 'stale-view', text: createdStaleViewText(result.outcome) },
+        })
+      }
+      return
+    }
+
+    const form = state.createForm
+    const inPlace = result.code === 'invalid-input' || result.code === 'invalid-reason'
+    let nextForm = form
+    if (form !== null) {
+      const draft = result.keptInput === undefined
+        ? { title: form.title, goal: form.goal, initialStatus: form.initialStatus, blockedReason: form.blockedReason }
+        : restoreCreateDraft(result.keptInput, creationStatuses())
+      nextForm = { ...form, ...draft, error: inPlace ? failureText(result.code, result.message) : null }
+    }
+    // F9/F10: an unknown outcome (or a refused write whose re-read failed) must
+    // not offer a write retry — the creation may already have landed.
+    const readOnlyRetry = result.code === 'unknown-result'
+      || result.code === 'read-failed'
+      || result.code === 'stale-baseline'
+      || result.code === 'unknown-project'
+    const writeRetry = result.code === 'save-failed' || result.code === 'unavailable'
+    setState({
+      busy: null,
+      ...(nextForm === null ? {} : { createForm: nextForm }),
+      feedback: {
+        kind: 'failure',
+        text: failureText(result.code, result.message),
+        code: result.code,
+        retry: readOnlyRetry ? { kind: 'read' } : writeRetry ? { kind: 'create', input } : null,
+      },
+    })
+  }
+
+  /** Success text for a field save, by the outcome the data layer reported. */
+  const fieldsSuccessTextOf = (
+    outcome: 'saved' | 'no-change' | 'already-applied',
+    changed: readonly ('title' | 'goal')[],
+  ): string => {
+    if (outcome === 'already-applied') return FIELDS_ALREADY_APPLIED_TEXT
+    if (outcome === 'no-change') return FIELDS_NO_CHANGE_TEXT
+    return fieldsSavedText(changed)
+  }
+
+  const runUpdateFields = async (input: UpdateFieldsInput): Promise<void> => {
+    if (state.busy !== null) return
+    setState({ busy: { kind: 'fields', taskId: input.taskId }, feedback: null })
+    let result: UpdateFieldsResult
+    try {
+      result = await source.updateTaskFields(input)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setState({
+        busy: null,
+        feedback: {
+          kind: 'failure',
+          text: `保存结果未知：${message}；请先重新读取，不要重复提交。`,
+          code: 'unknown-result',
+          retry: { kind: 'read' },
+        },
+      })
+      return
+    }
+
+    if (result.ok) {
+      const text = fieldsSuccessTextOf(result.outcome, result.changed)
+      if (result.snapshot !== null) {
+        applySnapshot(result.snapshot)
+        setState({ busy: null, fieldEdit: null, feedback: { kind: 'success', text } })
+      } else {
+        // The save landed; the task object carries the new fields, the board
+        // does not. Keep the known view, update that one task, ask for a re-read.
+        applyTaskToView(result.task)
+        setState({
+          busy: null,
+          fieldEdit: null,
+          feedback: { kind: 'stale-view', text: fieldsStaleViewText(result.changed) },
+        })
+      }
+      return
+    }
+
+    // Show the real formal status when the data layer supplied it, never the
+    // attempted value (same rule as the status writes).
+    if (result.current !== undefined) refreshFromHostValue(input.taskId, result.current)
+    const edit = state.fieldEdit
+    let nextEdit = edit
+    if (edit !== null) {
+      const inPlace = result.code === 'invalid-input' || result.code === 'invalid-reason'
+      nextEdit = {
+        ...edit,
+        // F01-R05: a refused save leaves the typed draft in place.
+        title: result.keptInput?.title ?? edit.title,
+        goal: result.keptInput?.goal ?? edit.goal,
+        error: inPlace ? failureText(result.code, result.message) : null,
+      }
+    }
+    const baselineNote = result.baseline === undefined
+      ? ''
+      : `（期望字段版本 ${result.baseline.expected.fieldsVersion}，实际 ${result.baseline.actual.fieldsVersion}）`
+    const readOnlyRetry = result.code === 'unknown-result'
+      || result.code === 'read-failed'
+      || result.code === 'stale-baseline'
+      || result.code === 'unknown-project'
+    const writeRetry = result.code === 'save-failed' || result.code === 'unavailable'
+    setState({
+      busy: null,
+      ...(nextEdit === null ? {} : { fieldEdit: nextEdit }),
+      feedback: {
+        kind: 'failure',
+        text: `${failureText(result.code, result.message)}${baselineNote}`,
+        code: result.code,
+        retry: readOnlyRetry ? { kind: 'read' } : writeRetry ? { kind: 'fields', input } : null,
+      },
+    })
+  }
+
+  /** Apply one activity read, dropping a response whose scope is no longer shown. */
+  const applyActivityResult = (scope: 'task' | 'project', scopeId: string, result: ActivityResult): void => {
+    const failed = (): { kind: 'failed'; scopeId: string; code: BoardFailureCode; message: string } => ({
+      kind: 'failed',
+      scopeId,
+      code: result.ok ? 'read-failed' : result.code,
+      message: result.ok
+        ? ACTIVITY_FAILED_TEXT
+        : (result.message.trim().length > 0 ? result.message : ACTIVITY_FAILED_TEXT),
+    })
+    if (scope === 'task') {
+      if (state.openTaskId !== scopeId) return
+      setState({
+        taskActivity: result.ok
+          ? { kind: 'ready', scopeId, entries: deriveActivityEntries(result.entries) }
+          : failed(),
+      })
+      return
+    }
+    if (state.selectedProjectId !== scopeId) return
+    setState({
+      projectActivity: result.ok
+        ? { kind: 'ready', scopeId, entries: deriveActivityEntries(result.entries) }
+        : failed(),
+    })
+  }
+
+  const loadActivity = async (scope: 'task' | 'project'): Promise<void> => {
+    const scopeId = scope === 'task' ? (state.openTaskId ?? null) : state.selectedProjectId
+    if (scopeId === null) return
+    const current = scope === 'task' ? state.taskActivity : state.projectActivity
+    // One request per scope at a time; no automatic repetition, no polling.
+    if (current.kind === 'loading' && current.scopeId === scopeId) return
+    setState(scope === 'task'
+      ? { taskActivity: { kind: 'loading', scopeId } }
+      : { projectActivity: { kind: 'loading', scopeId } })
+    let result: ActivityResult
+    try {
+      result = await source.loadActivity({ scopeKind: scope, scopeId })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      result = { ok: false, code: 'read-failed', message: `活动历史读取失败：${message}` }
+    }
+    applyActivityResult(scope, scopeId, result)
+  }
+
   return {
     getState: () => state,
 
@@ -773,6 +1211,10 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         openTaskId: null,
         detail: null,
         statusDialog: null,
+        createForm: null,
+        fieldEdit: null,
+        taskActivity: { kind: 'idle' },
+        projectActivity: { kind: 'idle' },
         feedback: null,
         busy: null,
       })
@@ -790,11 +1232,23 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     openDetail(taskId) {
       const task = taskById(taskId)
       if (task === undefined) return
-      setState({ openTaskId: taskId, detail: deriveTaskDetail(task) })
+      // A different task is a different scope: the previous editor and activity
+      // list never carry over to it.
+      const switched = state.openTaskId !== taskId
+      setState({
+        openTaskId: taskId,
+        detail: deriveTaskDetail(task),
+        ...(switched ? { fieldEdit: null, taskActivity: { kind: 'idle' as const } } : {}),
+      })
     },
 
     closeDetail() {
-      setState({ openTaskId: null, detail: null })
+      setState({
+        openTaskId: null,
+        detail: null,
+        fieldEdit: null,
+        taskActivity: { kind: 'idle' },
+      })
     },
 
     requestStatusChange,
@@ -889,7 +1343,14 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
 
     retryPending() {
       const feedback = state.feedback
-      if (feedback === null || feedback.kind !== 'failure' || feedback.retry === null) return
+      if (feedback === null) return
+      if (feedback.kind === 'stale-view') {
+        // The write landed; only the view is stale. The one honest action is a
+        // fresh read, never a replay of the write.
+        void this.load()
+        return
+      }
+      if (feedback.kind !== 'failure' || feedback.retry === null) return
       const retry = feedback.retry
       switch (retry.kind) {
         case 'read':
@@ -907,6 +1368,13 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
           return
         case 'undo':
           void runWrite('undo', retry.input.taskId, retry, () => source.undoStatusChange(retry.input))
+          return
+        case 'create':
+          // Same input ⇒ same request id: one intent, one result (REC-02).
+          void runCreateTask(retry.input)
+          return
+        case 'fields':
+          void runUpdateFields(retry.input)
           return
         default:
           return
@@ -954,6 +1422,196 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       }
       setState({ feedback: null })
       void runWrite('undo', taskId, { kind: 'undo', input: undo }, () => source.undoStatusChange(undo))
+    },
+
+    /* ---------------------------------------------------------------- *
+     * Slice B: creation
+     * ---------------------------------------------------------------- */
+
+    openCreateForm() {
+      // The button only renders on a ready board; refuse here as well so a
+      // programmatic call can never open a form that cannot be submitted.
+      if (state.read.kind !== 'ready' || state.busy !== null) return
+      const view = state.read.view
+      setState({
+        createForm: {
+          title: '',
+          goal: '',
+          // The first column the data layer declared — never an invented status.
+          initialStatus: defaultInitialStatus(view),
+          blockedReason: '',
+          error: null,
+          // One identity per form intent; typing mints nothing (REC-02).
+          requestId: mintOperationId(),
+        },
+        fieldEdit: null,
+        feedback: null,
+      })
+    },
+
+    closeCreateForm() {
+      // Closing cannot cancel a creation that is already in flight.
+      if (state.busy?.kind === 'create') return
+      if (state.createForm === null) return
+      setState({ createForm: null })
+    },
+
+    setCreateTitle(text) {
+      patchCreateForm({ title: text })
+    },
+
+    setCreateGoal(text) {
+      patchCreateForm({ goal: text })
+    },
+
+    setCreateStatus(status) {
+      patchCreateForm({ initialStatus: status })
+    },
+
+    setCreateBlockedReason(text) {
+      patchCreateForm({ blockedReason: text })
+    },
+
+    async submitCreateTask() {
+      const form = state.createForm
+      if (form === null) return
+      if (state.busy !== null) return
+      if (state.read.kind !== 'ready') {
+        setState({ createForm: { ...form, error: CREATE_FORM_NOT_READY_MESSAGE } })
+        return
+      }
+      // F01-R02: the title is required and a blocked initial status needs a
+      // reason. Both are refused here — no invalid write is sent.
+      const validation = validateCreateDraft(form)
+      if (validation !== null) {
+        setState({ createForm: { ...form, error: validation } })
+        return
+      }
+      const title = normalizeReason(form.title)
+      const goal = form.goal.trim()
+      const input: CreateTaskInput = {
+        projectId: state.read.projectId,
+        requestId: form.requestId,
+        title,
+        ...(goal.length === 0 ? {} : { goal }),
+        ...(form.initialStatus.length === 0 ? {} : { initialStatus: form.initialStatus }),
+        ...(form.initialStatus === BLOCKED_STATUS_ID ? { blockedReason: normalizeReason(form.blockedReason) } : {}),
+      }
+      await runCreateTask(input)
+    },
+
+    /* ---------------------------------------------------------------- *
+     * Slice B: inline title/goal edit
+     * ---------------------------------------------------------------- */
+
+    openFieldEdit() {
+      const detail = state.detail
+      if (detail === null || state.busy !== null) return
+      const task = taskById(detail.taskId)
+      if (task === undefined) {
+        setState({ feedback: { kind: 'failure', text: writeFailedText('not-found'), code: 'not-found', retry: null } })
+        return
+      }
+      if (task.fieldsRevision === undefined) {
+        // SAVE-05: no baseline means no save. Never invent one; re-read instead.
+        setState({
+          feedback: {
+            kind: 'failure',
+            text: FIELDS_BASELINE_MISSING_MESSAGE,
+            code: 'read-failed',
+            retry: { kind: 'read' },
+          },
+        })
+        return
+      }
+      setState({
+        createForm: null,
+        fieldEdit: {
+          taskId: task.taskId,
+          title: task.title,
+          goal: task.goal,
+          error: null,
+          // One identity per edit intent; a retry reuses it (REC-02).
+          requestId: mintOperationId(),
+          expectedFieldsVersion: encodeFieldsVersion(task.fieldsRevision),
+          expectedStatusVersion: encodeStatusVersion(task.statusRevision),
+        },
+        feedback: null,
+      })
+    },
+
+    closeFieldEdit() {
+      if (state.busy?.kind === 'fields') return
+      if (state.fieldEdit === null) return
+      setState({ fieldEdit: null })
+    },
+
+    setEditTitle(text) {
+      patchFieldEdit({ title: text })
+    },
+
+    setEditGoal(text) {
+      patchFieldEdit({ goal: text })
+    },
+
+    async saveFieldEdit() {
+      const edit = state.fieldEdit
+      if (edit === null || state.busy !== null) return
+      const task = taskById(edit.taskId)
+      if (task === undefined) {
+        setState({ feedback: { kind: 'failure', text: writeFailedText('not-found'), code: 'not-found', retry: null } })
+        return
+      }
+      const validation = validateFieldDraft(edit)
+      if (validation !== null) {
+        setState({ fieldEdit: { ...edit, error: validation } })
+        return
+      }
+      const title = edit.title.trim()
+      const goal = edit.goal.trim()
+      const titleChanged = title !== task.title
+      const goalChanged = goal !== task.goal.trim()
+      if (!titleChanged && !goalChanged) {
+        // F01-R05: opening the editor and typing nothing is not a substantive
+        // update; no write is sent.
+        setState({
+          fieldEdit: { ...edit, error: null },
+          feedback: { kind: 'validation', text: NO_FIELD_CHANGE_MESSAGE },
+        })
+        return
+      }
+      const input: UpdateFieldsInput = {
+        taskId: edit.taskId,
+        requestId: edit.requestId,
+        expectedFieldsVersion: edit.expectedFieldsVersion,
+        expectedStatusVersion: edit.expectedStatusVersion,
+        // Absent = leave unchanged; `null` = clear. Only what changed is sent.
+        ...(titleChanged ? { title } : {}),
+        ...(goalChanged ? { goal: goal.length === 0 ? null : goal } : {}),
+      }
+      await runUpdateFields(input)
+    },
+
+    /* ---------------------------------------------------------------- *
+     * Slice B: activity history (explicit load, never automatic)
+     * ---------------------------------------------------------------- */
+
+    async loadTaskActivity() {
+      await loadActivity('task')
+    },
+
+    closeTaskActivity() {
+      if (state.taskActivity.kind === 'idle') return
+      setState({ taskActivity: { kind: 'idle' } })
+    },
+
+    async loadProjectActivity() {
+      await loadActivity('project')
+    },
+
+    closeProjectActivity() {
+      if (state.projectActivity.kind === 'idle') return
+      setState({ projectActivity: { kind: 'idle' } })
     },
   }
 }

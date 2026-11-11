@@ -31,13 +31,27 @@
 import { createElement, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 
 import {
+  ACTIVITY_EMPTY_TEXT,
+  ACTIVITY_LOADING_TEXT,
+  ACTIVITY_PROJECT_TITLE,
+  ACTIVITY_RETRY_TEXT,
+  ACTIVITY_TASK_TITLE,
+  BLOCKED_STATUS_ID,
   deriveCardProgress,
   statusLabelOf,
+  type ActivityEntryView,
   type BoardTask,
   type BoardView,
   type TaskDetailView,
 } from './model.js'
-import type { BoardController, BoardState, StatusDialogState } from './controller.js'
+import type {
+  ActivityState,
+  BoardController,
+  BoardState,
+  CreateFormState,
+  FieldEditState,
+  StatusDialogState,
+} from './controller.js'
 import { SELECTION_REQUIRED_TITLE } from './controller.js'
 import { getBoardController } from './runtime.js'
 import { NO_CHANNEL_MESSAGE } from './source.js'
@@ -95,6 +109,31 @@ export interface BoardActions {
   onLoadProjects(): void
   /** Leave the board and return to the selector; the selection is not kept. */
   onSwitchProject(): void
+
+  /* ----- slice B: creation, field edit, activity ----- */
+
+  /** Open the creation form (only offered on a ready board). */
+  onCreateOpen(): void
+  onCreateClose(): void
+  onCreateTitle(text: string): void
+  onCreateGoal(text: string): void
+  onCreateStatus(status: string): void
+  onCreateBlockedReason(text: string): void
+  onCreateSubmit(): void
+
+  /** Open the inline title/goal editor for the task shown in the detail. */
+  onEditOpen(): void
+  onEditClose(): void
+  onEditTitle(text: string): void
+  onEditGoal(text: string): void
+  onEditSave(): void
+
+  /** Load the open task's activity history (explicit; never automatic). */
+  onTaskActivity(): void
+  onTaskActivityClose(): void
+  /** Load the selected project's activity history (explicit). */
+  onProjectActivity(): void
+  onProjectActivityClose(): void
 }
 
 /** One status a menu may offer: the id that travels, the label that is shown. */
@@ -307,6 +346,292 @@ function renderStatusDialog(dialog: StatusDialogState, actions: BoardActions): R
   )
 }
 
+/** Shared style for a management surface inside the panel. */
+const MANAGEMENT_STYLE = {
+  ...CARD_STYLE,
+  marginTop: '8px',
+} as const
+
+/** The red in-place error line. Text, never colour alone (REC-09). */
+const ERROR_TEXT_STYLE = {
+  color: 'var(--dsw-alias-label-error, #c00)',
+  fontSize: '12px',
+  marginTop: '4px',
+} as const
+
+/**
+ * One activity entry: summary, time and code, exactly as the data layer sent
+ * them. No fabricated author/system note and no invented ordering.
+ *
+ * @param entry - the mapped activity entry.
+ * @returns the entry node.
+ */
+function renderActivityEntry(entry: ActivityEntryView): ReactNode {
+  return createElement(
+    'div',
+    {
+      key: entry.activityId,
+      role: 'listitem',
+      'data-aikanban-activity-entry': entry.activityId,
+      style: { padding: '2px 0', fontSize: '12px' },
+    },
+    createElement('div', { key: 'summary', style: { fontWeight: 600 } }, entry.summary),
+    createElement('div', { key: 'meta', style: MUTED }, `${entry.time} · ${entry.code}`),
+  )
+}
+
+/**
+ * The project- or task-scope activity area.
+ *
+ * `idle` renders nothing (never requested). A failed read is stated with a
+ * retry; an empty list is 「暂无重要活动」 — an answer, not an error (F01-R07).
+ *
+ * @param scope - which scope the area belongs to.
+ * @param activity - the area's state.
+ * @param actions - the panel's actions.
+ * @param onClose - hide the area.
+ * @returns the area node, or null when idle.
+ */
+function renderActivitySection(
+  scope: 'task' | 'project',
+  activity: ActivityState,
+  actions: BoardActions,
+  onClose: () => void,
+): ReactNode {
+  if (activity.kind === 'idle') return null
+  const heading = scope === 'task' ? ACTIVITY_TASK_TITLE : ACTIVITY_PROJECT_TITLE
+  const closeLabel = scope === 'task' ? '收起活动历史' : '收起项目活动'
+  const reload = scope === 'task' ? actions.onTaskActivity : actions.onProjectActivity
+  const children: ReactNode[] = [
+    createElement(
+      'div',
+      { key: 'heading', style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+      createElement('span', { key: 'label', style: { fontWeight: 600, fontSize: '12px' } }, heading),
+      createElement(
+        'button',
+        {
+          key: 'close',
+          type: 'button',
+          'data-aikanban-activity-close': scope,
+          onClick: onClose,
+          style: { fontSize: '11px' },
+        },
+        closeLabel,
+      ),
+    ),
+  ]
+
+  if (activity.kind === 'loading') {
+    children.push(createElement(
+      'div',
+      { key: 'loading', 'data-aikanban-activity-loading': scope, style: MUTED },
+      ACTIVITY_LOADING_TEXT,
+    ))
+  } else if (activity.kind === 'failed') {
+    // A failed history is stated and retryable; it is never rendered as empty.
+    children.push(createElement(
+      'div',
+      { key: 'failed', role: 'alert', 'data-aikanban-activity-failed': activity.code, style: { fontSize: '12px' } },
+      activity.message,
+    ))
+    children.push(createElement(
+      'button',
+      { key: 'reload', type: 'button', 'data-aikanban-activity-reload': scope, onClick: reload, style: { marginTop: '6px' } },
+      ACTIVITY_RETRY_TEXT,
+    ))
+  } else if (activity.entries.length === 0) {
+    children.push(createElement(
+      'div',
+      { key: 'empty', 'data-aikanban-activity-empty': scope, style: { ...MUTED, marginTop: '4px' } },
+      ACTIVITY_EMPTY_TEXT,
+    ))
+  } else {
+    children.push(createElement(
+      'div',
+      { key: 'entries', role: 'list', 'data-aikanban-activity-list': scope, style: { marginTop: '4px' } },
+      activity.entries.map((entry) => renderActivityEntry(entry)),
+    ))
+  }
+
+  return scope === 'task'
+    ? createElement('section', { key: 'task-activity', 'data-aikanban-task-activity': 'true', style: MANAGEMENT_STYLE }, children)
+    : createElement('section', { key: 'project-activity', 'data-aikanban-project-activity': 'true', style: MANAGEMENT_STYLE }, children)
+}
+
+/**
+ * The creation form (F01-R02/R03).
+ *
+ * A blocked initial status shows its reason field and the local rule refuses a
+ * blank one before any request; the data layer's `keptInput` echo restores the
+ * typed values in place.
+ *
+ * @param form - the creation draft.
+ * @param choices - the board's column choices.
+ * @param submitting - whether a creation is in flight.
+ * @param actions - the panel's actions.
+ * @returns the form node.
+ */
+function renderCreateForm(
+  form: CreateFormState,
+  choices: readonly StatusChoice[],
+  submitting: boolean,
+  actions: BoardActions,
+): ReactNode {
+  const blocked = form.initialStatus === BLOCKED_STATUS_ID
+  return createElement(
+    'section',
+    { key: 'create-form', role: 'form', 'data-aikanban-create-form': 'true', style: MANAGEMENT_STYLE },
+    createElement('div', { key: 'title', style: { fontWeight: 600 } }, '新建任务'),
+    createElement(
+      'label',
+      { key: 'title-field', style: { display: 'block', marginTop: '6px', fontSize: '12px' } },
+      '标题（必填）',
+      createElement('input', {
+        'aria-label': '任务标题',
+        'data-aikanban-create-title': 'true',
+        value: form.title,
+        onChange: (event: { target: { value: string } }) => { actions.onCreateTitle(event.target.value) },
+        style: { display: 'block', width: '100%' },
+      }),
+    ),
+    createElement(
+      'label',
+      { key: 'goal-field', style: { display: 'block', marginTop: '6px', fontSize: '12px' } },
+      '目标（选填）',
+      createElement('input', {
+        'aria-label': '任务目标',
+        'data-aikanban-create-goal': 'true',
+        value: form.goal,
+        onChange: (event: { target: { value: string } }) => { actions.onCreateGoal(event.target.value) },
+        style: { display: 'block', width: '100%' },
+      }),
+    ),
+    createElement(
+      'label',
+      { key: 'status-field', style: { display: 'block', marginTop: '6px', fontSize: '12px' } },
+      '初始状态',
+      createElement(
+        'select',
+        {
+          'aria-label': '初始状态',
+          'data-aikanban-create-status': 'true',
+          value: form.initialStatus,
+          onChange: (event: { target: { value: string } }) => { actions.onCreateStatus(event.target.value) },
+          style: { display: 'block' },
+        },
+        choices.map((choice) => createElement('option', { key: choice.id, value: choice.id }, choice.label)),
+      ),
+    ),
+    blocked
+      ? createElement(
+        'label',
+        { key: 'reason-field', style: { display: 'block', marginTop: '6px', fontSize: '12px' } },
+        '阻塞原因（必填）',
+        createElement('input', {
+          'aria-label': '阻塞原因',
+          'data-aikanban-create-blocked-reason': 'true',
+          value: form.blockedReason,
+          onChange: (event: { target: { value: string } }) => { actions.onCreateBlockedReason(event.target.value) },
+          style: { display: 'block', width: '100%' },
+        }),
+      )
+      : null,
+    form.error !== null
+      ? createElement('div', { key: 'error', role: 'alert', 'data-aikanban-create-error': 'true', style: ERROR_TEXT_STYLE }, form.error)
+      : null,
+    submitting
+      ? createElement('div', { key: 'submitting', style: MUTED }, '正在创建任务…')
+      : null,
+    createElement(
+      'div',
+      { key: 'buttons', style: { marginTop: '8px', display: 'flex', gap: '6px' } },
+      createElement(
+        'button',
+        {
+          key: 'submit',
+          type: 'button',
+          'data-aikanban-create-submit': 'true',
+          onClick: actions.onCreateSubmit,
+          disabled: submitting,
+        },
+        '创建任务',
+      ),
+      createElement(
+        'button',
+        {
+          key: 'cancel',
+          type: 'button',
+          'data-aikanban-create-cancel': 'true',
+          onClick: actions.onCreateClose,
+          disabled: submitting,
+        },
+        '取消',
+      ),
+    ),
+  )
+}
+
+/**
+ * The inline title/goal editor (F01-R05/R06). A failure keeps the typed draft;
+ * the error is stated in place.
+ *
+ * @param edit - the edit draft.
+ * @param saving - whether a save is in flight.
+ * @param actions - the panel's actions.
+ * @returns the editor node.
+ */
+function renderFieldEdit(edit: FieldEditState, saving: boolean, actions: BoardActions): ReactNode {
+  return createElement(
+    'div',
+    { key: 'field-edit', role: 'form', 'data-aikanban-edit-form': edit.taskId, style: { marginTop: '8px' } },
+    createElement('div', { key: 'title', style: { fontWeight: 600, fontSize: '12px' } }, '编辑任务标题与目标'),
+    createElement(
+      'label',
+      { key: 'title-field', style: { display: 'block', marginTop: '6px', fontSize: '12px' } },
+      '标题（必填）',
+      createElement('input', {
+        'aria-label': '任务标题',
+        'data-aikanban-edit-title': 'true',
+        value: edit.title,
+        onChange: (event: { target: { value: string } }) => { actions.onEditTitle(event.target.value) },
+        style: { display: 'block', width: '100%' },
+      }),
+    ),
+    createElement(
+      'label',
+      { key: 'goal-field', style: { display: 'block', marginTop: '6px', fontSize: '12px' } },
+      '目标（清空表示无目标）',
+      createElement('input', {
+        'aria-label': '任务目标',
+        'data-aikanban-edit-goal': 'true',
+        value: edit.goal,
+        onChange: (event: { target: { value: string } }) => { actions.onEditGoal(event.target.value) },
+        style: { display: 'block', width: '100%' },
+      }),
+    ),
+    edit.error !== null
+      ? createElement('div', { key: 'error', role: 'alert', 'data-aikanban-edit-error': 'true', style: ERROR_TEXT_STYLE }, edit.error)
+      : null,
+    saving
+      ? createElement('div', { key: 'saving', style: MUTED }, '正在保存…')
+      : null,
+    createElement(
+      'div',
+      { key: 'buttons', style: { marginTop: '8px', display: 'flex', gap: '6px' } },
+      createElement(
+        'button',
+        { key: 'save', type: 'button', 'data-aikanban-save-edit': edit.taskId, onClick: actions.onEditSave, disabled: saving },
+        '保存修改',
+      ),
+      createElement(
+        'button',
+        { key: 'cancel', type: 'button', 'data-aikanban-cancel-edit': edit.taskId, onClick: actions.onEditClose, disabled: saving },
+        '取消编辑',
+      ),
+    ),
+  )
+}
+
 /**
  * The task detail skeleton (F02-R07).
  *
@@ -315,6 +640,8 @@ function renderStatusDialog(dialog: StatusDialogState, actions: BoardActions): R
  * @param selectable - statuses offered by the menu.
  * @param status - the live status id (the detail may be a snapshot).
  * @param canUndo - whether the data layer can serve undo at all.
+ * @param fieldEdit - the open inline editor, if any.
+ * @param taskActivity - the task-scope activity state.
  * @returns the detail node.
  */
 function renderDetail(
@@ -323,6 +650,8 @@ function renderDetail(
   selectable: readonly StatusChoice[],
   status: string,
   canUndo: boolean,
+  fieldEdit: FieldEditState | null,
+  taskActivity: ActivityState,
 ): ReactNode {
   return createElement(
     'section',
@@ -357,6 +686,33 @@ function renderDetail(
         ),
       )
       : createElement('div', { key: 'status-note', style: MUTED }, '状态修改入口尚未接入（只读呈现）。'),
+    // F01-R05/R06: the substantive title/goal editor is inline in the detail.
+    fieldEdit === null || fieldEdit.taskId !== detail.taskId
+      ? createElement(
+        'button',
+        {
+          key: 'edit',
+          type: 'button',
+          'data-aikanban-edit': detail.taskId,
+          onClick: actions.onEditOpen,
+          style: { marginTop: '8px' },
+        },
+        '编辑标题/目标',
+      )
+      : renderFieldEdit(fieldEdit, false, actions),
+    // F01-R07: the task-scope activity history is explicit.
+    createElement(
+      'button',
+      {
+        key: 'task-activity',
+        type: 'button',
+        'data-aikanban-task-activity-button': detail.taskId,
+        onClick: actions.onTaskActivity,
+        style: { marginTop: '8px', marginLeft: '6px' },
+      },
+      ACTIVITY_TASK_TITLE,
+    ),
+    renderActivitySection('task', taskActivity, actions, actions.onTaskActivityClose),
     createElement(
       'div',
       { key: 'placeholders', style: { marginTop: '8px' } },
@@ -530,6 +886,22 @@ function renderFeedback(state: BoardState, actions: BoardActions): ReactNode {
     )
   }
 
+  if (feedback.kind === 'stale-view') {
+    // The write landed; the view did not refresh. This is deliberately neither a
+    // success (the board did not change) nor a failure (nothing went wrong):
+    // the only honest action is a fresh read.
+    return createElement(
+      'div',
+      { key: 'feedback', role: 'status', 'data-aikanban-feedback': 'stale-view', style: CARD_STYLE },
+      createElement('span', { key: 'text' }, feedback.text),
+      createElement(
+        'button',
+        { key: 'refresh', type: 'button', 'data-aikanban-refresh-view': 'true', onClick: actions.onRetry, style: { marginLeft: '8px' } },
+        '重新读取',
+      ),
+    )
+  }
+
   if (feedback.kind === 'failure') {
     // F9/F10: when the only allowed retry is a re-read (unknown write result or
     // a read-after-write failure), say exactly that instead of the generic
@@ -643,6 +1015,40 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
             : '工作范围尚未观测：不视为无范围。'),
     ))
 
+    // Slice B management surface: only a ready board offers creation (a stale
+    // kept view or the selection screen must not pretend to accept writes).
+    if (read.kind === 'ready') {
+      const choices: StatusChoice[] = view.columns.map((column) => ({ id: column.status, label: column.label }))
+      if (state.createForm === null) {
+        children.push(createElement(
+          'button',
+          {
+            key: 'create',
+            type: 'button',
+            'data-aikanban-create': 'true',
+            onClick: actions.onCreateOpen,
+            style: { marginBottom: '8px' },
+          },
+          '新建任务',
+        ))
+      } else {
+        children.push(renderCreateForm(state.createForm, choices, state.busy?.kind === 'create', actions))
+      }
+      children.push(state.projectActivity.kind === 'idle'
+        ? createElement(
+          'button',
+          {
+            key: 'project-activity',
+            type: 'button',
+            'data-aikanban-project-activity-button': 'true',
+            onClick: actions.onProjectActivity,
+            style: { marginBottom: '8px', marginLeft: '6px' },
+          },
+          ACTIVITY_PROJECT_TITLE,
+        )
+        : renderActivitySection('project', state.projectActivity, actions, actions.onProjectActivityClose))
+    }
+
     children.push(createElement(
       'div',
       { key: 'columns', style: { display: 'flex', gap: '8px', alignItems: 'flex-start' } },
@@ -662,7 +1068,15 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
     const selectable: StatusChoice[] = view?.capabilities.statusChange === true
       ? view.columns.map((column) => ({ id: column.status, label: column.label }))
       : []
-    children.push(renderDetail(state.detail, actions, selectable, state.detail.status, view?.capabilities.undo === true))
+    children.push(renderDetail(
+      state.detail,
+      actions,
+      selectable,
+      state.detail.status,
+      view?.capabilities.undo === true,
+      state.fieldEdit,
+      state.taskActivity,
+    ))
   }
   // On the selection screen the selector renders the (only possible) listing
   // failure and its retry inline; echoing it in a second banner would duplicate
@@ -722,6 +1136,22 @@ export function BoardPanel(props: { readonly controller: BoardController }): Rea
       controller.resetSelection()
       void controller.loadProjects()
     },
+    onCreateOpen: () => { controller.openCreateForm() },
+    onCreateClose: () => { controller.closeCreateForm() },
+    onCreateTitle: (text) => { controller.setCreateTitle(text) },
+    onCreateGoal: (text) => { controller.setCreateGoal(text) },
+    onCreateStatus: (status) => { controller.setCreateStatus(status) },
+    onCreateBlockedReason: (text) => { controller.setCreateBlockedReason(text) },
+    onCreateSubmit: () => { void controller.submitCreateTask() },
+    onEditOpen: () => { controller.openFieldEdit() },
+    onEditClose: () => { controller.closeFieldEdit() },
+    onEditTitle: (text) => { controller.setEditTitle(text) },
+    onEditGoal: (text) => { controller.setEditGoal(text) },
+    onEditSave: () => { void controller.saveFieldEdit() },
+    onTaskActivity: () => { void controller.loadTaskActivity() },
+    onTaskActivityClose: () => { controller.closeTaskActivity() },
+    onProjectActivity: () => { void controller.loadProjectActivity() },
+    onProjectActivityClose: () => { controller.closeProjectActivity() },
   }
   return renderBoard(state, actions)
 }

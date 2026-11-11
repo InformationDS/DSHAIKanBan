@@ -457,3 +457,279 @@ export function deriveTaskDetail(task: BoardTask): TaskDetailView {
     placeholders: DETAIL_PLACEHOLDERS,
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * Management drafts (slice B): creation and field edit
+ * ------------------------------------------------------------------ */
+
+/** Why a creation cannot be submitted (F01-R02: a title is the one required field). */
+export const TASK_TITLE_REQUIRED_MESSAGE = '任务标题不能为空（只有空白字符同样无效）。'
+
+/** The same rule on the field-edit path: the title stays required (F01-R05). */
+export const FIELD_TITLE_REQUIRED_MESSAGE = '任务标题不能为空（只有空白字符同样无效）。'
+
+/** Shown when a field save would change nothing; no write is sent. */
+export const NO_FIELD_CHANGE_MESSAGE = '没有需要保存的修改。'
+
+/**
+ * Shown when the task carries no `fieldsRevision`, so no SAVE-05 field baseline
+ * exists. The editor must refuse locally instead of inventing a baseline.
+ */
+export const FIELDS_BASELINE_MISSING_MESSAGE = '无法编辑：任务缺少字段版本基线，请重新读取看板后再试。'
+
+/** A field save the data layer reported as already applied (idempotent replay). */
+export const FIELDS_ALREADY_APPLIED_TEXT = '该修改已生效（重复提交已识别）。'
+
+/** A field save the data layer reported as changing nothing. */
+export const FIELDS_NO_CHANGE_TEXT = '未做修改：数据层报告内容没有变化。'
+
+/**
+ * One creation draft: exactly the fields the form owns.
+ *
+ * `initialStatus` is one of the board's column ids (or `''` when the data layer
+ * sent no columns, in which case the creation omits it and core applies its
+ * default). The draft deliberately has no "request id": identity belongs to the
+ * controller, which mints it once per intent (REC-02) — a draft object is data,
+ * not an operation.
+ */
+export interface CreateDraft {
+  readonly title: string
+  readonly goal: string
+  readonly initialStatus: string
+  readonly blockedReason: string
+}
+
+/**
+ * Validate a creation draft before any request is sent (F01-R02).
+ *
+ * The blocked-reason rule is the product rule, not a data-layer fallback: a
+ * blank reason for the blocked column performs no write and keeps the typing.
+ *
+ * @param draft - the typed values.
+ * @returns the first user-facing error, or `null` when the draft may be sent.
+ */
+export function validateCreateDraft(draft: CreateDraft): string | null {
+  if (normalizeReason(draft.title).length === 0) return TASK_TITLE_REQUIRED_MESSAGE
+  if (draft.initialStatus === BLOCKED_STATUS_ID && !isBlockedReasonValid(draft.blockedReason)) {
+    return BLOCKED_REASON_REQUIRED_MESSAGE
+  }
+  return null
+}
+
+/**
+ * Validate a field-edit draft before any request is sent (F01-R05).
+ *
+ * @param draft - the typed values.
+ * @returns the user-facing error, or `null` when the draft may be sent.
+ */
+export function validateFieldDraft(draft: { readonly title: string }): string | null {
+  return normalizeReason(draft.title).length === 0 ? FIELD_TITLE_REQUIRED_MESSAGE : null
+}
+
+/**
+ * The status ids a creation may target, in the data layer's column order.
+ *
+ * @param view - the board on screen.
+ * @returns the column choices; empty when the read carried no columns.
+ */
+export function creationStatusChoices(view: BoardView): readonly { readonly id: string; readonly label: string }[] {
+  return view.columns.map((column) => ({ id: column.status, label: column.label }))
+}
+
+/**
+ * The creation form's default initial status: the first column the data layer
+ * declared (its own first status, usually `todo`), never an invented id.
+ *
+ * @param view - the board on screen.
+ * @returns the status id, or `''` when no column was declared.
+ */
+export function defaultInitialStatus(view: BoardView): string {
+  return view.columns[0]?.status ?? ''
+}
+
+/**
+ * Restore a refused creation from the data layer's `keptInput` echo.
+ *
+ * The echoed `initialStatus` is a string; if the board no longer declares that
+ * column (a renamed/removed status) the form falls back to its default column
+ * rather than keeping an unselectable value. Nothing is invented: every restored
+ * value comes from the echo.
+ *
+ * @param kept - the echo carried by the failure.
+ * @param statuses - the status ids the form may offer, in column order.
+ * @returns the draft to put back in the form.
+ */
+export function restoreCreateDraft(
+  kept: { readonly title: string; readonly goal: string; readonly initialStatus: string; readonly blockedReason: string | null },
+  statuses: readonly string[],
+): CreateDraft {
+  const known = kept.initialStatus.length > 0
+    && (statuses.length === 0 || statuses.includes(kept.initialStatus))
+  return {
+    title: kept.title,
+    goal: kept.goal,
+    initialStatus: known ? kept.initialStatus : (statuses[0] ?? ''),
+    blockedReason: kept.blockedReason ?? '',
+  }
+}
+
+/**
+ * Success text for a field save, naming the fields that actually changed.
+ *
+ * @param changed - the data layer's `changed` list.
+ * @returns the sentence; never claims a field it did not change.
+ */
+export function fieldsSavedText(changed: readonly ('title' | 'goal')[]): string {
+  if (changed.length === 0) return '已保存任务字段'
+  const labels = changed.map((field) => (field === 'title' ? '任务标题' : '任务目标'))
+  return `已保存：${labels.join('、')}`
+}
+
+/**
+ * Success text for a creation, distinguishing a replay (REC-02).
+ *
+ * @param outcome - `created` or the idempotent `already-created`.
+ * @param title - the task title the data layer returned.
+ * @returns the sentence.
+ */
+export function createdTaskText(outcome: 'created' | 'already-created', title: string): string {
+  return outcome === 'created'
+    ? `已创建任务：「${title}」`
+    : `任务已存在（重复提交已识别）：「${title}」`
+}
+
+/* ------------------------------------------------------------------ *
+ * Write-landed / view-stale (REC-01/REC-05)
+ * ------------------------------------------------------------------ */
+
+/** Shown when a creation landed but the board re-read failed. Never a failure. */
+export const VIEW_STALE_CREATE_TEXT = '任务已创建，但看板视图未刷新。请重新读取。'
+
+/** The replay variant: the task already existed, the view still did not refresh. */
+export const VIEW_STALE_ALREADY_CREATED_TEXT = '任务已存在（重复提交已识别），但看板视图未刷新。请重新读取。'
+
+/**
+ * Shown when a field save landed but the board re-read failed. The wording is
+ * deliberately a confirmation plus a read instruction: the write is **not** a
+ * failure, and resubmitting it is forbidden.
+ *
+ * @param changed - the fields the data layer reported as changed.
+ * @returns the sentence.
+ */
+export function fieldsStaleViewText(changed: readonly ('title' | 'goal')[]): string {
+  return `${fieldsSavedText(changed)}，但看板视图未刷新。请重新读取。`
+}
+
+/**
+ * Stale-view text for a creation.
+ *
+ * @param outcome - `created` or `already-created`.
+ * @returns the sentence.
+ */
+export function createdStaleViewText(outcome: 'created' | 'already-created'): string {
+  return outcome === 'created' ? VIEW_STALE_CREATE_TEXT : VIEW_STALE_ALREADY_CREATED_TEXT
+}
+
+/* ------------------------------------------------------------------ *
+ * Activity history (F01-R07 / SAVE-08)
+ * ------------------------------------------------------------------ */
+
+/** Heading of the task-scope activity area. */
+export const ACTIVITY_TASK_TITLE = '活动历史'
+
+/** Heading of the project-scope activity area. */
+export const ACTIVITY_PROJECT_TITLE = '项目活动'
+
+/** A legal empty history: an answer, not an error (F01-R07). */
+export const ACTIVITY_EMPTY_TEXT = '暂无重要活动'
+
+/** Loading text for an activity read. */
+export const ACTIVITY_LOADING_TEXT = '正在加载活动…'
+
+/** The retry affordance of a failed activity read. */
+export const ACTIVITY_RETRY_TEXT = '重新加载活动'
+
+/** Fallback text for a failed activity read without a message. */
+export const ACTIVITY_FAILED_TEXT = '活动历史读取失败，未显示任何内容。'
+
+/**
+ * An activity entry as the panel renders it. Every field comes from the data
+ * layer; nothing is synthesised (no "system note", no guessed actor).
+ */
+export interface ActivityEntryView {
+  readonly activityId: string
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  /** ISO timestamp exactly as the data layer sent it. */
+  readonly at: string
+  /** Display form of `at` (derived, never a second source of truth). */
+  readonly time: string
+  /** Machine-readable change kind, rendered verbatim. */
+  readonly code: string
+  /** Display text captured by the data layer. */
+  readonly summary: string
+  /** Detail bag flattened to key/value pairs, sorted by key for stability. */
+  readonly details: readonly { readonly key: string; readonly value: string }[]
+}
+
+/**
+ * The structural shape of one activity entry (core's `ActivityEntryView`).
+ *
+ * Declared structurally so this module does not import the wire module (which
+ * imports this one): the data layer's value is assignable without a cycle.
+ */
+export interface ActivityEntryLike {
+  readonly activityId: string
+  readonly at: string
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  readonly code: string
+  readonly summary: string
+  readonly details: Readonly<Record<string, string>>
+}
+
+/**
+ * Render an ISO timestamp for display. Purely cosmetic: the raw `at` stays on
+ * the view model, and an unparsable value is shown unchanged rather than
+ * replaced with a fabricated time.
+ *
+ * @param at - the data layer's timestamp.
+ * @returns `YYYY-MM-DD HH:mm:ss` when it matches the ISO shape, else the input.
+ */
+export function formatActivityTime(at: string): string {
+  const trimmed = at.trim()
+  if (trimmed.length === 0) return at
+  return trimmed.replace('T', ' ').replace(/\.\d+Z$/, '').replace(/Z$/, '')
+}
+
+/**
+ * Map one data-layer entry to the render model.
+ *
+ * @param entry - the data layer's entry.
+ * @returns the render entry (details sorted by key, order preserved otherwise).
+ */
+export function deriveActivityEntryView(entry: ActivityEntryLike): ActivityEntryView {
+  return {
+    activityId: entry.activityId,
+    scopeKind: entry.scopeKind,
+    scopeId: entry.scopeId,
+    at: entry.at,
+    time: formatActivityTime(entry.at),
+    code: entry.code,
+    summary: entry.summary,
+    details: Object.keys(entry.details)
+      .sort()
+      .map((key) => ({ key, value: entry.details[key] ?? '' })),
+  }
+}
+
+/**
+ * Map a history read to the render model, preserving the data layer's order
+ * (newest first by contract). An empty input stays empty.
+ *
+ * @param entries - the data layer's entries.
+ * @returns the render entries.
+ */
+export function deriveActivityEntries(entries: readonly ActivityEntryLike[]): ActivityEntryView[] {
+  return entries.map((entry) => deriveActivityEntryView(entry))
+}

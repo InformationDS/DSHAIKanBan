@@ -10,21 +10,43 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ACTIVITY_EMPTY_TEXT,
+  ACTIVITY_TASK_TITLE,
+  BLOCKED_REASON_REQUIRED_MESSAGE,
   BLOCKED_STATUS_ID,
   COLLAPSED_BY_DEFAULT_STATUS_ID,
   DETAIL_PLACEHOLDERS,
+  FIELD_TITLE_REQUIRED_MESSAGE,
+  FIELDS_ALREADY_APPLIED_TEXT,
+  FIELDS_NO_CHANGE_TEXT,
+  NO_FIELD_CHANGE_MESSAGE,
   NO_SUMMARY_NO_GOAL_TEXT,
   REOPENABLE_STATUS_IDS,
   SUMMARY_RECHECK_NOTE,
+  TASK_TITLE_REQUIRED_MESSAGE,
+  VIEW_STALE_ALREADY_CREATED_TEXT,
+  VIEW_STALE_CREATE_TEXT,
   buildBoardView,
+  createdStaleViewText,
+  createdTaskText,
+  creationStatusChoices,
+  defaultInitialStatus,
+  deriveActivityEntries,
+  deriveActivityEntryView,
   deriveCardProgress,
   deriveTaskDetail,
+  fieldsSavedText,
+  fieldsStaleViewText,
+  formatActivityTime,
   isBlockedReasonValid,
   isReopenable,
   normalizeReason,
+  restoreCreateDraft,
   sortByOrder,
   statusLabelOf,
   toSingleLine,
+  validateCreateDraft,
+  validateFieldDraft,
   type BoardTask,
 } from '../src/model.js'
 
@@ -248,5 +270,138 @@ describe('detail skeleton (F02-R07)', () => {
     expect(undoable.undoAvailable).toBe(true)
     // The numeric baseline stays available for the write path.
     expect(task({ statusRevision: 7 }).statusRevision).toBe(7)
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * Management drafts and activity view models (slice B)
+ * ------------------------------------------------------------------ */
+
+/** The board the creation form reads its status choices from. */
+function boardView() {
+  return buildBoardView({
+    project: { projectId: 'ws-1', title: 'P', workScopeAvailability: 'ok', workScopeAllowed: true },
+    tasks: [],
+    columns: COLUMNS,
+    boardToken: 't',
+    capabilities: { statusChange: true, reorder: true, undo: true },
+  })
+}
+
+describe('creation draft (F01-R02: title required, blocked needs a reason)', () => {
+  it('rejects a blank title and accepts a substantive one', () => {
+    expect(validateCreateDraft({ title: '   ', goal: '', initialStatus: 'todo', blockedReason: '' }))
+      .toBe(TASK_TITLE_REQUIRED_MESSAGE)
+    expect(validateCreateDraft({ title: '写报告', goal: '', initialStatus: 'todo', blockedReason: '' }))
+      .toBeNull()
+    // A goal is optional; an empty one is not an error.
+    expect(validateCreateDraft({ title: '写报告', goal: '', initialStatus: '', blockedReason: '' }))
+      .toBeNull()
+  })
+
+  it('requires a reason only when the initial status is blocked', () => {
+    expect(validateCreateDraft({ title: '任务', goal: '', initialStatus: 'blocked', blockedReason: '  ' }))
+      .toBe(BLOCKED_REASON_REQUIRED_MESSAGE)
+    expect(validateCreateDraft({ title: '任务', goal: '', initialStatus: 'blocked', blockedReason: '等接口' }))
+      .toBeNull()
+    // A rest status may carry an empty reason without complaint.
+    expect(validateCreateDraft({ title: '任务', goal: '', initialStatus: 'doing', blockedReason: '' }))
+      .toBeNull()
+  })
+
+  it('offers the data layer columns as status choices and defaults to the first one', () => {
+    const view = boardView()
+    expect(creationStatusChoices(view).map((choice) => choice.id)).toEqual(['todo', 'doing', 'blocked', 'done', 'cancelled'])
+    expect(defaultInitialStatus(view)).toBe('todo')
+    const empty = buildBoardView({
+      project: { projectId: 'ws-1', title: 'P', workScopeAvailability: 'ok', workScopeAllowed: true },
+      tasks: [],
+    })
+    expect(defaultInitialStatus(empty)).toBe('')
+  })
+
+  it('restores the keptInput echo verbatim and falls back only for an unknown status', () => {
+    const kept = { title: '回显标题', goal: '回显目标', initialStatus: 'doing', blockedReason: '等接口' }
+    expect(restoreCreateDraft(kept, ['todo', 'doing'])).toEqual({
+      title: '回显标题',
+      goal: '回显目标',
+      initialStatus: 'doing',
+      blockedReason: '等接口',
+    })
+    // A status the board no longer offers cannot be selected: use the default.
+    expect(restoreCreateDraft(kept, ['todo', 'doing']).initialStatus).toBe('doing')
+    expect(restoreCreateDraft({ ...kept, initialStatus: 'archived' }, ['todo', 'doing']).initialStatus).toBe('todo')
+    // A null reason echo becomes an empty input, never the text "null".
+    expect(restoreCreateDraft({ ...kept, blockedReason: null }, ['todo']).blockedReason).toBe('')
+  })
+})
+
+describe('field-edit draft (F01-R05: title stays required, no write for nothing)', () => {
+  it('rejects a blank title and accepts a changed one', () => {
+    expect(validateFieldDraft({ title: '   ' })).toBe(FIELD_TITLE_REQUIRED_MESSAGE)
+    expect(validateFieldDraft({ title: '新标题' })).toBeNull()
+    expect(NO_FIELD_CHANGE_MESSAGE).toContain('没有需要保存')
+  })
+
+  it('names only the fields that actually changed', () => {
+    expect(fieldsSavedText(['title'])).toBe('已保存：任务标题')
+    expect(fieldsSavedText(['goal'])).toBe('已保存：任务目标')
+    expect(fieldsSavedText(['title', 'goal'])).toBe('已保存：任务标题、任务目标')
+    expect(fieldsSavedText([])).toBe('已保存任务字段')
+    expect(FIELDS_NO_CHANGE_TEXT).toContain('没有变化')
+    expect(FIELDS_ALREADY_APPLIED_TEXT).toContain('已生效')
+  })
+
+  it('states a stale view as a confirmation plus a read instruction, never as a failure', () => {
+    expect(fieldsStaleViewText(['title'])).toContain('已保存')
+    expect(fieldsStaleViewText(['title'])).toContain('视图未刷新')
+    expect(createdStaleViewText('created')).toBe(VIEW_STALE_CREATE_TEXT)
+    expect(createdStaleViewText('already-created')).toBe(VIEW_STALE_ALREADY_CREATED_TEXT)
+    expect(VIEW_STALE_CREATE_TEXT).toContain('已创建')
+    expect(VIEW_STALE_ALREADY_CREATED_TEXT).toContain('已存在')
+  })
+
+  it('names a creation outcome without claiming a replay was a new task', () => {
+    expect(createdTaskText('created', '任务 A')).toContain('已创建')
+    expect(createdTaskText('already-created', '任务 A')).toContain('已存在')
+  })
+})
+
+describe('activity view mapping (F01-R07: data-layer content only)', () => {
+  it('formats timestamps for display and leaves unparsable values unchanged', () => {
+    expect(formatActivityTime('2026-11-11T06:00:00.000Z')).toBe('2026-11-11 06:00:00')
+    expect(formatActivityTime('not-a-time')).toBe('not-a-time')
+    expect(formatActivityTime('')).toBe('')
+  })
+
+  it('maps one entry verbatim: summary, code, scope, details (sorted), no fabrication', () => {
+    const view = deriveActivityEntryView({
+      activityId: 'a-1',
+      at: '2026-11-11T06:00:00.000Z',
+      scopeKind: 'task',
+      scopeId: 't1',
+      code: 'goal-changed',
+      summary: '目标已修改',
+      details: { b: '2', a: '1' },
+    })
+    expect(view.activityId).toBe('a-1')
+    expect(view.summary).toBe('目标已修改')
+    expect(view.code).toBe('goal-changed')
+    expect(view.scopeKind).toBe('task')
+    expect(view.time).toBe('2026-11-11 06:00:00')
+    expect(view.details).toEqual([{ key: 'a', value: '1' }, { key: 'b', value: '2' }])
+    // No field exists for an invented actor/system note.
+    expect(Object.keys(view).sort()).toEqual(['activityId', 'at', 'code', 'details', 'scopeId', 'scopeKind', 'summary', 'time'])
+  })
+
+  it('preserves the data layer order (newest first) and keeps an empty history empty', () => {
+    const entries = deriveActivityEntries([
+      { activityId: 'a2', at: '2026-11-11T06:00:00.000Z', scopeKind: 'task', scopeId: 't1', code: 'goal-changed', summary: '新', details: {} },
+      { activityId: 'a1', at: '2026-11-10T06:00:00.000Z', scopeKind: 'task', scopeId: 't1', code: 'created', summary: '旧', details: {} },
+    ])
+    expect(entries.map((entry) => entry.activityId)).toEqual(['a2', 'a1'])
+    expect(deriveActivityEntries([])).toEqual([])
+    expect(ACTIVITY_EMPTY_TEXT).toBe('暂无重要活动')
+    expect(ACTIVITY_TASK_TITLE).toBe('活动历史')
   })
 })

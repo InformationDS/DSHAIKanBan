@@ -28,7 +28,7 @@
  * @module @aikanban/plugin-client/board
  */
 
-import { createElement, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createElement, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 
 import {
   ACTIVITY_EMPTY_TEXT,
@@ -233,7 +233,12 @@ function renderCard(
       tabIndex: 0,
       draggable: true,
       style: CARD_STYLE,
-      onDragStart: () => { actions.onDragStart(task.taskId) },
+      onDragStart: (event?: { dataTransfer?: { setData?: (format: string, data: string) => void } }) => {
+        // Some Chromium builds only start a native drag when the drag payload is
+        // set; the controller's drop path does not depend on this value.
+        event?.dataTransfer?.setData?.('text/plain', task.taskId)
+        actions.onDragStart(task.taskId)
+      },
       onKeyDown: (event: { key: string }) => {
         if (event.key === 'Enter' || event.key === ' ') actions.onOpenDetail(task.taskId)
       },
@@ -290,15 +295,28 @@ function renderColumn(
         key: 'body',
         'data-aikanban-column-body': column.status,
         role: 'list',
-        onDragOver: (event: { preventDefault?: () => void }) => { event.preventDefault?.() },
-        onDrop: () => { actions.onDrop(column.status, column.tasks.length) },
+        // An empty column still needs a real drop area; without a minimum
+        // height the body is a zero-height strip and drag-and-drop into an
+        // empty status column is impossible.
+        style: { minHeight: '64px' },
       },
-      column.tasks.map((task) => renderCard(task, actions, selectable, canUndo)),
+      column.tasks.length > 0
+        ? column.tasks.map((task) => renderCard(task, actions, selectable, canUndo))
+        : createElement('div', { key: 'empty', style: { ...MUTED, padding: '6px 0', fontSize: '12px' } }, '暂无任务（可拖入）'),
     )
 
   return createElement(
     'section',
-    { key: column.status, 'data-aikanban-column': column.status, style: COLUMN_STYLE, 'aria-label': column.label },
+    {
+      key: column.status,
+      'data-aikanban-column': column.status,
+      style: COLUMN_STYLE,
+      'aria-label': column.label,
+      // The whole column is the drop target, including header/padding and empty
+      // space, so dropping does not require hitting a zero-height body.
+      onDragOver: (event: { preventDefault?: () => void }) => { event.preventDefault?.() },
+      onDrop: () => { actions.onDrop(column.status, column.tasks.length) },
+    },
     header,
     body,
   )
@@ -704,7 +722,7 @@ function renderDetail(
     createElement(
       'button',
       {
-        key: 'task-activity',
+        key: 'task-activity-button',
         type: 'button',
         'data-aikanban-task-activity-button': detail.taskId,
         onClick: actions.onTaskActivity,
@@ -1038,7 +1056,7 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
         ? createElement(
           'button',
           {
-            key: 'project-activity',
+            key: 'project-activity-button',
             type: 'button',
             'data-aikanban-project-activity-button': 'true',
             onClick: actions.onProjectActivity,
@@ -1099,8 +1117,7 @@ export function BoardPanel(props: { readonly controller: BoardController }): Rea
     useMemo(() => (listener: () => void) => controller.subscribe(listener), [controller]),
     () => controller.getState(),
   )
-  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
-
+  const draggedTaskRef = useRef<string | null>(null)
   // Q1=B: every mount resets to the explicit selection state and re-reads the
   // candidate list. A cached controller must not carry the previous project,
   // view or dialog into this entry, and nothing is read until a project is
@@ -1112,12 +1129,16 @@ export function BoardPanel(props: { readonly controller: BoardController }): Rea
 
   const actions: BoardActions = {
     onStatusSelect: (taskId, statusId) => { controller.menuSelectStatus(taskId, statusId) },
-    onDragStart: (taskId) => { setDraggedTaskId(taskId) },
+    onDragStart: (taskId) => { draggedTaskRef.current = taskId },
     onDrop: (toStatus, toIndex) => {
-      if (draggedTaskId === null) return
+      // Read the identity from the ref, not a React state closure: the drop can
+      // fire before the dragstart state update commits, which made cross-column
+      // drops silently no-op.
+      const taskId = draggedTaskRef.current
+      if (taskId === null) return
+      draggedTaskRef.current = null
       // Drag and menu share the controller's single guard and write path.
-      controller.dropTask({ taskId: draggedTaskId, toStatus, toIndex })
-      setDraggedTaskId(null)
+      controller.dropTask({ taskId, toStatus, toIndex })
     },
     onOpenDetail: (taskId) => { controller.openDetail(taskId) },
     onCloseDetail: () => { controller.closeDetail() },

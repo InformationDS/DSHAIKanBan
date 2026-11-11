@@ -65,6 +65,38 @@ function elementsWith(tree: unknown, attribute: string): TestElement[] {
   return found
 }
 
+/**
+ * Duplicate sibling keys are not a cosmetic warning here: the task-activity
+ * button and its activity section were both keyed `task-activity`, and React's
+ * reconciliation duplicated/hid elements as the activity state changed. Walk
+ * the pure element tree and report duplicate non-null keys among siblings.
+ */
+function duplicateSiblingKeys(root: unknown): string[] {
+  const duplicates: string[] = []
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child)
+      return
+    }
+    if (typeof node !== 'object' || node === null) return
+    const props = (node as { props?: Record<string, unknown> }).props
+    if (props === undefined) return
+    const children = props['children']
+    const list = Array.isArray(children) ? children : [children]
+    const seen = new Set<string>()
+    for (const child of list) {
+      if (typeof child !== 'object' || child === null) continue
+      const key = (child as { key?: unknown }).key
+      if (typeof key !== 'string') continue
+      if (seen.has(key)) duplicates.push(key)
+      seen.add(key)
+    }
+    walk(children)
+  }
+  walk(root)
+  return duplicates
+}
+
 /** Concatenate every rendered text leaf. */
 function textOf(node: unknown): string {
   if (typeof node === 'string') return node
@@ -571,5 +603,56 @@ describe('write-landed / view-stale feedback (REC-01/REC-05)', () => {
     expect(refresh).toHaveLength(1)
     click(refresh[0] as TestElement)
     expect(actions.calls).toEqual(['retry'])
+  })
+})
+
+describe('rendered tree integrity (regression: duplicate activity buttons / empty drop targets)', () => {
+  it('has no duplicate sibling keys when both activity areas are open', () => {
+    const detail = deriveTaskDetail(TASK)
+    const actions = recordingActions()
+    const tree = renderBoard(
+      readyState({
+        openTaskId: 't1',
+        detail,
+        taskActivity: { kind: 'ready', scopeId: 't1', entries: [ACTIVITY_ENTRY] },
+        projectActivity: { kind: 'ready', scopeId: 'ws-1', entries: [{ ...ACTIVITY_ENTRY, scopeKind: 'project', scopeId: 'ws-1' }] },
+      }),
+      actions,
+    )
+
+    expect(duplicateSiblingKeys(tree)).toEqual([])
+    expect(elementsWith(tree, 'data-aikanban-task-activity-button')).toHaveLength(1)
+    expect(elementsWith(tree, 'data-aikanban-task-activity')).toHaveLength(1)
+    // An open project activity replaces its opener; it does not render both.
+    expect(elementsWith(tree, 'data-aikanban-project-activity-button')).toHaveLength(0)
+    expect(elementsWith(tree, 'data-aikanban-project-activity')).toHaveLength(1)
+  })
+
+  it('renders the whole empty column as a drop target with a visible minimum area', () => {
+    const tree = renderBoard(readyState(), recordingActions())
+    const columns = elementsWith(tree, 'data-aikanban-column')
+    const doing = columns.find((column) => column.props['data-aikanban-column'] === 'doing')
+    expect(doing).toBeDefined()
+    expect(typeof doing?.props['onDrop']).toBe('function')
+    expect(typeof doing?.props['onDragOver']).toBe('function')
+
+    const body = elementsWith(doing, 'data-aikanban-column-body')[0]
+    const style = body?.props['style'] as Record<string, unknown> | undefined
+    expect(style?.['minHeight']).toBeTruthy()
+    expect(textOf(doing)).toContain('暂无任务')
+  })
+
+  it('sets a native drag payload and records the dragged task id', () => {
+    const actions = recordingActions()
+    const tree = renderBoard(readyState(), actions)
+    const card = elementsWith(tree, 'data-aikanban-card')[0]
+    expect(card?.props['draggable']).toBe(true)
+    const dragStart = card?.props['onDragStart'] as ((event: { dataTransfer: { setData(type: string, data: string): void } }) => void) | undefined
+    expect(typeof dragStart).toBe('function')
+
+    const payloads: string[] = []
+    dragStart?.({ dataTransfer: { setData: (type, data) => { payloads.push(`${type}:${data}`) } } })
+    expect(payloads).toEqual(['text/plain:t1'])
+    expect(actions.calls).toEqual(['drag:t1'])
   })
 })

@@ -39,10 +39,10 @@
   - **故障注入（Q3，2026-10-20 已定）**：允许 test-only 构建开关/探针钩子做故障注入，且满足条件时承认为 AT 证据，政策见[验收执行规则](../engineering/acceptance-execution.md) 第 3 节。
   - 宿主能力：HOST-01—10 逐条有核对结论，见[宿主能力合同](../engineering/host-capabilities.md)；2026-10-20 已重跑存储原子性 25/25 与 20 步宿主集成探针 20/20。
   - 真实模型路径：**已解决（2026-10-20）**。方法：把 `DEEPSEEK_API_KEY` 作为**启动环境变量**注入**那一个隔离探针进程**（未写任何凭据文件，事后全工作区扫描该 key 字符串 0 命中）；20 步探针 20/20 `[ok]`，真实 `assistant` 回复与真实多步（含 pwsh 工具调用）已实测成立，见 [S0 复核记录](../engineering/s0-reverification-20261019.md) 第 9 节。
-- 仍未决（**两项决策级待证据 + 一项执行待用户确认**）：
-  1. **执行待办（不是决策）**：插件装进哪个 profile、何时重启 GUI——需用户确认后执行；`desktop` 由 Electron 独占管理。
-  2. **决策级待证据**：界面挂载点与看板形态（[ADR-004](../engineering/decisions/ADR-004-界面挂载点与看板形态.md)，提议）——缺客户端实际渲染证据。
-  3. **决策级待证据**：浏览器半 ↔ 宿主半数据通道（[ADR-005](../engineering/decisions/ADR-005-浏览器半与宿主半的数据通道.md)，提议）——缺真实 Connection RPC 路由证据。
+- 仍未决（**2026-11-11 更新：执行待办已完成；ADR-004/005 已取证，但仍保持「提议」**）：
+  1. **执行待办（已完成，2026-10-22）**：插件已装进 `desktop` profile（安装记录 `C:\Users\InformationDS\aikanban-profile-backup-20261023\install-record.json`，`createdAt=2026-10-22T13:00:44Z`；安装物与 HEAD `4a66d28` 构建一致）；2026-11-11 真实 GUI 复核客户端半激活、看板读路径成立。`desktop` 仍由 Electron 独占管理。
+  2. **决策级（已取证，未满足转采用条件）**：界面挂载点与看板形态（[ADR-004](../engineering/decisions/ADR-004-界面挂载点与看板形态.md)，**提议**）——2026-11-11 GUI 已证明 `main` 面板渲染/挂载成立；面板间切换的返回定位、`sidebar.right.pane.tab`、`shell.overlay` 仍无证据。
+  3. **决策级（已取证，未满足转采用条件）**：浏览器半 ↔ 宿主半数据通道（[ADR-005](../engineering/decisions/ADR-005-浏览器半与宿主半的数据通道.md)，**提议**）——2026-11-11 真实 GUI 页面内读路径在行为上成立（项目与 5 列快照渲染），但页面侧未抓包 HTTP 200 + 原始 RPC 信封；写端点与非空任务内容仍未观察。
 - 处理入口：技术选择记入[技术决策记录](../engineering/decisions/README.md)，实施与验证进展登记到[交付状态](../delivery/status.md)；复核过程见 [S0 复核记录](../engineering/s0-reverification-20261019.md)。
 - 限制：不要默认 DSH 的项目/聊天/模型入口已存在，不借本次拆分定义所有终端/文件权限功能。仅确定满足 AIKanBan 必需边界的最小工程方案。
 

@@ -1,11 +1,13 @@
 # F02 implementation（回收代码现状盘点）
 
 > **证据边界**：本文是 2026-10-19 对**回收代码**（分支 `s1-recover`，代码自 `bd16535` 逐字节复原、仅追加一处 3 行空值守卫）的**现状盘点**，不是本次新写的实现记录，也不是验收记录。**没有执行任何 AT 场景；F02 的验收状态仍为「待执行」**。判定只依据 `packages/` 源码与测试文件的实际内容；本机没有 `node_modules`，未重跑测试，用例数为源码静态统计。[S0 复核记录](../../../engineering/s0-reverification-20261019.md) 报告 149 个用例在隔离工作区通过，属工具级证据，不构成产品验收。
+>
+> **2026-11-11 补注**：切片 A（core → host → 浏览器半的真实通道接线）已于 2026-10-22 实施/安装，并在桌面 DSH 0.2.2-rc.1 的真实 GUI 中复核读路径（项目列表/显式选择/5 列快照）；§2 的规则状态与 §3 的 AT 结论不变，**状态变更/排序/撤销的 GUI 写路径未验证**（板上无任务），切片 B 未开始。见 [S1 接线实施记录](../../../engineering/s1-wiring-implementation.md) §17。
 
 ## 1. 范围、依赖与判定口径
 
 - 需求依据：[F02 prd.md](prd.md)（规则 F02-R01…R07、§6 九行验收）。
-- 代码落点：`packages/core`（状态词表、状态机、列内顺序、撤销：`planning.ts` + `taskModel.ts`）；`packages/plugin-client`（看板渲染、交互状态机、视图模型、线协议）；`packages/plugin`（host 半的通道 handler，**未注册、无 core 适配**，见 §4）。
+- 代码落点：`packages/core`（状态词表、状态机、列内顺序、撤销：`planning.ts` + `taskModel.ts`）；`packages/plugin-client`（看板渲染、交互状态机、视图模型、线协议）；`packages/plugin`（host 半的通道 handler；切片 A 已在 `apply()` 注册并经适配器接 core，见 §4）。
 - 依赖：F01 的任务字段/项目隔离（已回收实现）；F03 概况、F04 对话、F06 记录、F13/F14 成果均未实现，相关提示与来源在本仓库不可达。
 - 判定口径同 F01：`已实现`／`部分实现`／`未实现`／`不在本层`；端到端接线单独在 §4 说明。
 - 记录关系：进度与验收状态只在[交付状态](../../../delivery/status.md)维护。
@@ -14,15 +16,15 @@
 
 | 规则 | 代码落点（文件:符号/行） | 测试证据（文件＋静态用例数） | 状态 | 说明与缺口 |
 | --- | --- | --- | --- | --- |
-| F02-R01 状态集合和控制权 | `taskModel.ts:22` `TASK_STATUSES`（五状态，归档不在内）；`taskModel.ts:37` `BOARD_COLUMNS`（已取消 `collapsedByDefault:true`、已完成仍可见）；`planning.ts:1184` `setTaskStatus` 是唯一状态写入；`core.ts:695` `confirmPaired` 不写 `task.status`；词表经 wire 传给 UI（`model.ts:42` 起不另声明枚举） | `f02-status-and-order.test.ts`（11）：「the transition set, blocked reasons, unblocking and reopening」「only the explicit status entry changes status — confirmations and field edits never do」「the board token tracks status and order, and the five columns stay the vocabulary」；`model.test.ts`（19）「does not turn archive into a status」「uses the data layer labels rather than recomputing them」 | 已实现（core＋UI 逻辑） | 词表唯一来源与「状态只由用户操作改变」有单测；端到端未接线（§4），故产品级行为尚未可观察 |
+| F02-R01 状态集合和控制权 | `taskModel.ts:22` `TASK_STATUSES`（五状态，归档不在内）；`taskModel.ts:37` `BOARD_COLUMNS`（已取消 `collapsedByDefault:true`、已完成仍可见）；`planning.ts:1184` `setTaskStatus` 是唯一状态写入；`core.ts:695` `confirmPaired` 不写 `task.status`；词表经 wire 传给 UI（`model.ts:42` 起不另声明枚举） | `f02-status-and-order.test.ts`（11）：「the transition set, blocked reasons, unblocking and reopening」「only the explicit status entry changes status — confirmations and field edits never do」「the board token tracks status and order, and the five columns stay the vocabulary」；`model.test.ts`（19）「does not turn archive into a status」「uses the data layer labels rather than recomputing them」 | 已实现（core＋UI 逻辑） | 词表唯一来源与「状态只由用户操作改变」有单测；切片 A 已接通读路径，状态变更/排序/撤销的 GUI 写路径尚未验证（板上无任务），故产品级行为仍不可说已验收 |
 | F02-R02 状态流转和阻塞 | `planning.ts:1184` `setTaskStatus`（进入 blocked 原因必填：L1220-1229；离开 blocked 清当前提示、旧原因入 `task-unblocked` 历史；`toIndex` 先写列偏好再写状态）；`controller.ts:474` `requestStatusChange` 单一入口；`controller.ts:638` `dropTask`；`board.tsx:127` 原生 `<select>` 菜单、`board.tsx:220-221` 拖拽 drop；`board.tsx:241` 阻塞原因对话框 | `f02-status-and-order.test.ts`：「an invalid blocked reason changes nothing; cancelling keeps the original column and state」「F02-R01/R02/R03: the transition set, blocked reasons, unblocking and reopening」；`controller.test.ts`：「sends the same request whether the user used the menu or dropped the card」「refuses to enter blocked without a reason」「confirms a blocked transition once a reason is typed, and keeps the reason on cancel」 | 已实现（core＋UI 逻辑） | 菜单/拖拽/键盘共用同一 controller 入口，阻塞与取消规则有单测；**无 DOM/键盘事件级测试**，「键盘可用」依赖原生控件（F19 负责全面验收） |
 | F02-R03 完成、取消和重新打开 | `planning.ts:1184` `setTaskStatus`（`change.reopened`、不生成项目记录/不归档/不停止对话、不动草稿）；`taskModel.ts:60` `isTerminalStatus`；`model.ts:59` `isReopenable` | `f02-status-and-order.test.ts`：「F02-R01/R02/R03: …unblocking and reopening」「F02-R03/R05: completing keeps records and history, and generates no project outcome」；`model.test.ts`「recognises only the ids the product rules attach to」 | 部分实现 | 完成/取消/重开与「不自动生成成果、不停对话」有单测；「仍运行/未记录提示」「前次完成范围」分别依赖 F04/F06 与 F14，未实现 |
-| F02-R04 顺序与撤销 | `planning.ts:170` `layoutOf`（列顺序＝项目 head 偏好列表）；`planning.ts:352` `writeColumnPreference`（整列一次写）；`planning.ts:1353` `reorderTask`；`planning.ts:1414` `undoStatusChange`（`statusRevision`＋`appliedUpdateId` 判定，竞争返回 `superseded`＋当前值）；`controller.ts:731` `undoLastChange`、`controller.ts:367` `runWrite`（失败不乐观呈现） | `f02-status-and-order.test.ts`（11）中：「a manual column order is saved as ONE atomic project write and read back reliably」「undo restores the previous status and its applicable fields」「an undo that lost the race fails explicitly and shows the current value」「repeated and concurrent status submissions produce exactly one result」「a failed status or order write leaves the official status AND order untouched」；`controller.test.ts`：「shows the formal status again and offers a retry when the write fails」「keeps the order and shows the failure when a reorder fails」「refuses to overwrite later changes and shows the actual current value」「does not offer undo when the data layer says the change is no longer undoable」 | 已实现（core＋UI 逻辑） | 一次写、撤销竞争、失败不半生效均有单测；端到端未接线 |
+| F02-R04 顺序与撤销 | `planning.ts:170` `layoutOf`（列顺序＝项目 head 偏好列表）；`planning.ts:352` `writeColumnPreference`（整列一次写）；`planning.ts:1353` `reorderTask`；`planning.ts:1414` `undoStatusChange`（`statusRevision`＋`appliedUpdateId` 判定，竞争返回 `superseded`＋当前值）；`controller.ts:731` `undoLastChange`、`controller.ts:367` `runWrite`（失败不乐观呈现） | `f02-status-and-order.test.ts`（11）中：「a manual column order is saved as ONE atomic project write and read back reliably」「undo restores the previous status and its applicable fields」「an undo that lost the race fails explicitly and shows the current value」「repeated and concurrent status submissions produce exactly one result」「a failed status or order write leaves the official status AND order untouched」；`controller.test.ts`：「shows the formal status again and offers a retry when the write fails」「keeps the order and shows the failure when a reorder fails」「refuses to overwrite later changes and shows the actual current value」「does not offer undo when the data layer says the change is no longer undoable」 | 已实现（core＋UI 逻辑） | 一次写、撤销竞争、失败不半生效均有单测；读路径已在 2026-11-11 真实 GUI 复核，写路径（状态/排序/撤销）未在 GUI 验证 |
 | F02-R05 卡片内容来源 | `taskModel.ts:131` `progressLineOf`（正式概况首行、截断）；`planning.ts:268` `toTaskView` 计算 `summaryProgress`；`model.ts:225` `deriveCardProgress`（summary → goal → 显式「暂无」，**不读取草稿/末条记录**）；`board.tsx:109` `renderCard`（文字显示状态与阻塞原因） | `model.test.ts`（19）：「uses the official summary line when there is one」「falls back to the goal when there is no summary, and says so」「shows an explicit none text when neither exists」「marks a summary that needs re-checking, keeping the summary text」「never consults a draft or a last record, even when one is smuggled in」「collapses multi-line content into one card line」 | 部分实现 | 回退链与「草稿不冒充」由类型结构＋单测保证；真实正式概况需 F03 写入，当前 S1 数据只会走 goal/暂无 |
 | F02-R06 行动提示 | `model.ts:155` `BoardActionHint`（注释明确「S1 为空」「UI 不自行合成」）；`board.tsx:123-125` 渲染 hint | 无数据层提示实现可测；`model.test.ts`「carries hints only when the data layer supplied them」仅验证渲染契约 | 未实现 | core 的 `TaskView` 没有 hints 字段；对话运行/待确认记录/背景失败/待生成成果等来源（F04/F06/F13）均未实现；当前只能渲染空 |
 | F02-R07 详情职责与字段一致性 | `model.ts:399` `deriveTaskDetail`；`model.ts:387` `DETAIL_PLACEHOLDERS`（F04/F06/F13 明示「未实现」，不可点击）；`board.tsx:285` `renderDetail`（目标、手动状态、正式概况、待核对、阻塞原因、占位）；`controller.ts:622` `openDetail`/`628` `closeDetail`；`core.ts:695` `confirmPaired` 不写字段 | `controller.test.ts`：「opens the detail of a rendered task and closes it without losing the board」「ignores a detail request for a task that is not rendered」；`model.test.ts`：「shows the goal independently and 暂无-style nulls, never fabricated content」「shows a blocked reason only while the task is blocked」 | 部分实现 | 详情骨架、字段独立呈现、占位诚实有单测；「改进展/下一步进入 F03」入口未实现，「更多操作」中归档/删除属 F17 未实现 |
 
-小结：**F02 的 core 状态机与 UI 交互逻辑（R01、R02、R04）已有完整落点与单测；R03/R05/R07 受 F03/F04/F06/F13/F14 前置限制为部分实现；R06 只有渲染契约、无数据层来源**。端到端未接线（§4）。
+小结：**F02 的 core 状态机与 UI 交互逻辑（R01、R02、R04）已有完整落点与单测；R03/R05/R07 受 F03/F04/F06/F13/F14 前置限制为部分实现；R06 只有渲染契约、无数据层来源**。切片 A 已接通读路径（项目选择 + 5 列快照，2026-11-11 真实 GUI 复核）；状态变更/排序/撤销的写路径未在 GUI 验证（§4）。
 
 ## 3. 与 PRD §6 验收的关系（只报机制，不报通过）
 
@@ -44,17 +46,17 @@ F02 §6 共 **9 行验收（8 个 AT 编号，AT-03 出现两行）**。覆盖�
 
 ## 4. 依赖、接线与已知局限
 
-1. **端到端未接通**：`packages/plugin/src/index.ts:396-404` 说明 board channel 未在 `apply()` 注册（缺 core 适配层）；`packages/plugin/src/board-channel.ts:145` 的 handler 依赖 `HostBoardPort`（L109），仓库中没有 `@aikanban/core` → 该端口的实现。浏览器半**没有 connection 时**显示「数据通道未接通」；**有 connection 但路由未注册或适配失败时**表现为 `read-failed` 与数据格式无效提示（`channel-source.ts:136-155`、`board.tsx:433-439`）。两种情况都**不会渲染假数据**。
-2. **协议字段缺口**：wire 要求读快照携带 `capabilities`（`wire.ts:396-397`），core 的 `BoardReadResult` 没有该字段（`packages/core/src/types.ts:441-463`）；`hints`（F02-R06）在 core 也没有数据源，wire 允许省略、适配层不得合成占位提示（见 §5）。适配层须为 `capabilities` 实现合成映射，否则读到的是「格式无效」。
-3. **构建产物与测试前置**：`channel-roundtrip.test.ts` 与 `client-bundle.test.ts` 读取 `packages/plugin/lib/index.js`、`lib/client.js`；仓库不含 `lib/` 与 `node_modules`，须按 [tools/COMMANDS.md](../../../../tools/COMMANDS.md) 先安装构建才能运行这两组测试（`controller.test.ts`/`model.test.ts`/`slots.test.ts`/core 测试无需构建产物）。
+1. **切片 A 已接通（2026-10-22 实施，2026-11-11 真实 GUI 复核）**：host 半在 `apply()` 注册 `/aikanban` 通道，`board-adapter.ts` 把 `@aikanban/core` 接到 `HostBoardPort`；浏览器半经真实 connection 读取（项目 `03696d17…`、5 列、0 项）。**写路径**（状态/排序/撤销）只有单测/集成证据，尚未在真实 GUI 触发（板上无任务）。浏览器半**没有 connection 时**仍显示「数据通道未接通」；读失败仍走 `read-failed` 与数据格式无效提示（`channel-source.ts:136-155`、`board.tsx:433-439`），不渲染假数据。
+2. **协议字段（已由切片 A 解决）**：wire 要求读快照携带 `capabilities`（`wire.ts:396-397`），core 的 `BoardReadResult` 没有该字段（`packages/core/src/types.ts:441-463`）；切片 A 的适配层已合成并随 `board/read` 返回。`hints`（F02-R06）在 core 仍无数据源，wire 允许省略、适配层不得合成占位提示（见 §5）。
+3. **构建产物与测试前置**：`channel-roundtrip.test.ts` 与 `client-bundle.test.ts` 读取 `packages/plugin/lib/index.js`、`lib/client.js`；主仓库不含 `lib/` 与 `node_modules`，须按 [tools/COMMANDS.md](../../../../tools/COMMANDS.md) 先安装构建才能运行这两组测试。2026-11-11 已在盘外沙盒 @ `4a66d28` 复跑全部用例（257 通过，见[S1 接线实施记录](../../../engineering/s1-wiring-implementation.md) §17）。
 4. **依赖功能未实现**：F03（正式概况）、F04（对话）、F06（记录）、F13/F14（成果）、F15（行动提示来源）、F17（归档/删除）、F19（键盘全面验收）——相关规则与 AT 只能等其就绪后联合验收。
-5. **未确认项**：真实浏览器渲染、真实键盘交互、真实宿主 Connection RPC 路由（Host/Origin/浏览器 token 校验）均无本仓库内实测证据；ADR-005 仍是「提议」。
+5. **未确认项**：真实浏览器渲染与页面内读路径已于 2026-11-11 在 0.2.2-rc.1 复核（`project/list`、`board/read`）；**真实 GUI 写路径**（状态/排序/撤销）、非空任务的卡片/排序形状、真实键盘交互仍无实测证据。ADR-005 仍为「提议」：2026-11-11 页面内读路径在行为上成立（项目与 5 列快照渲染），但页面侧未抓包 HTTP 200 + 原始信封，未满足其字面转「采用」条件；写端点与非空看板仍未观察。
 
 ## 5. 下一步
 
 接线与实施顺序以 [S1 接线规格](../../../engineering/s1-wiring.md) 与 [ADR-007](../../../engineering/decisions/ADR-007-s1-wiring-and-current-project.md) 为准，本文不再另立一套「下一步」：
 
-- 切片 A（core → `HostBoardPort` 适配 + `/aikanban` 注册，范围固定为现有 4 端点）的字段映射以规格 §3.2—§3.5 为准：`capabilities` 由适配层合成；**`hints` 恒省略、不得合成占位提示**（F02-R06 的数据来源要等 F04/F06/F13，A/B 期 `hints` 省略）。
-- 看板读、状态变更、阻塞、排序、撤销、失败重试的端到端验证按规格 §7 的切片 A 完成判据执行（§7.1 集成测试、§7.2 探针新增断言、§7.3 门禁）；项目切换入口与任务创建/字段编辑属切片 B（F01），端点与测试清单见规格 §1.2、§9。
+- 切片 A（core → `HostBoardPort` 适配 + `/aikanban` 注册，范围固定为 5 端点，含 `project/list` 与项目选择器）**已实施（2026-10-22）并在 2026-11-11 真实 GUI 复核读路径**；字段映射以规格 §3.2—§3.5 为准：`capabilities` 由适配层合成；**`hints` 恒省略、不得合成占位提示**（F02-R06 的数据来源要等 F04/F06/F13，A/B 期 `hints` 省略）。
+- 看板读取与项目选择已按规格 §7 的切片 A 完成判据取证（集成测试、探针、门禁 + 2026-11-11 GUI 读路径）；**状态变更、阻塞、排序、撤销、失败重试的写路径尚未在 GUI 验证**（板上无任务），仍只有单测/集成证据。任务创建/字段编辑属切片 B（F01），端点与测试清单见规格 §1.2、§9。
 
-按 §6 逐 AT 执行；跨功能行标注「待联合验收」——在此之前 F02 验收保持「待执行」，不得引用本文或单测作验收证据。
+按 §6 逐 AT 执行；跨功能行标注「待联合验收」——在此之前 F02 验收保持「待执行」，不得引用本文、切片 A 的读路径或单测作验收证据。

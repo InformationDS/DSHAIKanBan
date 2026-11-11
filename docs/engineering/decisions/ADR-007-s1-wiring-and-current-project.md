@@ -128,20 +128,20 @@ F01/F02 的数据层（`packages/core`）与浏览器看板 UI（`packages/plugi
 
 ## 11. 验证证据
 
-**当前：待取证（本记录按词表记 `已定`，用户已确认设计，工程证据尚未取得；不得写成已验证）。** 取证办法（实施后在本节补实际命令/输出与档位）：
+**2026-11-11 状态更新：部分取证。** 集成测试、协议往返、隔离探针与六项门禁已由切片 A 实施记录（[§14—§17](../s1-wiring-implementation.md)）取证；插件已装入真实 `desktop` profile，并在桌面 DSH 0.2.2-rc.1 的真实 GUI 中复核读路径（项目选择 + 5 列快照）。**真实 GUI 写路径（改状态/撤销/排序）仍未执行**；ADR-005 仍为「提议」（页面侧 HTTP 200/原始信封未抓包），ADR-004 的 `main` 面板渲染已复核但有剩余未验证项。本记录按词表仍记 `已定`；不得写成已验证。以下保留原取证办法作为历史记录：
 
 1. **集成测试（档 2）**：`packages/plugin/test/board-adapter.test.ts` —— 真实 `createKanbanCore` + 内存 `StoragePort` 经真实 `createBoardChannelHandler` 打通 4 端点，覆盖成功/失败/未知结果/不抛异常/快照映射/基线拒绝/撤销竞争（用例清单见 [s1-wiring.md](../s1-wiring.md) §7.1）。故障注入只用内存 port 的 `beforeWrite`（测试代码路径，符合 [验收执行规则](../acceptance-execution.md) 第 3 节，不需要登记构建开关）。
 2. **协议往返（档 2）**：扩 `packages/plugin/test/channel-roundtrip.test.ts`（真实构建产物 + 信封），断言新增必填基线与撤销凭据确实过 wire。
 3. **隔离探针（档 3）**：`tools/probe-host.mjs` 新增「`registerBoardChannel` 实际被调用」断言（观察 `aikanban:board-channel` 事件；[s1-wiring.md](../s1-wiring.md) §7.2）。这是 ADR-005 `:92` 已点名但当前仍缺的证据。
 4. **门禁**：盘外沙盒**只执行 `COMMANDS:57` 的 install（不执行 `:56` 的 `cd`）** → 把生成的 `pnpm-lock.yaml` **复制回主仓库并提交**（沙盒是 detached worktree，不在其内提交）→ 沙盒 `pnpm install --frozen-lockfile` 复现（完整命令见 [s1-wiring.md](../s1-wiring.md) §7.3 A-G0）；`pnpm run typecheck`、`pnpm run build`、`pnpm -r --if-present run test`（含 `host.test.ts` 的**以运行时快照为基准**的 output schema 字段覆盖哨兵与通道注册用例）、`node tools/verify-host-import.mjs`（11/11 不得退化）、`python docs/tools/check_docs.py`。
-5. **真实 profile / 真实页面**（档 1）：把插件装入实际 profile、在真实 GUI 完成“选择项目→看板→改状态→撤销”的往返；未执行前，ADR-005 的“真实网络跳转”与 ADR-004 的“客户端实际渲染”仍为未验证。
+5. **真实 profile / 真实页面**（档 1）：把插件装入实际 profile、在真实 GUI 完成“选择项目→看板→改状态→撤销”的往返。**2026-11-11 更新**：真实 profile 安装与“选择项目→看板读取”已复核（读路径行为成立）；“改状态→撤销”的写路径未执行，ADR-005 的页面侧 HTTP 200/原始信封仍未抓包、ADR-004 的 `main` 渲染已复核但切换返回定位等仍未验证。
 
 取证完成后：把本记录状态从 `已定` 重新评估为 `采用`（或保留 `已定` 并写明缺口），证据按实测/探针/未验证分级写入本节；在此之前任何文档/实现记录不得引用本 ADR 声称“已验证”。
 
 ## 12. 尚未验证
 
-- 真实 `ctx.connection.rpc` 网络往返（Host/Origin/浏览器 token 校验、页面侧调用）——需写 profile 并重启，ADR-005 仍 `提议`。
-- 浏览器真实渲染与键盘交互（无 DOM 环境测试）。
+- 真实 `ctx.connection.rpc` 网络往返（Host/Origin/浏览器 token 校验、页面侧调用）——**2026-11-11 更新**：真实 profile/GUI 的页面内读路径已在行为上成立；页面侧原始 HTTP 200/信封未抓包，写端点未验证，ADR-005 仍 `提议`。
+- 浏览器真实渲染与键盘交互（无 DOM 环境测试）——**2026-11-11 更新**：`main` 主面板/项目选择/空看板真实渲染已复核；非空任务卡片、详情、拖拽/键盘交互仍未验证。
 - 真实插件上下文里 `ctx.storageDomain.open` 的暴露形状与错误形状（spec/DomainSpecLike 形状已由安装包源码佐证，见 §6 第 5 条）。
 - `tsc -b` 对 core 源码导出（`packages/core/package.json:7-10`）的 project-reference 解析。
 - `Workspace` 的**运行时字段**与服务绑定时机/生命周期、`connection`/`storageDomain` 服务相对 `apply()` 的到达时机（`get`/`list`/`status` 的**签名**可由安装包声明核对，运行时字段未验证；到达顺序已按晚到重试+重发信号设计，真实顺序待证）。

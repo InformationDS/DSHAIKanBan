@@ -3975,3 +3975,70 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 4. 与本次失败无关的其它启动问题可能被这次修复掩盖（P6b 的报告只有这 1 条 entry 失败，可能性低）；
 5. 安装是「复制载荷 + junction 锚点」而不是 `dsh plugin add`（desktop 被 Electron 独占、CLI 拒绝）；若宿主解析路径与探针锚点不同，可能表现为「bundle 行存在但宿主半未激活」，届时看 `browser-check.js` 的 B1 与宿主日志即可区分。
 
+## 17. P7：桌面 DSH 0.2.2-rc.1 上的 live 兼容性与真实 GUI 读路径（2026-11-11，HEAD `4a66d28`）
+
+> 本档登记安装事实、live 检查、真实 GUI 截图与门禁复跑数字；**AT 全部仍是「待执行」**，真实 GUI 的写路径未触发。本档不重启应用、不写 profile、不改产品代码。
+
+### 17.1 环境与已安装物
+
+| 项 | 2026-11-11 实测值 |
+| --- | --- |
+| 桌面 DSH | `0.2.2-rc.1`（Electron 44.7.0；其 `app.asar` 内运行时包同为 `0.2.2-rc.1`；cordis 4.1.0；Node 24.21.0） |
+| 本机 npm DSH CLI | `0.1.5-rc.1`（仅隔离探针用；`tools/probe-host.mjs` 按 `DSH_CLI` → `%APPDATA%\npm\…` → PATH 查找） |
+| 插件安装位置 | `C:\Users\InformationDS\.dsh\profiles\desktop\node_modules\@aikanban\dsh-aikanban` |
+| 安装记录 | `C:\Users\InformationDS\aikanban-profile-backup-20261023\install-record.json`（`createdAt=2026-10-22T13:00:44Z`），来自已构建 checkout `C:\Users\InformationDS\aikanban-p6c`（HEAD `4a66d28`） |
+| 安装物校验 | `lib/client.js` SHA256 `0B3ACFD9CF910AFE674F464FE213B610998921D1B9F9AA5AE2167942F9FFE17C`；`lib/index.js` SHA256 `90B1828AB8F6C8FD811776EA30537E456DB5E96E2CD955BE9A9BDB2ACAA37272`；与 HEAD `4a66d28` 的构建一致 |
+| 真实 storage | `C:\Users\InformationDS\.dsh\storages\aikanban_core.json` 在 `2026-10-22T13:07:17.911Z` 出现 `project-registered`（项目 AIKanBan / `03696d17-12c2-4d78-9b3e-ff3bdf9e6f10`） |
+
+安装走的是 §16.8 的剧本（复制载荷 + `profiles/node_modules` junction 锚点，非 `dsh plugin add`；`desktop` 由 Electron 独占）；安装后由用户重启应用，客户端半在真实桌面里激活，见 17.2。
+
+### 17.2 真实 GUI 读路径（2026-11-11 用户截图）
+
+- AIKanBan **主面板已渲染**；面板头部的数据通道文案为 `数据通道：connection rpc /aikanban`（源码出处 `packages/plugin-client/src/channel-source.ts:241` 的 `transport.detail`）。
+- 面板显示项目 **AIKanBan**（`03696d17-12c2-4d78-9b3e-ff3bdf9e6f10`）与 **5 列**（未开始 / 进行中 / 已阻塞 / 已完成 / 已取消），各列 **0 项**；有「切换项目」按钮与「已取消」列的「展开」按钮；**没有**新建/编辑按钮（切片 B 未实现）。
+- 由此成立的读路径：项目名与 5 列来自 `project/list` + `board/read` 的成功结果，项目选择（`selectedProjectId` 非空）后才渲染「切换项目」——即 **0.2.2 真实页面内 `ctx.connection.rpc.call` 的读路径在行为上成立**（`project/list`、`board/read`），客户端半已激活、`connection` 服务探测成功；页面侧未抓包 HTTP 200/原始信封，ADR-005 因此仍保持「提议」（见 §17.5 与 [ADR-005](decisions/ADR-005-浏览器半与宿主半的数据通道.md)）。
+- **证据边界**：这是渲染结果证据；页面侧未抓原始 HTTP 状态与 RPC 信封，读端点成功是「解析器只接受合法信封 + 界面渲染出真实数据」的推断。**写路径未触发**（板上 0 任务，无法执行状态/排序/撤销），也没有 `tasks` 非空时的看板内容。
+
+### 17.3 live 0.2.2 宿主检查
+
+- 插件状态：`plugin_manager` 中 `include:aikanban` 为 `enabled`、`fiberPhase=active`。
+- 本会话调用 `aikanban_status` 的原始输出：
+
+  ```text
+  [aikanban] active (plugin @aikanban/dsh-aikanban@0.0.0, activation mwbl69qu-1, pid 26108, services seen: systemPrompt, tools)
+  ```
+
+  即 host 半已激活，且激活后已看到 `systemPrompt` 与 `tools` 两个可选服务（不再停在 2026-10-19 探针记录的 `tools=false / systemPrompt=false`）。
+- host Service catalog 含：`connection`、`storageDomain`、`workspaceRegistry`、`webServer`、`clientModules`（`connection`/`storageDomain` 仍以 0.2.2 的实际服务名暴露）。
+- 路由注册的 live 证据（未认证请求）：`/aikanban`、`/aikanban/project/list`、`/aikanban/board/read` 返回 **401**；近似但未注册的 `/aikanbanx`、`/aikanban2/...` 返回 **404**——说明 `/aikanban` 前缀路由已在 0.2.2 宿主注册，且鉴权围栏先于 handler。
+
+### 17.4 与 2026-10-22 崩溃的关系（不得写成「仍会崩」）
+
+- 宿主源码（0.2.2）仍有 **fatal boot audit**（`web boot: N entries did not activate`），`slots.register` 对未声明槽位仍会抛错；**当前没有新的 web-boot 崩溃报告**。
+- 2026-10-22 02:17（本地）那次插件崩溃的根因是客户端半**直接** `ctx.slots.register` 与官方槽位声明竞态，entry 卡在 `LOADING` 导致页面 boot 审计 fatal；修复 `e65eee6`（`slots.inject` + `dsh.client.inject` + 诊断日志/重抛）已随本安装物生效。2026-11-11 的 GUI 面板正常渲染是该修复生效的 live 旁证，不得再把「仍会崩」写成当前状态。
+- 2026-11-09 10:09（本地）另一次 host crash：`source: host`，`deepseek-account` 403 网络错误，exit `1073807364`，渲染器无 aikanban 证据；其签名与插件崩溃不同，**不得归因给插件**。
+
+### 17.5 门禁复跑（2026-11-11，盘外沙盒 `C:\Users\InformationDS\aikanban-p6c` @ `4a66d28`）
+
+主仓库在同步盘上不装依赖；以下六项全部在盘外沙盒复跑：
+
+| # | 门禁 | 结果 |
+| --- | --- | --- |
+| 1 | `pnpm run typecheck` | `EXIT 0` |
+| 2 | `pnpm -r --if-present run test` | **257 passed**（`packages/core` 66 / `packages/plugin` 107 / `packages/plugin-client` 84） |
+| 3 | `tools/verify-host-import.mjs` | **11/11 PASS** |
+| 4 | `tools/probe-host.mjs` | **PROBE OK 5/5**；第 5 项 `channel=/aikanban registered=true path=compat dataLayerReady=true` |
+| 5 | `tools/verify-rpc-roundtrip.mjs` | **17/17 passed** |
+| 6 | `python docs/tools/check_docs.py` | **PASS**（59 Markdown files） |
+
+这些是工具级证据（档 2/档 3），**不是产品验收**；`path=compat` 表示 0.2.2 上 `ctx.connection.rpc.handle` 公开入口仍走 §10 的兼容回退，详见 [ADR-005](decisions/ADR-005-浏览器半与宿主半的数据通道.md)。
+
+### 17.6 仍未验证（不得写成已验收）
+
+1. **真实 GUI 写路径**：状态变更、排序、撤销没有在真实页面触发（板上 0 任务，没有可写的任务）；写端点仍只有进程内/契约证据。
+2. **`tasks` 非空时的看板内容**：卡片字段、列内排序、撤销凭据在真实快照中的形状未观察（列表为空）。
+3. **切片 B 未开始**：`task/create`、`task/fields.update`、`activity/read` 与新建/编辑/活动历史 UI 均未实现，因此 F01 的管理闭环不可用。
+4. **产品验收未执行**：106 条原始 AT 全部待执行，27 条补充 AT 无执行记录，各功能无 `verification.md`；任何单测、探针、门禁或 GUI 读路径都不能当作 AT 结论。
+5. **键盘交互 / DOM 级行为**：真实键盘与焦点行为未测（F19 属后续），面板交互仅组件/控制器级测试。
+6. **写端点经真实 HTTP 的取证**：`verify-rpc-roundtrip` 只覆盖 `project/list`、`board/read` 的 carrier 往返；`task/status.set`、`task/reorder`、`task/status.undo` 仍未在真实 carrier 上取证。
+

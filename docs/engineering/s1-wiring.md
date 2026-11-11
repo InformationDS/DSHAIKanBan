@@ -1,6 +1,6 @@
 # S1 接线设计与实施规格（切片 A / 切片 B）
 
-> **本文是实施前置规格，不是实现记录，也不是验收记录。** 切片 A **尚未开工**：本页只把「已有代码 → 可运行的 S1 接线」的接口、映射、改动面、测试与证据判据写到可直接实施的程度。决策依据是 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（**已定**：设计经用户确认、工程证据待取证）；用户已拍板 **Q1＝B（当前项目每次显式选择、不持久化）**、**Q2＝A（扩展 wire/BoardController 契约，不在适配层弱化 F02-R04/SAVE-05）**。本文回应独立评审指出的接线类前置条件（B1/B2/H1/H2）；评审原文不在仓库，本文只按任务书转述的范围落规格，不替评审定义编号含义。
+> **本文是实施前置规格，不是实现记录，也不是验收记录。** 切片 A **已于 2026-10-22 实施**（含安装到真实 `desktop` profile；2026-11-11 在桌面 DSH 0.2.2-rc.1 真实 GUI 中复核读路径，见[实施记录](s1-wiring-implementation.md) §17）；本页仍只把「已有代码 → 可运行的 S1 接线」的接口、映射、改动面、测试与证据判据写到可直接实施的程度。**2026-11-11 状态**：切片 A 已实现/已安装，真实 GUI 看板读路径成立；**切片 B 未开始**；**AT 全部待执行**——A 的完成判据与 GUI 读路径都不等于 F01/F02 验收。决策依据是 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（**已定**：设计经用户确认、工程证据待取证）；用户已拍板 **Q1＝B（当前项目每次显式选择、不持久化）**、**Q2＝A（扩展 wire/BoardController 契约，不在适配层弱化 F02-R04/SAVE-05）**。本文回应独立评审指出的接线类前置条件（B1/B2/H1/H2）；评审原文不在仓库，本文只按任务书转述的范围落规格，不替评审定义编号含义。
 >
 > **证据边界**：所有代码引用均来自当前工作区（`main`，HEAD `dce8385` 起点）的真实文件，行号已逐条核对；未能用仓库内材料证实的点标「**未确认**」。**AT 全部仍是「待执行」**：本文与未来切片 A/B 的单元/集成测试都不能当作 F01/F02 的验收证据；验收按[验收执行规则](acceptance-execution.md)与各功能 `verification.md` 执行。
 
@@ -8,12 +8,14 @@
 
 | 信息 | 内容 |
 | --- | --- |
-| 日期 | 2026-10-20 |
-| 状态 | 实施规格（前置，待取证） |
+| 日期 | 2026-10-20（2026-11-11 状态更新） |
+| 状态 | 实施规格（切片 A 已实施/已安装；切片 B 未开始；本文仍是规格） |
 | 决策依据 | [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（已定）；Q1=B、Q2=A、Q3=允许 test-only 故障注入（[验收执行规则](acceptance-execution.md)第 3 节） |
 | 影响功能 | F01（主）、F02（主）；边界：F03、F04 |
-| 当前缺口 | core 未被 host 半打开；`/aikanban` 通道未注册（`packages/plugin/src/index.ts:396-404` 自述）；浏览器半拿不到真实数据 |
-| 切片 A 完成判据 | 见 §7；**不等于 F01/F02 验收通过** |
+| 当前缺口 | 切片 A 已接通（2026-10-22）：core 由 host 半打开、`/aikanban` 已注册、浏览器半经真实通道读写；当前缺口＝真实 GUI 的写路径（状态/排序/撤销）未验证、切片 B（`task/create`、`task/fields.update`、`activity/read` 与 UI）未开始、AT 未执行 |
+| 切片 A 完成判据 | 见 §7；集成测试/探针（2026-10-22）+ 真实 GUI 读路径复核（2026-11-11）；**不等于 F01/F02 验收通过** |
+
+**2026-11-11 状态说明**：切片 A 的实施记录与安装/回滚剧本见[实施记录](s1-wiring-implementation.md)（§14—§17）；插件已装进真实 `desktop` profile（2026-10-22），桌面 DSH 0.2.2-rc.1 的真实 GUI 中看板主面板已渲染、数据通道为 `connection rpc /aikanban`、项目与 5 列快照来自成功的读路径。§8 第 1、2、9 条中「真实 profile/真实 GUI 渲染/页面内读取」部分已复核（页面内读路径成功；原始 HTTP 状态与信封未在页面抓包），**写端点、非空任务、键盘交互仍未验证**；§8 其余条目不受影响。切片 B 未开始，AT 全部待执行。详见实施记录 §17。
 
 ## 1. 目标与切片
 
@@ -465,17 +467,17 @@ B 需要区分“输入被拒绝”的一类（标题空白、字段非法），
 - 功能自身的实现仍按 M6 写各自 `docs/prd/features/Fxx-slug/implementation.md`；跨功能接线与功能实现的记录地点不同，不互相替代（同 [验收执行规则 §6](acceptance-execution.md) 的 S5 分工）。
 - A-G5 的「未改 `docs/prd/**`」保持不变：这是该分工的直接结果——A 期间不往功能目录写实施记录，也不改 PRD。
 
-## 8. 未定与风险（需真实 profile / 实施第一步取证）
+## 8. 未定与风险（部分已于 2026-11-11 复核；剩余项见条目）
 
-1. **真实 Connection RPC 网络往返**：本仓库只能做协议级往返（真实构建产物 + 契约信封）；`requestRejection`（Host/Origin/token）与真实页面↔宿主跳转需写 profile 并重启，未验证（ADR-005 `:88-98`，状态仍 `提议`）。A 的探针只能证明“宿主内注册发生”，不能证明网络可用。
-2. **浏览器真实渲染**：无 DOM 环境测试；面板在真实 GUI 的渲染/键盘仍待档 1（ADR-004 仍 `提议`）。
+1. **真实 Connection RPC 网络往返**：**2026-11-11 更新**——真实 `desktop` profile / 真实 GUI 的页面内读路径已在行为上成立（项目与 5 列快照渲染），但页面侧 HTTP 200/原始 RPC 信封未抓包；写端点与非空任务未验证（ADR-005 仍 `提议`，见[实施记录 §17](s1-wiring-implementation.md)）。2026-10-22 的真实 HTTP carrier 往返（隔离宿主）仍是 17/17 证据。
+2. **浏览器真实渲染**：**2026-11-11 更新**——`main` 主面板、项目选择器、空看板 5 列已在真实 GUI 渲染；非空任务卡片、详情/拖拽/键盘交互仍未验证（ADR-004 仍 `提议`）。
 3. **`ctx.storageDomain.open` 的真实插件上下文行为**（§5.2）：spec 形状已由**安装包真实实现**佐证（`@deepseek-ai/dsh-storage-domain/lib/index.js`：`defineDomain` 只做校验 `:61-76`、`descriptorOf` `:82-91`、`open` `:355-398`、`valueSchema.parse` `:371`），**不再是“裸 spec 是否可接受”的未确认**；仍需实测的是：真实插件上下文里该服务是否以同一形状暴露 `open`、失败时的错误形状。
 4. **`tsc -b` 对 core 源导出引用的解析**（§5.3）：未确认；可能出现 TS6305/TS6059，修法已给。
 5. **`workspaceRegistry` 服务生命周期与运行时字段**（§5.4）：`status(): Promise<'ok'|'missing-dir'>` 与 `get(id): Workspace | undefined` / `list(): Workspace[]` 的**签名**可由安装包声明核对（`dsh-workspace/lib/types/entity.d.ts:73`、`dsh-workspace/lib/types/types.d.ts:98`、`dsh-workspace/lib/types/index.d.ts:85/92`）；但 `Workspace` 的**运行时字段**、服务绑定时机/生命周期**未验证**——不得写成整体已确证。**`status()` 超时已定：不实现超时**（适配层不叠加超时值；永不 resolve 由宿主/传输层负责，reject → `unknown`，见 §3.1 第 5 步）。
 6. **cordis 生命周期**（关闭 domain/注销通道）：cordis 4.0.2 **无 `on('dispose')` 事件**；倾向 `ctx.effect`，其拆除语义**未确认**，A 先按进程级生命周期，记录局限。
 7. **connection / storageDomain 服务相对 apply 的到达时机**：都可能晚于 apply；已按 `internal/service` 重试 + 重发信号设计（含 `storageDomain` 晚到重试与 `void bootstrap().catch(...)`），但真实顺序需探针观察（快照里的 `boardChannelRegistered`/`dataLayerReady` 可能先 false 后 true，探针必须等最终态）。
 8. **同一次状态+排序的两写**：core 对 `setTaskStatus({toIndex})` 先写列偏好再写状态（`planning.ts:1300-1315`）；若第二步失败，卡片位置偏好已变但状态未变。A 按 core 现状映射（失败报 `save-failed`，正式状态不变）；产品可接受性已由 F02-R04 的“保存失败保留正式原状态与顺序”约束（但两者不同写，需在验证时如实记录该边界）。
-9. **切片 A 已含项目选择 UI（本档裁定）**：`project/list` 与选择器前移进 A（A 现为 5 端点），面板在 `selection-required` 渲染选择器，可完成「显式选择 → 看板」。**但真实 GUI 渲染/键盘仍未验证**（第 2 条），真实网络往返也未验证（第 1 条），所以 A 的完成判据仍是集成测试 + 探针，不能据此声称界面已可用。
+9. **切片 A 已含项目选择 UI（本档裁定）**：`project/list` 与选择器前移进 A（A 现为 5 端点），面板在 `selection-required` 渲染选择器，可完成「显式选择 → 看板」。**2026-11-11 更新**：真实 GUI 已复核选择器/空看板读路径；写端点、非空任务与键盘交互仍未验证（第 1、2 条），A 的完成判据仍是集成测试 + 探针 + 读路径复核，不能据此声称界面已可用。
 10. **工具 output schema 的宿主硬约束（F2 校正）**：注册期只做 `assertSupportedJsonSchema`（关键字形状，违反抛 `JsonSchemaError`；`dsh-tools/lib/index.js:322-325`，`:325` 抛出）；`ToolOutputError` 只在**工具被调用**、输出不满足 schema 时抛（同文件 `:2454`/`:3418`）。所以“漏字段”不会在注册期失败、而是真机调用才炸；本地唯一防线是 §7.1 第 9 条的**以运行时快照为基准的字段覆盖哨兵**（`host.test.ts:285` 的 `checkSchema` 与 `verify-host-import:323-335` 都兜不住）。真实宿主对 schema 错误的完整报错形状仍属未验证。
 11. **order 级基线缺失（D6，已知缺口）**：`reorderTask` 有 `requestId`（`planning.ts:1355-1357`）与 `statusRevision` 基线校验（`:1376-1383`），但**没有 order 级基线**——两次并发排序都不改 `statusRevision` 时检测不到，后写覆盖先写。切片 A 的缓解：reorder 的 `unknown-result` **禁止自动重试**（§4.4 第 8 条），只提供「重新读取」，由用户重拖；**根治候选**：把 `orderRevision`（core `ProjectFields.orderRevision`）作为写前基线加入 reorder 契约（切片 B 或独立契约扩展，需 core 侧配合返回/校验），在完成前不得声称并发排序安全。
 

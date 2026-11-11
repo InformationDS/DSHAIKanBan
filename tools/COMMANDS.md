@@ -42,7 +42,7 @@ AIKanBan/
     core/                  ★ 由 S0-W2 拥有（数据模型 / storageDomain / ADR-002），本任务只预留引用
   tools/
     verify-host-import.mjs 无宿主依赖的导入链验证（元数据、ESM 形态、bare specifier 扫描、apply 激活）
-    probe-host.mjs         隔离宿主加载探针（DSH_HOME=<工作区>/.probe-home，--port 0，四道检查）
+    probe-host.mjs         隔离宿主加载探针（DSH_HOME=<工作区>/.probe-home，--port 0，五道检查）
     sync-to-profile.mjs    参数化的 profile 同步（默认 desktop，--profile web；只打印越权步骤，不执行）
     clean.mjs              只删本仓库生成的产物，路径先校验在工作区内
   .probe-home-scaffold/   隔离 Harness home，本工具**专用**（gitignore；probe 每次运行前删除重建）
@@ -110,7 +110,7 @@ cd D:\BaiduSyncdisk\dsh-plugin\AIKanBan
 
 因为 `DSH_HOME` 可覆盖 Harness home，探针在**工作区内**建一个完全隔离的宿主（自己的 `profiles/ sessions/ storages/ node_modules/`），**不碰任何已运行的 profile**，并且 `--port 0` 让 OS 分配端口，**绝不会和正在运行的 GUI 抢端口**。注意 GUI 端口每次启动由系统分配、会变（本机先后观察到 19387 / 7420 / 8748），**不要在任何文档或脚本里写死它**。
 
-**实测**（exit 0，四道检查全 PASS）：
+**实测**（exit 0，五道检查全 PASS；第 5 项为 2026-10-21 新增，2026-11-11 @ `4a66d28` 复跑 5/5）：
 
 | # | 检查 | 实测输出 |
 | --- | --- | --- |
@@ -118,8 +118,9 @@ cd D:\BaiduSyncdisk\dsh-plugin\AIKanBan
 | 2 | 从 profile 目录解析并激活 host 半 | `packages/plugin/package.json → [aikanban] active (host half) plugin=@aikanban/dsh-aikanban version=0.0.0 activation=mv7hb05h-1` |
 | 3 | 宿主发布浏览器行并服务 client.js | `entry=/plugins/??@aikanban/dsh-aikanban/client.js&rev=ba9b816410630a95-44 status=200 bytes=2082`，首行 `window.__ModuleLoader__.load({id:`@aikanban/dsh-aikanban`,factory:e=>{var t={exp…` |
 | 4 | 运行中的宿主内 `apply()` 真的执行 | `aikanban:activation activation=mv7hb4ct-1 pid=33064 tools=false systemPrompt=false` |
+| 5 | 宿主内注册 `/aikanban` 通道 | `channel=/aikanban registered=true path=compat reason=null dataLayerReady=true` |
 
-第 4 项是**从宿主进程内部**拿到的（diagnostics channel 订阅器随 `--require` 预载进去），不是从日志猜的。`tools=false / systemPrompt=false` 是正常的：那一刻这两个可选服务还没绑上，host 半靠 `internal/service` 事件补注册 —— 这正是它不做硬 `inject` 的原因。
+第 4 项是**从宿主进程内部**拿到的（diagnostics channel 订阅器随 `--require` 预载进去），不是从日志猜的。`tools=false / systemPrompt=false` 是正常的：那一刻这两个可选服务还没绑上，host 半靠 `internal/service` 事件补注册 —— 这正是它不做硬 `inject` 的原因。2026-11-11 真实桌面 0.2.2-rc.1 的 live `aikanban_status` 已报告 `services seen: systemPrompt, tools`，说明补绑在真实宿主里成立（见 [S1 接线实施记录](../docs/engineering/s1-wiring-implementation.md) §17）。
 
 常用参数：`--dump-only`（只组合、不绑端口）、`--keep`（保留 `.probe-home` 供检查）、`--timeout <秒>`。
 若探针提示 `SKIP ... NODE_OPTIONS restricted`，说明宿主环境禁止注入观察器；此时第 4 项**未验证**，探针会单独列在「not observed」里而不会算通过。
@@ -189,9 +190,9 @@ dsh --profile desktop --dump-config | Select-String aikanban
 | node | `C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe`，**v24.21.0** | 满足 `engines.node: ^22.19.0 \|\| >=24.0.0`；PATH 上也有同名 node |
 | pnpm（**推荐这套**） | 同一 runtime 下的 `pnpm\bin\pnpm.mjs`，**11.7.0** | 与 `packageManager: pnpm@11.7.0` 一致 |
 | pnpm（另一处并存） | `D:\dsh\resources\runtime\versions.json` 记 **11.28.5** | 两套都在 11.x，都满足 `>=11.7.0 <12`；**统一用 11.7.0**，避免 lockfile 抖动 |
-| dsh CLI（隔离探针需要） | `C:\Users\InformationDS\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh\lib\bin.js` | `tools/probe-host.mjs` 按 `DSH_CLI` → `%APPDATA%\npm\…` → PATH 查找；找不到会 exit 2 |
+| dsh CLI（隔离探针需要） | `C:\Users\InformationDS\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh\lib\bin.js` | 本机版本 **`0.1.5-rc.1`**（2026-11-11 实测，仅探针用）；`tools/probe-host.mjs` 按 `DSH_CLI` → `%APPDATA%\npm\…` → PATH 查找；找不到会 exit 2 |
 | 当前 GUI | **端口每次启动由系统分配，不要写死**（本机先后观察到 19387 / 7420 / 8748） | §5.2 与 §8 写的 `19387` 是 2026-10-14 的记录，已过期；读实际监听端口即可 |
-| 当前 DSH 版本 | **44.7.0**（nightly 通道） | S0 复核即在此版本完成，见 [S0 复核记录](../docs/engineering/s0-reverification-20261019.md) |
+| 当前 DSH 版本 | 桌面 **0.2.2-rc.1**（2026-11-11 实测；`app.asar` 内运行时包同为 `0.2.2-rc.1`，cordis 4.1.0，Electron 44.7.0，Node 24.21.0） | 本机 npm DSH CLI 为 `0.1.5-rc.1`，仅隔离探针用。S0 复核（2026-10-19/20）在 44.7.0 上完成，属历史记录，见 [S0 复核记录](../docs/engineering/s0-reverification-20261019.md) |
 
 ### 10.2 构建位置：不要在同步盘里装依赖
 
@@ -221,7 +222,7 @@ git -C $BOX checkout --detach <commit-or-branch>
 & $NODE $PNPM install --frozen-lockfile
 & $NODE $PNPM run typecheck              # 期望 EXIT 0
 & $NODE $PNPM run build                  # 期望 EXIT 0；产出 packages/plugin/lib/index.js 与 lib/client.js
-& $NODE $PNPM -r --if-present run test   # 期望 164 通过（core 66 / plugin 53 / plugin-client 45）
+& $NODE $PNPM -r --if-present run test   # 期望 257 通过（core 66 / plugin 107 / plugin-client 84）
 & $NODE tools\verify-host-import.mjs     # 期望 11/11 PASS
 & $NODE tools\probe-host.mjs             # 期望 PROBE OK 5/5（约 40–120 秒）
 ```
@@ -229,6 +230,8 @@ git -C $BOX checkout --detach <commit-or-branch>
 **实测基线（2026-10-20，DSH 44.7.0，提交 `d7d73a6`）**：以上六条全部 `EXIT 0`。用例分布为 `packages/core` **66**（11 个测试文件）、`packages/plugin` **38**（3 个）、`packages/plugin-client` **45**（3 个），合计 **149**；§4 记的 35/26/7 是 2026-10-14 的更早快照，不要再用旧数字。
 
 **更新（2026-10-21，P2/P3 档）**：`packages/plugin` 新增 15 个 host 半接线用例后为 **53**，合计 **164**；探针新增第 5 项 `/aikanban` 注册断言后为 **5/5**。上方 149/4/4 是 2026-10-20 的历史快照，保留原文。
+
+**更新（2026-11-11，桌面 DSH 0.2.2-rc.1，盘外沙盒 `C:\Users\InformationDS\aikanban-p6c` @ `4a66d28`）**：用例分布为 `packages/core` **66**（11 个测试文件）、`packages/plugin` **107**、`packages/plugin-client` **84**，合计 **257**；`probe-host` 为 **5/5**（第 5 项 `channel=/aikanban registered=true path=compat dataLayerReady=true`）；`verify-host-import` 11/11、`verify-rpc-roundtrip` 17/17、`check_docs` PASS（59 md），`typecheck`/`build` EXIT 0。主仓库在同步盘上仍不装依赖，以上全部在盘外沙盒复跑。
 
 ### 10.4 仍然禁止 / 仍然需要人
 

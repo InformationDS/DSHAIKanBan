@@ -42,9 +42,9 @@
    `DSH_PROFILE_DIR=C:\Users\InformationDS\.dsh\profiles\desktop`，且其实时插件树含 desktop 专属行而**不含**
    `profiles/web` 里的 `insert: aikanban` 与 `file:` 依赖。`desktop` profile 由 Electron 应用独占管理
    （`dsh --profile desktop` 被启动器拒绝），安装进当前 GUI 必须写该 profile 并重启进程。
-   因此：**装到哪个 profile、何时重启，需用户确认后执行**；`tools/sync-to-profile.mjs` 按 profile 参数化，**默认 `desktop`**（脚本的 `--profile` 说明与实现均为 desktop）。
-2. **界面挂载点与看板形态**（[ADR-004](decisions/ADR-004-界面挂载点与看板形态.md)，提议）：缺**客户端实际渲染证据**，取证前不得写成已验证。
-3. **浏览器半 ↔ 宿主半数据通道**（[ADR-005](decisions/ADR-005-浏览器半与宿主半的数据通道.md)，提议）：缺**真实 Connection RPC 路由证据**，取证前不得写成已验证。
+   因此：安装进当前 GUI 必须写该 profile 并重启进程。**2026-11-11 更新：本执行待办已完成**——用户已授权，插件于 2026-10-22 安装进 `desktop` profile（安装记录见[C:\Users\InformationDS\aikanban-profile-backup-20261023\install-record.json](C:/Users/InformationDS/aikanban-profile-backup-20261023/install-record.json)），2026-11-11 在桌面 DSH 0.2.2-rc.1 的真实 GUI 中复核读路径；后续安装/回滚按 `tools/install-to-profile.mjs` 与实施记录 §16.8。`tools/sync-to-profile.mjs` 仍按 profile 参数化，**默认 `desktop`**。
+2. **界面挂载点与看板形态**（[ADR-004](decisions/ADR-004-界面挂载点与看板形态.md)，提议）：**2026-11-11 已复核 `main` 主面板渲染/项目选择/空看板**（真实 GUI）；面板间切换的返回定位、`sidebar.right.pane.tab`、`shell.overlay` 仍无证据，状态保持「提议」，取证前不得写成已验证。
+3. **浏览器半 ↔ 宿主半数据通道**（[ADR-005](decisions/ADR-005-浏览器半与宿主半的数据通道.md)，提议）：**2026-11-11 真实 GUI 页面内读路径在行为上成立**（项目与 5 列快照渲染），但页面侧 HTTP 200/原始 RPC 信封未抓包，写端点与非空任务未验证；状态保持「提议」，取证前不得写成已验证。详见 [S1 接线实施记录](s1-wiring-implementation.md) §17。
 
 ## 建议职责边界
 

@@ -4152,4 +4152,32 @@ node tools/install-to-profile.mjs --restore-latest
 2. 若应用起不来：关闭应用 → 双击本次安装输出里打印的 `rollback directory\ROLLBACK.cmd`（或 `tools\rollback-aikanban.cmd`）→ 重启应用。
 3. 若应用能起：按 §15.4 / `tools/browser-check.js` 做页面自检；仍然不得把安装成功当成 AT 通过。
 
+## 20. 真实安装、GUI 使用与反馈修复（2026-11-12）
+
+### 20.1 安装与运行证据
+
+- 2026-11-11 21:52（本地）从 p6c 把切片 B 安装进真实 `desktop` profile；安装器生成 `aikanban-profile-backup-20261111` 与 `-2` 两个备份，随后 21:54 重启。新 host 激活 `mwc04qv0-1`（pid 34496），GUI 端口 5791。
+- 安装文件与 p6c 的 B 构建逐字节一致：`lib/index.js` SHA256 `28347E35…`、`lib/client.js` `E6142509…`、`package.json` `A13D5DD3…`；profile 仍保留 10 个 bundle，patch 含 aikanban insert，anchor junction 指向安装副本。
+- 安装/重启后**没有新的 `crash-*` 日志**；host 自 2026-11-11 21:54 起持续运行。真实 GUI 的 storage 里出现：任务「测试」（21:54:50，目标「测试」）、`未开始→进行中`（21:55:28）、`进行中→未开始`（21:55:32），task activity 3 条、project activity 1 条。这证明**创建、状态写入、活动记录**三条真实 GUI 写路径已跑通；字段编辑仍未发生（`fieldsRevision=0`）。
+
+### 20.2 GUI 反馈缺陷与修复（提交 `1502a15`）
+
+真实 GUI 反馈两个缺陷，均已修复：
+
+1. **活动历史按钮越点越多**：`renderDetail` 的打开按钮与活动 section **同为 `key: 'task-activity'`**（同级 key 冲突），React 在活动状态变化时重复/残留按钮；改为 `task-activity-button`，项目 opener 同样改为 `project-activity-button`。新增 `duplicateSiblingKeys` 回归测试。
+2. **任务卡不能跨列拖动**：空列的 body 没有高度且 `onDrop` 只挂在 body 上，空状态列没有可命中的落点；把 `onDragOver`/`onDrop` 移到整列 `<section>`，给 body `minHeight: 64px` 和「暂无任务（可拖入）」空态。另将 `BoardPanel` 的 `draggedTaskId` 从 `useState` 闭包改为 `useRef`（drop 可能早于 dragstart 的 state 提交，旧闭包读到 `null`），dragstart 同时写 `text/plain` dataTransfer。
+
+测试由 **360 → 363**（core 66 / plugin-client **152** / plugin 145），`build`/`typecheck` EXIT 0；client bundle 58.23 kB。修复只改 client 半，core/host 未变。
+
+### 20.3 回退安全网补充（提交 `0fabfbf`）
+
+升级安装（B 覆盖 A）的备份 patch 仍含 aikanban insert；旧 restore 只删载荷会留下 dangling loader entry。restore 现在识别并删除该 insert（回到无插件状态），不可识别时 exit 9 不写半套；`20261111` / `20261111-2` 备份内的脚本已替换为修复版。用真实最新备份的副本实测：恢复后 patch 8 条、无 aikanban、PyYAML 可解析；两个安装点均不存在。
+
+### 20.4 仍未验证
+
+- 字段编辑/保存/失败草稿的真实 GUI；撤销；排序（含空列/非空列）；阻塞原因弹窗；重启后任务与编辑持久化；真实键盘与拖拽的浏览器行为。
+- 当前正在运行的是**修复前**的 B 构建；`1502a15` 需要重新安装并重启后才生效。
+- AT 106 + 27 条仍全部待执行；本节不构成验收。
+
+
 

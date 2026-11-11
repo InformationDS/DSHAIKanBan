@@ -51,12 +51,22 @@
  * # inspect the plan (resolves and prints every absolute path; writes nothing)
  * node tools/install-to-profile.mjs --dry-run
  *
- * # install into the desktop profile
+ * # install into the desktop profile (preflight verifies the built host/client
+ * # load chain first; --skip-preflight opts out)
  * node tools/install-to-profile.mjs
  *
  * # one-command rollback from a backup directory this script (or the app) made
  * node tools/install-to-profile.mjs --restore C:\Users\<user>\aikanban-profile-backup-<date>
+ *
+ * # rollback from the newest backup, without remembering its path
+ * node tools/install-to-profile.mjs --restore-latest
+ * node tools/install-to-profile.mjs --list-backups
  * ```
+ *
+ * Every backup directory also gets a self-contained `install-to-profile.mjs`
+ * copy and a double-clickable `ROLLBACK.cmd`; the latter works even if this
+ * repository has moved, because it runs the copy inside the backup. That is the
+ * recovery path when the app will not boot and the in-app agent is unavailable.
  *
  * @module tools/install-to-profile
  */
@@ -97,7 +107,11 @@ Options:
   --date <yyyyMMdd>   backup suffix (default: today, local time)
   --python <path>     Python interpreter with PyYAML (default: python)
   --dry-run           print the plan and the resolved absolute paths, write nothing
+  --preflight         run verify-host-import + probe-host before writing (default on for a real install)
+  --skip-preflight    skip that load-chain check (only for an intentional emergency install)
   --restore <dir>     one-command rollback: copy four manifests back, remove install points
+  --restore-latest    rollback from the newest complete backup (no path needed)
+  --list-backups      list rollback candidates and exit (writes nothing)
   --help              show this help
 
 Exit codes:
@@ -110,6 +124,8 @@ Exit codes:
   7 patch-entry append or PyYAML validation failed
   8 no Python with PyYAML found
   9 restore directory is incomplete
+  10 preflight load-chain check failed (nothing was written)
+  11 no complete backup found for --restore-latest
 `
 
 /**
@@ -121,7 +137,7 @@ Exit codes:
  */
 function parseArgs(argv) {
   const options = {}
-  const booleans = new Set(['dry-run', 'help'])
+  const booleans = new Set(['dry-run', 'help', 'preflight', 'skip-preflight', 'restore-latest', 'list-backups'])
   const valueFlags = new Set(['profile', 'home', 'backup-root', 'date', 'python', 'restore'])
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
@@ -408,20 +424,72 @@ function inspectExistingEntry(entries) {
   return 'absent'
 }
 
-const options = parseArgs(process.argv.slice(2))
-if (options.help === true) {
-  process.stdout.write(HELP)
-  process.exit(0)
+/**
+ * Resolve the directory that contains `aikanban-profile-backup-*` directories.
+ *
+ * @param {string | undefined} explicit - the `--backup-root` value, when given.
+ * @returns {string} the absolute backup root.
+ */
+function resolveBackupRoot(explicit) {
+  return resolve(explicit !== undefined ? explicit : homedir())
 }
 
-const dryRun = options['dry-run'] === true
-const pythonOption = typeof options.python === 'string' ? options.python : undefined
+/**
+ * Read a JSON file, returning `undefined` for a missing or malformed file.
+ *
+ * @param {string} path - the JSON file.
+ * @returns {Record<string, unknown> | undefined} the parsed object.
+ */
+function readJsonFile(path) {
+  try {
+    const value = JSON.parse(readFileSync(path, 'utf8'))
+    return typeof value === 'object' && value !== null ? /** @type {Record<string, unknown>} */ (value) : undefined
+  } catch {
+    return undefined
+  }
+}
 
-/* ---------------- restore mode ---------------- */
-if (typeof options.restore === 'string') {
-  const restoreDir = resolve(options.restore)
-  const home = resolveDshHome(typeof options.home === 'string' ? options.home : undefined)
-  const profileName = validateProfileName(typeof options.profile === 'string' ? options.profile : 'desktop')
+/**
+ * Find complete backup directories, newest first.
+ *
+ * A directory with `package.json` + `cordis.patch.yml` is complete enough for
+ * the restore path (the other manifests are restored when present). The
+ * install-record's `createdAt` is preferred over the directory clock so a copied
+ * or synchronised directory keeps its original order.
+ *
+ * @param {string} root - directory containing `aikanban-profile-backup-*`.
+ * @returns {Array<{ dir: string, stamp: number, record?: Record<string, unknown> }>} candidates.
+ */
+function listBackupCandidates(root) {
+  if (!existsSync(root)) return []
+  const candidates = []
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith('aikanban-profile-backup-')) continue
+    const dir = join(root, entry.name)
+    if (!existsSync(join(dir, 'package.json')) || !existsSync(join(dir, 'cordis.patch.yml'))) continue
+    const record = readJsonFile(join(dir, 'install-record.json'))
+    const recorded = typeof record?.['createdAt'] === 'string' ? Date.parse(record['createdAt']) : Number.NaN
+    let stamp = statSync(dir).mtimeMs
+    if (Number.isFinite(recorded)) stamp = recorded
+    candidates.push({ dir, stamp, ...(record === undefined ? {} : { record }) })
+  }
+  return candidates.sort((a, b) => b.stamp - a.stamp)
+}
+
+/**
+ * Restore one backup directory into the target profile.
+ *
+ * This is the recovery path used both by `--restore` and by the self-contained
+ * `ROLLBACK.cmd` inside every backup. It never needs Python, packages or the
+ * network: only Node and the four manifest files.
+ *
+ * @param {string} restoreDir - the backup directory.
+ * @param {string} home - Harness home.
+ * @param {string} profileName - validated profile name.
+ * @param {boolean} dryRun - print the plan without writing.
+ * @returns {number} process exit code.
+ */
+function restoreFromBackup(restoreDir, home, profileName, dryRun) {
   const profileDir = join(home, 'profiles', profileName)
   const installDir = join(profileDir, 'node_modules', '@aikanban', 'dsh-aikanban')
   const anchorPath = join(home, 'profiles', 'node_modules', '@aikanban', 'dsh-aikanban')
@@ -433,22 +501,22 @@ if (typeof options.restore === 'string') {
 
   if (!existsSync(join(restoreDir, 'package.json'))) {
     process.stderr.write(`install-to-profile: ${restoreDir} has no package.json — not a backup of this shape\n`)
-    process.exit(9)
+    return 9
   }
   if (!existsSync(join(restoreDir, 'cordis.patch.yml'))) {
     process.stderr.write(`install-to-profile: ${restoreDir} has no cordis.patch.yml — refusing a partial restore\n`)
-    process.exit(9)
+    return 9
   }
   if (!existsSync(join(profileDir, 'package.json'))) {
     process.stderr.write(
       `install-to-profile: no profile manifest at ${join(profileDir, 'package.json')}\n`
       + '  Point --home/--profile at the profile to restore into.\n',
     )
-    process.exit(3)
+    return 3
   }
   if (dryRun) {
     process.stdout.write('dry run: would restore the four manifests and remove the install points; nothing was written.\n')
-    process.exit(0)
+    return 0
   }
 
   for (const manifest of MANIFESTS) {
@@ -465,8 +533,137 @@ if (typeof options.restore === 'string') {
   for (const dir of [dirname(installDir), dirname(anchorPath)]) {
     if (existsSync(dir) && readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true })
   }
-  process.stdout.write(`\nrestored. The app must be restarted for the loader to recompose without the bundle layer.\n`)
+  process.stdout.write('\nrestored. The app must be restarted for the loader to recompose without the bundle layer.\n')
+  return 0
+}
+
+/**
+ * Run the load-chain checks that must pass before a real profile write.
+ *
+ * The P6b crash was a client-half boot failure; the isolated probe cannot
+ * execute a browser, but it does prove the built package composes, resolves,
+ * activates the host half, publishes/serves the client row and registers
+ * `/aikanban`. A failure here is a reason not to write the profile at all.
+ *
+ * @returns {boolean} true when every check passed.
+ */
+function runPreflight() {
+  const steps = [
+    { label: 'verify-host-import', script: 'tools/verify-host-import.mjs', args: [] },
+    { label: 'probe-host', script: 'tools/probe-host.mjs', args: ['--timeout', '180'] },
+  ]
+  for (const step of steps) {
+    const scriptPath = join(WORKSPACE_ROOT, step.script)
+    if (!existsSync(scriptPath)) {
+      process.stderr.write(`install-to-profile: preflight cannot find ${scriptPath}\n`)
+      return false
+    }
+    process.stdout.write(`preflight ${step.label}\n`)
+    const result = spawnSync(process.execPath, [scriptPath, ...step.args], {
+      cwd: WORKSPACE_ROOT,
+      stdio: 'inherit',
+    })
+    if (result.error !== undefined) {
+      process.stderr.write(`install-to-profile: preflight ${step.label} failed to start: ${result.error.message}\n`)
+      return false
+    }
+    if (result.status !== 0) {
+      process.stderr.write(`install-to-profile: preflight ${step.label} exited ${String(result.status)}; nothing was written\n`)
+      return false
+    }
+  }
+  return true
+}
+
+/**
+ * Self-contained one-click rollback written beside every backup.
+ *
+ * `%~dp0` is the backup directory, so this works after the repository moves or
+ * the in-app agent is unavailable. It refuses to run while DSH is open (the
+ * loader would keep the old layer in memory and a half-restore is confusing).
+ */
+const ROLLBACK_CMD_TEXT = [
+  '@echo off',
+  'setlocal',
+  'set "NODE=%USERPROFILE%\\.dsh\\dsh-runtimes\\dsh-primary-runtime\\dependencies\\node\\bin\\node.exe"',
+  'if not exist "%NODE%" set "NODE=node"',
+  'echo AIKanBan rollback from "%~dp0"',
+  'tasklist /FI "IMAGENAME eq DeepSeek Harness.exe" 2>nul | findstr /I "DeepSeek" >nul',
+  'if not errorlevel 1 (',
+  '  echo WARNING: DeepSeek Harness is running. Close it, then run this ROLLBACK.cmd again.',
+  '  pause',
+  '  exit /b 2',
+  ')',
+  '"%NODE%" "%~dp0install-to-profile.mjs" --restore "%~dp0."',
+  'if errorlevel 1 (',
+  '  echo ROLLBACK FAILED. See the output above.',
+  '  pause',
+  '  exit /b 1',
+  ')',
+  'echo Rollback completed. Restart DeepSeek Harness.',
+  'pause',
+].join('\r\n') + '\r\n'
+
+const options = parseArgs(process.argv.slice(2))
+if (options.help === true) {
+  process.stdout.write(HELP)
   process.exit(0)
+}
+
+const dryRun = options['dry-run'] === true
+const pythonOption = typeof options.python === 'string' ? options.python : undefined
+
+/* ---------------- restore / list mode ---------------- */
+const restoreDirOption = typeof options.restore === 'string' ? options.restore : undefined
+const restoreLatest = options['restore-latest'] === true
+const listBackups = options['list-backups'] === true
+if ((restoreDirOption !== undefined ? 1 : 0) + (restoreLatest ? 1 : 0) + (listBackups ? 1 : 0) > 1) {
+  process.stderr.write('install-to-profile: use only one of --restore, --restore-latest, --list-backups\n')
+  process.exit(2)
+}
+if (restoreDirOption !== undefined || restoreLatest || listBackups) {
+  const home = resolveDshHome(typeof options.home === 'string' ? options.home : undefined)
+  const profileName = validateProfileName(typeof options.profile === 'string' ? options.profile : 'desktop')
+  const backupRoot = resolveBackupRoot(typeof options['backup-root'] === 'string' ? options['backup-root'] : undefined)
+
+  if (listBackups) {
+    const candidates = listBackupCandidates(backupRoot)
+    if (candidates.length === 0) {
+      process.stderr.write(`install-to-profile: no complete aikanban-profile-backup-* directory under ${backupRoot}\n`)
+      process.exit(11)
+    }
+    process.stdout.write(`AIKanBan profile backups under ${backupRoot}\n\n`)
+    for (const candidate of candidates) {
+      const record = candidate.record ?? {}
+      const createdAt = typeof record['createdAt'] === 'string' ? record['createdAt'] : '(no install record)'
+      const profile = typeof record['profile'] === 'string' ? record['profile'] : '(unknown profile)'
+      const workspace = typeof record['workspace'] === 'string' ? record['workspace'] : '(unknown workspace)'
+      process.stdout.write(`  ${candidate.dir}\n    ${createdAt}  profile=${profile}  ${workspace}\n`)
+    }
+    process.exit(0)
+  }
+
+  let restoreDir
+  if (restoreDirOption !== undefined) {
+    restoreDir = resolve(restoreDirOption)
+  } else {
+    const candidates = listBackupCandidates(backupRoot)
+    const matchingProfile = candidates.filter((candidate) => {
+      const profile = candidate.record?.['profile']
+      return profile === undefined || profile === profileName
+    })
+    const selected = (matchingProfile.length > 0 ? matchingProfile : candidates)[0]
+    if (selected === undefined) {
+      process.stderr.write(
+        `install-to-profile: no complete backup found under ${backupRoot}\n`
+        + '  Pass --backup-root <dir> or use --restore <dir> with a known backup.\n',
+      )
+      process.exit(11)
+    }
+    restoreDir = selected.dir
+    process.stdout.write(`newest backup     ${restoreDir}\n`)
+  }
+  process.exit(restoreFromBackup(restoreDir, home, profileName, dryRun))
 }
 
 /* ---------------- install mode ---------------- */
@@ -572,6 +769,20 @@ if (existing === 'present') {
 const backupDir = pickBackupDir()
 process.stdout.write(`backup dir       ${backupDir}\n`)
 
+// The P6b crash was a client-half boot failure. Check the built load chain
+// before writing anything: a failed probe must not leave the profile changed.
+const skipPreflight = options['skip-preflight'] === true
+const preflightWanted = options['preflight'] === true || (!dryRun && !skipPreflight)
+if (preflightWanted) {
+  if (!runPreflight()) {
+    process.stderr.write('install-to-profile: preflight failed; profile was NOT modified.\n')
+    process.exit(10)
+  }
+  process.stdout.write('preflight passed\n\n')
+} else if (dryRun) {
+  process.stdout.write('preflight skipped (dry run; pass --preflight to run it)\n\n')
+}
+
 if (dryRun) {
   process.stdout.write('\ndry run plan (nothing was written)\n')
   process.stdout.write(`  1. copy ${MANIFESTS.join(', ')} → ${backupDir}\n`)
@@ -602,7 +813,12 @@ try {
     patchEntry: PATCH_ENTRY,
     payload: Object.fromEntries(PAYLOAD.map((entry) => [entry, measure(join(PACKAGE_DIR, entry))])),
   }, undefined, 2)}\n`)
+  // Make the backup self-contained: a copy of this script (restore mode needs no
+  // Python/packages) plus a double-clickable rollback entry point.
+  cpSync(fileURLToPath(import.meta.url), join(backupDir, 'install-to-profile.mjs'))
+  writeFileSync(join(backupDir, 'ROLLBACK.cmd'), ROLLBACK_CMD_TEXT)
   process.stdout.write(`backed up ${String(MANIFESTS.length)} manifests → ${backupDir}\n`)
+  process.stdout.write(`  one-click rollback: ${join(backupDir, 'ROLLBACK.cmd')}\n`)
 } catch (error) {
   process.stderr.write(`install-to-profile: backup failed — ${error instanceof Error ? error.message : String(error)}\n`)
   process.exit(6)
@@ -667,13 +883,14 @@ installed. NOT active until the app restarts (the loader composes layers at star
 1. Close and reopen the DSH Desktop app. This ends the current session.
 2. After restart, in DevTools → Console run tools/browser-check.js; the page-side
    boot audit must not name @aikanban/dsh-aikanban, and B1/B4 must PASS.
-3. If the app fails to boot again, use the dialog's "disable third-party plugins"
-   button, then run the one-command restore:
-
-     node tools/install-to-profile.mjs --restore "${backupDir}"
-
-   (That button also rewrites the profile bundle list; --restore copies the
-   backed-up package.json/cordis.patch.yml back and removes both install points.)
+3. If the app fails to boot again, close it and use EITHER recovery:
+   a) double-click (works even if this repository moved):
+        ${join(backupDir, 'ROLLBACK.cmd')}
+   b) or from any checkout:
+        node tools/install-to-profile.mjs --restore-latest
+   The crash dialog's "disable third-party plugins" button also rewrites the
+   profile bundle list; both recovery paths copy the backed-up package.json /
+   cordis.patch.yml back and remove both install points.
 
 rollback directory: ${backupDir}
 `)

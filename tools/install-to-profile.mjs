@@ -477,6 +477,36 @@ function listBackupCandidates(root) {
 }
 
 /**
+ * Strip the exact insert entry this script writes from a patch layer.
+ *
+ * An upgrade install backs up the *previous* profile, which already contains the
+ * aikanban insert. Restoring that patch while removing the installed payload
+ * would leave a dangling loader entry. Rollback therefore restores the profile
+ * to "DSH without AIKanBan": the insert block is removed, the four manifests are
+ * restored and both install points are deleted.
+ *
+ * Only the exact block shape produced by {@link buildPatchLayer} is recognized.
+ * If the text references aikanban in another shape, the caller refuses the
+ * restore rather than writing an inconsistent profile.
+ *
+ * @param {string} text - patch-layer text from a backup.
+ * @returns {{ text: string, removed: boolean }} the stripped text and whether a block was found.
+ */
+function stripAikanbanInsert(text) {
+  const patterns = [
+    /\r?\n- insert:\r?\n[ \t]+- id: aikanban\r?\n[ \t]+name: ["']@aikanban\/dsh-aikanban["']\r?\n?/,
+    /^- insert:\r?\n[ \t]+- id: aikanban\r?\n[ \t]+name: ["']@aikanban\/dsh-aikanban["']\r?\n?/m,
+  ]
+  for (const pattern of patterns) {
+    if (pattern.test(text)) {
+      const stripped = text.replace(pattern, '').replace(/[ \t]+$/, '')
+      return { text: stripped.trim() === '' ? '[]\n' : `${stripped.trimEnd()}\n`, removed: true }
+    }
+  }
+  return { text, removed: false }
+}
+
+/**
  * Restore one backup directory into the target profile.
  *
  * This is the recovery path used both by `--restore` and by the self-contained
@@ -514,8 +544,23 @@ function restoreFromBackup(restoreDir, home, profileName, dryRun) {
     )
     return 3
   }
+
+  // Upgrades back up a profile that already contains the plugin insert. Remove
+  // it before writing anything, otherwise the restore would leave an entry that
+  // points at the payload we are about to delete.
+  const backupPatch = readFileSync(join(restoreDir, 'cordis.patch.yml'), 'utf8')
+  const patchPlan = stripAikanbanInsert(backupPatch)
+  if (!patchPlan.removed && backupPatch.includes('id: aikanban')) {
+    process.stderr.write(
+      `install-to-profile: ${join(restoreDir, 'cordis.patch.yml')} references aikanban in a shape this restore cannot safely edit.\n`
+      + '  Use an older backup without the plugin, or remove that entry manually before restoring.\n',
+    )
+    return 9
+  }
+  if (patchPlan.removed) process.stdout.write('  patch layer will drop the aikanban insert (rollback to no-plugin state)\n')
+
   if (dryRun) {
-    process.stdout.write('dry run: would restore the four manifests and remove the install points; nothing was written.\n')
+    process.stdout.write('dry run: would restore the four manifests, remove the aikanban insert and the install points; nothing was written.\n')
     return 0
   }
 
@@ -523,6 +568,11 @@ function restoreFromBackup(restoreDir, home, profileName, dryRun) {
     const source = join(restoreDir, manifest)
     if (!existsSync(source)) {
       process.stdout.write(`  skip    ${manifest} (not in the backup)\n`)
+      continue
+    }
+    if (manifest === 'cordis.patch.yml') {
+      writeFileSync(join(profileDir, manifest), patchPlan.text)
+      process.stdout.write(`  restore ${manifest}${patchPlan.removed ? ' (aikanban insert removed)' : ''}\n`)
       continue
     }
     cpSync(source, join(profileDir, manifest))
@@ -533,7 +583,7 @@ function restoreFromBackup(restoreDir, home, profileName, dryRun) {
   for (const dir of [dirname(installDir), dirname(anchorPath)]) {
     if (existsSync(dir) && readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true })
   }
-  process.stdout.write('\nrestored. The app must be restarted for the loader to recompose without the bundle layer.\n')
+  process.stdout.write('\nrestored (no plugin entry, no payload). The app must be restarted for the loader to recompose without the bundle layer.\n')
   return 0
 }
 

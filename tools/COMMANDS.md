@@ -265,4 +265,5 @@ Set-Location C:\Users\InformationDS\aikanban-p6c
   $NODE tools\install-to-profile.mjs --restore-latest        # 恢复最新完整备份
   ```
 - **崩溃弹窗的「禁用第三方插件」按钮**也会重写 profile 的 `dsh.profile.bundles`（历史上从 10 个削到 2 个）；`--restore`/`--restore-latest` 会连 `package.json` 一起恢复，不要只手工删 aikanban 条目。
+- **升级安装回退要删 insert**：B 覆盖 A 时，备份的 `cordis.patch.yml` 仍含 `- insert: aikanban`；restore 会识别并删除该块（回到「无插件」状态），避免删了载荷却留下 dangling loader entry。检测到不可识别的 aikanban 形状时 restore 直接退出 9，不写半套状态。现有 `20261111`/`20261111-2` 备份内的 `install-to-profile.mjs` 已替换为带该修复的版本。
 - **本次验证（2026-11-11）**：在 `%TEMP%` 的隔离 home + 最小 profile 上实测 install → 备份（含 `ROLLBACK.cmd`/脚本副本）→ `--list-backups` → `--restore-latest --dry-run` → 用备份内脚本实际 restore；patch 从 `[]` 变为 insert 后恢复回 `[]`，两个安装点都被移除；真实 `desktop` profile 未被写入（`cordis.patch.yml` 哈希保持不变）。`--dry-run --preflight` 在 p6c 上通过（verify 11/11 + probe 5/5）。**真实安装/重启未做**，仍需用户执行。

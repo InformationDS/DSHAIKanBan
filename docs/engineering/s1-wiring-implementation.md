@@ -4126,6 +4126,8 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 
 恢复动作：把备份中的四个清单复制回 profile → 删除 `<profile>\node_modules\@aikanban\dsh-aikanban` 与 `profiles\node_modules\@aikanban\dsh-aikanban`（仅删 junction 链接，不碰目标）→ 清理空目录。它同时修复「崩溃弹窗的禁用按钮把 `dsh.profile.bundles` 从 10 个削到 2 个」这一类破坏，因为 `package.json` 也从备份恢复。
 
+**升级安装的备份要特别处理**：B 安装时 profile 里已经有 A 的插件，备份的 `cordis.patch.yml` 仍含 `- insert: / - id: aikanban`。如果 restore 只删载荷而保留这个 insert，会留下指向缺失包的 loader entry。因此 restore 会识别本脚本写入的精确 insert 块并**从恢复后的 patch 中删除**（回到「无插件」状态）；如果检测到 aikanban 但不是可安全识别的形状，restore 会拒绝执行（退出码 9），不会写出半套状态。
+
 不记路径的回退入口：
 
 ```powershell
@@ -4139,6 +4141,7 @@ node tools/install-to-profile.mjs --restore-latest
 ### 19.3 验证（2026-11-11）
 
 - 在 `%TEMP%` 的隔离 home + 最小 profile（`cordis.patch.yml=[]`）上实际 install → 备份 → `--list-backups` → `--restore-latest --dry-run` → **用备份内脚本实际 restore**：patch 从 `[]` 变为 insert 后恢复回 `[]`，两个安装点都被移除；备份含 `ROLLBACK.cmd` 与脚本副本。
+- **升级备份专项**：另用「patch 已含 aikanban insert」的备份模拟 A→B 升级回退；fixed restore 先输出 `patch layer will drop the aikanban insert`，实际 restore 后 patch 为 `[]`、两个安装点均不存在；dry-run 也显示该计划。当前真实最新备份 `aikanban-profile-backup-20261111-2` 的 dry-run 已确认会执行 strip。
 - `--dry-run --preflight` 在 p6c 上通过（verify 11/11 + probe 5/5）。
 - 真实 `desktop` profile **未被写入**；`cordis.patch.yml` 哈希保持 `7B3729CC…` 不变。
 - 未做：真实安装/重启/真实崩溃演练；`ROLLBACK.cmd` 的“应用运行中拒绝”分支未在真实运行进程上实际触发（逻辑与 `tasklist` 检查已就位）。

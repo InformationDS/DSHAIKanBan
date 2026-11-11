@@ -43,6 +43,8 @@ AIKanBan/
   tools/
     verify-host-import.mjs 无宿主依赖的导入链验证（元数据、ESM 形态、bare specifier 扫描、apply 激活）
     probe-host.mjs         隔离宿主加载探针（DSH_HOME=<工作区>/.probe-home，--port 0，五道检查）
+    install-to-profile.mjs 可重复安装：preflight → 备份（自带脚本与 ROLLBACK.cmd）→ 载荷 → patch → junction；--restore/--restore-latest/--list-backups
+    rollback-aikanban.cmd  双击一键回退：恢复最新完整备份（不依赖仓库所在位置）
     sync-to-profile.mjs    参数化的 profile 同步（默认 desktop，--profile web；只打印越权步骤，不执行）
     clean.mjs              只删本仓库生成的产物，路径先校验在工作区内
   .probe-home-scaffold/   隔离 Harness home，本工具**专用**（gitignore；probe 每次运行前删除重建）
@@ -241,3 +243,26 @@ git -C $BOX checkout --detach <commit-or-branch>
 - **仍然不要**自行重启用户的 GUI 进程。装进真实 profile 属于要用户确认的动作（见 §7/§8 与 `docs/engineering/architecture.md` 的未决项）；`desktop` profile 由 Electron 独占，CLI 的 `--dump-config` 会被拒绝。
 - **2026-10-20 已用启动环境变量注入 `DEEPSEEK_API_KEY` 完成复验**（`completed`、2 条 `assistant` 消息、`multiStepObserved=true`），详见 `docs/engineering/s0-reverification-20261019.md` 第 9 节；探针**默认仍不含凭据**，不要用「探针通过」替代真实模型验证。
 - `probe-host` 第 4/5 项若报 `SKIP … NODE_OPTIONS restricted`，属于**未观察**，不得当作通过；第 5 项 PASS 只证 `/aikanban` 已注册，数据层就绪以同一日志里的末次 `[probe] ACTIVATION` 的 `dataLayerReady` 为准（探针会把未观察到的情况列在 `not observed` 段）。
+
+### 10.5 安装安全网：preflight + 自包含备份 + 一键回退（2026-11-11）
+
+**安装**（从**已构建**的 checkout，例如 `C:\Users\InformationDS\aikanban-p6c`）：
+
+```powershell
+$NODE = "C:\Users\InformationDS\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
+Set-Location C:\Users\InformationDS\aikanban-p6c
+& $NODE tools\install-to-profile.mjs --dry-run            # 只读预演
+& $NODE tools\install-to-profile.mjs                      # 默认先跑 preflight，再写 profile
+# 仅紧急情况才跳过：& $NODE tools\install-to-profile.mjs --skip-preflight
+```
+
+- **preflight（默认开启）**：真实写入前先跑 `verify-host-import`（11/11）与 `probe-host`（5/5）；任一失败即退出码 10，**profile 不会被修改**。它证明组合树、宿主激活、client row 发布/服务、`/aikanban` 注册；它**不能替代真实浏览器启动**（2026-10-22 的崩溃正是真实页面 boot 审计），所以仍必须保留回退路径。
+- **每个备份目录都是自包含的**：除四个 profile 清单 + `install-record.json` 外，还写入当次 `install-to-profile.mjs` 的副本与 `ROLLBACK.cmd`。应用起不来时：先完全关闭 DeepSeek Harness，双击该备份目录里的 `ROLLBACK.cmd`（脚本会检测应用仍在运行并拒绝），或运行 `tools/rollback-aikanban.cmd`。
+- **不记路径的一键回退**：
+  ```powershell
+  $NODE tools\install-to-profile.mjs --list-backups          # 只读列出完整备份
+  $NODE tools\install-to-profile.mjs --restore-latest --dry-run
+  $NODE tools\install-to-profile.mjs --restore-latest        # 恢复最新完整备份
+  ```
+- **崩溃弹窗的「禁用第三方插件」按钮**也会重写 profile 的 `dsh.profile.bundles`（历史上从 10 个削到 2 个）；`--restore`/`--restore-latest` 会连 `package.json` 一起恢复，不要只手工删 aikanban 条目。
+- **本次验证（2026-11-11）**：在 `%TEMP%` 的隔离 home + 最小 profile 上实测 install → 备份（含 `ROLLBACK.cmd`/脚本副本）→ `--list-backups` → `--restore-latest --dry-run` → 用备份内脚本实际 restore；patch 从 `[]` 变为 insert 后恢复回 `[]`，两个安装点都被移除；真实 `desktop` profile 未被写入（`cordis.patch.yml` 哈希保持不变）。`--dry-run --preflight` 在 p6c 上通过（verify 11/11 + probe 5/5）。**真实安装/重启未做**，仍需用户执行。

@@ -3920,6 +3920,8 @@ DRYRUN_EXIT=0
 
 ### 16.8 安装 / 回滚 / 用户侧恢复须知
 
+> **2026-11-11 更新**：安装脚本现在默认先跑 preflight，且每个备份自带 `ROLLBACK.cmd` 与脚本副本；新增 `--restore-latest` / `--list-backups` 与 `tools/rollback-aikanban.cmd`。见 §19；下文是 P6c 的历史操作步骤，仍有效但以 §19 的安全网为准。
+
 **安装（需要用户执行；本档未执行）**：
 
 必须从**「已构建、且就是要安装的那一版」的 checkout** 运行 —— 脚本会把该 checkout 的 `packages/plugin` 载荷复制进 profile；主仓库在同步盘上不装依赖、本档也没在其中构建。本档的盘外沙盒 `C:\Users\InformationDS\aikanban-p6c` 就是 @ `b800767` 且已 build 的 checkout：
@@ -4099,4 +4101,52 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 2. **看板读取中 resetSelection/切项目后迟到响应仍可能 applySnapshot**（Q1=B 泄漏）：`load()` 在 await 后增加单调 `readSeq` 与 `state.selectedProjectId === requested` 双重守卫；陈旧响应不再把面板置 `ready`。
 3. **测试**：新增 3 个 controller 用例（关闭后 task/project 活动不重开、resetSelection 后迟到 board read 丢弃）；plugin-client **146 → 149**，总数 **357 → 360**（core 66 / plugin-client 149 / plugin 145）。修复后 build/typecheck/全量测试/`verify-host-import` 11/11/`probe-host` 5/5/`verify-rpc-roundtrip` 17/17 全绿。
 4. **未变项**：§18.5 的安装/真实 GUI/roundtrip 工具/草稿持久化/AT 未执行等限制继续成立。
+
+## 19. 安装安全网：preflight + 自包含备份 + 一键回退（2026-11-11，提交 `3acf124`）
+
+> 目标：把「安装后真实页面 boot 失败」的恢复从“找 agent / 手工拼回 profile”降为“关掉应用，双击一个 `ROLLBACK.cmd`”。它不改变插件代码；只改 `tools/install-to-profile.mjs` 并新增 `tools/rollback-aikanban.cmd`。
+
+### 19.1 preflight（默认开启）
+
+真实写入 profile 前先运行：
+
+- `tools/verify-host-import.mjs`（11/11）
+- `tools/probe-host.mjs --timeout 180`（5/5：组合树、宿主激活、client row 发布/服务、`/aikanban` 注册、数据层就绪）
+
+任一失败 → 退出码 10，**profile 一个字节都不写**。`--skip-preflight` 只用于明确的紧急安装；`--dry-run` 默认不跑 preflight，可加 `--preflight` 强制。2026-11-11 在 p6c 上用 `--dry-run --preflight` 实测通过。
+
+**边界**：preflight 是隔离宿主（CLI 运行时），不是真实 Electron 页面；2026-10-22 的崩溃是真实页面 boot 审计，preflight 不能替代真实启动验证，因此 19.2 的回退仍是必需的安全网。
+
+### 19.2 自包含备份与一键回退
+
+每次安装的备份目录（`%USERPROFILE%\aikanban-profile-backup-<yyyyMMdd>[-n]`）除四个 profile 清单与 `install-record.json` 外，还包含：
+
+- `install-to-profile.mjs`：当次脚本的副本（restore 模式只依赖 Node，不需要 Python/依赖/网络）；
+- `ROLLBACK.cmd`：双击即恢复本备份；它会先检查 `DeepSeek Harness.exe` 是否仍在运行，运行中则拒绝并提示先关闭。
+
+恢复动作：把备份中的四个清单复制回 profile → 删除 `<profile>\node_modules\@aikanban\dsh-aikanban` 与 `profiles\node_modules\@aikanban\dsh-aikanban`（仅删 junction 链接，不碰目标）→ 清理空目录。它同时修复「崩溃弹窗的禁用按钮把 `dsh.profile.bundles` 从 10 个削到 2 个」这一类破坏，因为 `package.json` 也从备份恢复。
+
+不记路径的回退入口：
+
+```powershell
+node tools/install-to-profile.mjs --list-backups
+node tools/install-to-profile.mjs --restore-latest --dry-run
+node tools/install-to-profile.mjs --restore-latest
+```
+
+或直接双击 `tools/rollback-aikanban.cmd`（关闭应用后运行）。
+
+### 19.3 验证（2026-11-11）
+
+- 在 `%TEMP%` 的隔离 home + 最小 profile（`cordis.patch.yml=[]`）上实际 install → 备份 → `--list-backups` → `--restore-latest --dry-run` → **用备份内脚本实际 restore**：patch 从 `[]` 变为 insert 后恢复回 `[]`，两个安装点都被移除；备份含 `ROLLBACK.cmd` 与脚本副本。
+- `--dry-run --preflight` 在 p6c 上通过（verify 11/11 + probe 5/5）。
+- 真实 `desktop` profile **未被写入**；`cordis.patch.yml` 哈希保持 `7B3729CC…` 不变。
+- 未做：真实安装/重启/真实崩溃演练；`ROLLBACK.cmd` 的“应用运行中拒绝”分支未在真实运行进程上实际触发（逻辑与 `tasklist` 检查已就位）。
+
+### 19.4 使用顺序（安装后）
+
+1. `tools/install-to-profile.mjs`（默认 preflight）→ 关闭并重启应用。
+2. 若应用起不来：关闭应用 → 双击本次安装输出里打印的 `rollback directory\ROLLBACK.cmd`（或 `tools\rollback-aikanban.cmd`）→ 重启应用。
+3. 若应用能起：按 §15.4 / `tools/browser-check.js` 做页面自检；仍然不得把安装成功当成 AT 通过。
+
 

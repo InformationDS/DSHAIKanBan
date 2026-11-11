@@ -222,7 +222,7 @@ git -C $BOX checkout --detach <commit-or-branch>
 & $NODE $PNPM install --frozen-lockfile
 & $NODE $PNPM run typecheck              # 期望 EXIT 0
 & $NODE $PNPM run build                  # 期望 EXIT 0；产出 packages/plugin/lib/index.js 与 lib/client.js
-& $NODE $PNPM -r --if-present run test   # 期望 357 通过（core 66 / plugin-client 146 / plugin 145）
+& $NODE $PNPM -r --if-present run test   # 期望 360 通过（core 66 / plugin-client 149 / plugin 145）
 & $NODE tools\verify-host-import.mjs     # 期望 11/11 PASS
 & $NODE tools\probe-host.mjs             # 期望 PROBE OK 5/5（约 40–120 秒）
 ```
@@ -233,7 +233,7 @@ git -C $BOX checkout --detach <commit-or-branch>
 
 **更新（2026-11-11，桌面 DSH 0.2.2-rc.1，盘外沙盒 `C:\Users\InformationDS\aikanban-p6c` @ `4a66d28`）**：用例分布为 `packages/core` **66**（11 个测试文件）、`packages/plugin` **107**、`packages/plugin-client` **84**，合计 **257**；`probe-host` 为 **5/5**（第 5 项 `channel=/aikanban registered=true path=compat dataLayerReady=true`）；`verify-host-import` 11/11、`verify-rpc-roundtrip` 17/17、`check_docs` PASS（59 md），`typecheck`/`build` EXIT 0。主仓库在同步盘上仍不装依赖，以上全部在盘外沙盒复跑。
 
-**更新（2026-11-11 切片 B 后 @ `e2483f2`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **357 passed**（`packages/core` **66** / `packages/plugin-client` **146** / `packages/plugin` **145**）；`verify-host-import` 11/11、`probe-host` 5/5（`path=compat dataLayerReady=true`）、`verify-rpc-roundtrip` 17/17。**注意**：该 roundtrip 工具仍是 A 期硬编码（5 端点 / 8 码），切片 B 的 `task/create`、`task/fields.update`、`activity/read` 三端点与 `invalid-input` 尚未纳入真实 HTTP 工具覆盖；真实安装/GUI 点击也未做。
+**更新（2026-11-11 切片 B 复核修复后 @ `e93ab9f`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **360 passed**（`packages/core` **66** / `packages/plugin-client` **149** / `packages/plugin` **145**）；`verify-host-import` 11/11、`probe-host` 5/5（`path=compat dataLayerReady=true`）、`verify-rpc-roundtrip` 17/17。**注意**：该 roundtrip 工具仍是 A 期硬编码（5 端点 / 8 码），切片 B 的 `task/create`、`task/fields.update`、`activity/read` 三端点与 `invalid-input` 尚未纳入真实 HTTP 工具覆盖；真实安装/GUI 点击也未做。
 
 ### 10.4 仍然禁止 / 仍然需要人
 

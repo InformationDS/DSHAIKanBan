@@ -1,6 +1,6 @@
 # S1 接线设计与实施规格（切片 A / 切片 B）
 
-> **本文是实施前置规格，不是实现记录，也不是验收记录。** 切片 A **已于 2026-10-22 实施**（含安装到真实 `desktop` profile；2026-11-11 在桌面 DSH 0.2.2-rc.1 真实 GUI 中复核读路径，见[实施记录](s1-wiring-implementation.md) §17）；本页仍只把「已有代码 → 可运行的 S1 接线」的接口、映射、改动面、测试与证据判据写到可直接实施的程度。**2026-11-11 状态**：切片 A 已实现/已安装，真实 GUI 看板读路径成立；**切片 B 已实现**（2026-11-11，提交 `d26dd34`、`e2483f2`；代码与门禁层，357 用例全绿；**未安装/未真实 GUI 验证**）；**AT 全部待执行**——A/B 的完成判据、门禁与 GUI 读路径都不等于 F01/F02 验收。决策依据是 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（**已定**：设计经用户确认、工程证据待取证）；用户已拍板 **Q1＝B（当前项目每次显式选择、不持久化）**、**Q2＝A（扩展 wire/BoardController 契约，不在适配层弱化 F02-R04/SAVE-05）**。本文回应独立评审指出的接线类前置条件（B1/B2/H1/H2）；评审原文不在仓库，本文只按任务书转述的范围落规格，不替评审定义编号含义。
+> **本文是实施前置规格，不是实现记录，也不是验收记录。** 切片 A **已于 2026-10-22 实施**（含安装到真实 `desktop` profile；2026-11-11 在桌面 DSH 0.2.2-rc.1 真实 GUI 中复核读路径，见[实施记录](s1-wiring-implementation.md) §17）；本页仍只把「已有代码 → 可运行的 S1 接线」的接口、映射、改动面、测试与证据判据写到可直接实施的程度。**2026-11-11 状态**：切片 A 已实现/已安装，真实 GUI 看板读路径成立；**切片 B 已实现**（2026-11-11，提交 `d26dd34`、`e2483f2`、`e93ab9f`；代码与门禁层，360 用例全绿；**未安装/未真实 GUI 验证**）；**AT 全部待执行**——A/B 的完成判据、门禁与 GUI 读路径都不等于 F01/F02 验收。决策依据是 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（**已定**：设计经用户确认、工程证据待取证）；用户已拍板 **Q1＝B（当前项目每次显式选择、不持久化）**、**Q2＝A（扩展 wire/BoardController 契约，不在适配层弱化 F02-R04/SAVE-05）**。本文回应独立评审指出的接线类前置条件（B1/B2/H1/H2）；评审原文不在仓库，本文只按任务书转述的范围落规格，不替评审定义编号含义。
 >
 > **证据边界**：所有代码引用均来自当前工作区（`main`，HEAD `dce8385` 起点）的真实文件，行号已逐条核对；未能用仓库内材料证实的点标「**未确认**」。**AT 全部仍是「待执行」**：本文与未来切片 A/B 的单元/集成测试都不能当作 F01/F02 的验收证据；验收按[验收执行规则](acceptance-execution.md)与各功能 `verification.md` 执行。
 
@@ -12,10 +12,10 @@
 | 状态 | 实施规格（切片 A 已实施/已安装；切片 B 已实现——代码/门禁，未安装/未真实 GUI；本文仍是规格） |
 | 决策依据 | [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（已定）；Q1=B、Q2=A、Q3=允许 test-only 故障注入（[验收执行规则](acceptance-execution.md)第 3 节） |
 | 影响功能 | F01（主）、F02（主）；边界：F03、F04 |
-| 当前缺口 | 切片 A 已接通（2026-10-22）：core 由 host 半打开、`/aikanban` 已注册、浏览器半经真实通道读写；切片 B（`task/create`、`task/fields.update`、`activity/read` 与新建/编辑/活动 UI）代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`，357 用例）；当前缺口＝B 未安装到真实 profile、未在真实 GUI 点击新流程，真实 GUI 的写路径（状态/排序/撤销）与 AT 未验证 |
+| 当前缺口 | 切片 A 已接通（2026-10-22）：core 由 host 半打开、`/aikanban` 已注册、浏览器半经真实通道读写；切片 B（`task/create`、`task/fields.update`、`activity/read` 与新建/编辑/活动 UI）代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`+`e93ab9f`，360 用例）；当前缺口＝B 未安装到真实 profile、未在真实 GUI 点击新流程，真实 GUI 的写路径（状态/排序/撤销）与 AT 未验证 |
 | 切片 A 完成判据 | 见 §7；集成测试/探针（2026-10-22）+ 真实 GUI 读路径复核（2026-11-11）；**不等于 F01/F02 验收通过** |
 
-**2026-11-11 状态说明**：切片 A 的实施记录与安装/回滚剧本见[实施记录](s1-wiring-implementation.md)（§14—§17）；插件已装进真实 `desktop` profile（2026-10-22），桌面 DSH 0.2.2-rc.1 的真实 GUI 中看板主面板已渲染、数据通道为 `connection rpc /aikanban`、项目与 5 列快照来自成功的读路径。§8 第 1、2、9 条中「真实 profile/真实 GUI 渲染/页面内读取」部分已复核（页面内读路径成功；原始 HTTP 状态与信封未在页面抓包），**写端点、非空任务、键盘交互仍未验证**；§8 其余条目不受影响。切片 B 的代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`，357 用例），但未安装/未真实 GUI；AT 全部待执行。详见实施记录 §17—§18。
+**2026-11-11 状态说明**：切片 A 的实施记录与安装/回滚剧本见[实施记录](s1-wiring-implementation.md)（§14—§17）；插件已装进真实 `desktop` profile（2026-10-22），桌面 DSH 0.2.2-rc.1 的真实 GUI 中看板主面板已渲染、数据通道为 `connection rpc /aikanban`、项目与 5 列快照来自成功的读路径。§8 第 1、2、9 条中「真实 profile/真实 GUI 渲染/页面内读取」部分已复核（页面内读路径成功；原始 HTTP 状态与信封未在页面抓包），**写端点、非空任务、键盘交互仍未验证**；§8 其余条目不受影响。切片 B 的代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`+`e93ab9f`，360 用例），但未安装/未真实 GUI；AT 全部待执行。详见实施记录 §17—§18。
 
 ## 1. 目标与切片
 
@@ -79,7 +79,7 @@ B 的扩展清单（端点 payload、`HostBoardPort` 方法、`BoardSource` 方�
    - 说明：`看板不会记住上次的项目；每次进入都需要显式选择。`
    - 未接通/读取失败仍按 REC-05 显示失败与重试（`source.ts:178-200`）。
    - 说明句标点只用中文分号「；」；P5a 已按此原文落地为 `controller.ts` 的 `SELECTION_REQUIRED_TITLE` / `SELECTION_REQUIRED_DESCRIPTION` 常量；A 起该状态的主体是选择器（列表为空时显示「没有可用项目」，标题/说明仍可作选择器区文案）。
-5. **选择后的读取**：`readBoard(projectId)`；UI 上切换项目 = **回到选择器**（清选择 + 重拉列表，§2.6），内部以新 `projectId` 重新读取；旧项目的迟到响应继续由 controller 按 `projectId` 丢弃（`controller.ts:578-593`），该保护保留。
+5. **选择后的读取**：`readBoard(projectId)`；UI 上切换项目 = **回到选择器**（清选择 + 重拉列表，§2.6），内部以新 `projectId` 重新读取；旧项目的迟到响应由 controller 丢弃——`load()` 在 await 之后校验当前 `selectedProjectId` 与单调 read 代号（2026-11-11 复核后加固；仅比对本次请求 `projectId` 不足以防“读取中 resetSelection”），该保护保留。
 6. **`project/list` 自身不写任何持久状态**；也不调用 core（core 没有“所有 workspace”的权威列表，只有已登记项目）。列表项至少含 `projectId`、`title`、`path`；同名项目用 `path` 辨识（F01 §3、ADR-003 W2）；**空列表是合法候选集（UI 显示「没有可用项目」，不是错误），列表项不得含「是否当前/默认/最近」字段**（§3.6）。
 
 ### 2.3 `projectId` 缺失语义与 `wire.ts` 现有注释的收敛
@@ -506,7 +506,7 @@ core 映射：
 
 ### 9.3 浏览器侧
 
-`BoardSource` 增三个方法（`createTask`/`updateTaskFields`/`loadActivity`；`listProjects()` 已随 A 加入）；`channel-source` 对应三个新端点；`controller` 增：`createTask()`、`updateTaskFields()`、`loadActivity()`（选择状态机 `selection-required` → 选择 → `ready` 已随 A 实现）；`board.tsx` 增：新建任务表单（`keptInput` 就地回显）、详情内联编辑（失败留草稿，暂不接字段草稿槽也可，按 F01-R05 最低集）、活动历史区（项目选择器已随 A 提供，B 只在选择后追加管理 UI）。**选择不持久化**（§2）。
+`BoardSource` 增三个方法（`createTask`/`updateTaskFields`/`loadActivity`；`listProjects()` 已随 A 加入）；`channel-source` 对应三个新端点；`controller` 增表单导向管理 API：`openCreateForm`/`submitCreateTask`、`openFieldEdit`/`saveFieldEdit`、`loadTaskActivity`/`loadProjectActivity`（底层分别调用 source 的 `createTask`/`updateTaskFields`/`loadActivity`；选择状态机 `selection-required` → 选择 → `ready` 已随 A 实现）；`board.tsx` 增：新建任务表单（`keptInput` 就地回显）、详情内联编辑（失败留草稿，暂不接字段草稿槽也可，按 F01-R05 最低集）、活动历史区（项目选择器已随 A 提供，B 只在选择后追加管理 UI）。**选择不持久化**（§2）。
 
 ### 9.4 B 的测试
 
@@ -516,7 +516,7 @@ core 映射：
 
 在 A-G1…G5 基础上：新增三个端点的集成/协议测试全绿；F01 的 AT-02/AT-107/AT-108 等**仍未执行**，等 `verification.md` 的档 1 证据；B 完成不等于 F01 验收通过。
 
-**2026-11-11 状态**：B 的三个端点（`task/create`、`task/fields.update`、`activity/read`）与新建/编辑/活动 UI 已实现（提交 `d26dd34`、`e2483f2`），集成/协议测试与门禁全绿（357 用例；build/typecheck `EXIT 0`）；**未安装到真实 profile、未在真实 GUI 点击新流程，AT 未执行**。因此只记「B 的代码/门禁已实现」，不记「B 完成」，更不等于 F01 验收通过。
+**2026-11-11 状态**：B 的三个端点（`task/create`、`task/fields.update`、`activity/read`）与新建/编辑/活动 UI 已实现（提交 `d26dd34`、`e2483f2`、`e93ab9f`），集成/协议测试与门禁全绿（360 用例；build/typecheck `EXIT 0`）；**未安装到真实 profile、未在真实 GUI 点击新流程，AT 未执行**。因此只记「B 的代码/门禁已实现」，不记「B 完成」，更不等于 F01 验收通过。
 
 ## 10. 参考
 

@@ -4042,7 +4042,7 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 5. **键盘交互 / DOM 级行为**：真实键盘与焦点行为未测（F19 属后续），面板交互仅组件/控制器级测试。
 6. **写端点经真实 HTTP 的取证**：`verify-rpc-roundtrip` 只覆盖 `project/list`、`board/read` 的 carrier 往返；`task/status.set`、`task/reorder`、`task/status.undo` 仍未在真实 carrier 上取证。
 
-## 18. P8：切片 B（契约 + UI）代码与门禁（2026-11-11，提交 `d26dd34`、`e2483f2`）
+## 18. P8：切片 B（契约 + UI）代码与门禁（2026-11-11，提交 `d26dd34`、`e2483f2`、`e93ab9f`）
 
 > 本档只登记**代码与门禁**事实：B 的三端点与 UI 已实现并通过门禁，但**未安装到真实 `desktop` profile、未重启 GUI、未在真实页面点击新流程**；AT 全部仍是「待执行」。§17.6 第 3 条「切片 B 未开始」已被本档取代。
 
@@ -4050,15 +4050,16 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 
 | 项 | 值 |
 | --- | --- |
-| HEAD | `e2483f2`（`feat(client): 切片 B UI——新建任务、字段编辑、活动历史`） |
+| HEAD | `e93ab9f`（`fix(client): 丢弃关闭活动区/重置选择后的迟到响应`） |
 | 契约提交 | `d26dd34`（`feat(host): 切片 B 契约层——task/create、task/fields.update、activity/read`） |
-| 构建/门禁沙盒 | `C:\Users\InformationDS\aikanban-p6c`（盘外、非同步盘）@ `e2483f2`；主仓库不装依赖、不构建 |
+| UI 提交 | `e2483f2`（`feat(client): 切片 B UI——新建任务、字段编辑、活动历史`） |
+| 构建/门禁沙盒 | `C:\Users\InformationDS\aikanban-p6c`（盘外、非同步盘）@ `e93ab9f`；主仓库不装依赖、不构建 |
 | 未做 | 未写入 `~/.dsh/profiles/desktop`、未重启桌面应用、未在真实 GUI 点击新建/编辑/活动流程 |
 
 ### 18.2 契约提交 `d26dd34`
 
 - **端点**：`BOARD_ENDPOINTS` 增 `taskCreate: 'task/create'`、`taskFieldsUpdate: 'task/fields.update'`、`activityRead: 'activity/read'`（`packages/plugin-client/src/wire.ts`）。
-- **wire**：三端点的 payload/value/失败 `details` 解析；字段基线编码 `fver1:<n>`（`FIELDS_VERSION_PREFIX`/`encodeFieldsVersion`/`decodeFieldsVersion`），缺失/畸形基线由 handler 前置拒绝；失败码新增 `invalid-input`（第 9 码，输入被拒但未写，携带 `keptInput`）。
+- **wire**：三端点的 payload/value/失败 `details` 解析；字段基线编码 `fver1:<n>`（`FIELDS_VERSION_PREFIX`/`encodeFieldsVersion`/`parseFieldsVersion`，与 `parseStatusVersion` 对称），缺失/畸形基线由 handler 前置拒绝；失败码新增 `invalid-input`（第 9 码，输入被拒但未写，携带 `keptInput`）。
 - **浏览器半**：`BoardSource` 增 `createTask`/`updateTaskFields`/`loadActivity`，无通道时返回可见 `unavailable`；`channel-source.ts` 对应三条 `rpc.call`。
 - **host 半**：`board-adapter.ts` 用真实 core 实现 `createTask`/`updateTaskFields`/`readActivity` 映射；写已落地但快照未刷新返回 `ok:true` + `snapshot:null`（REC-01），由浏览器半走「视图未刷新」语义；`board-channel.ts` 三个 handler 沿用「解析 → 校验 → port → 映射失败」四段式；`delayed-board-port.ts` 转发扩展方法。
 - **测试**：扩 `wire.test.ts`、`board-adapter.test.ts`、`channel-roundtrip.test.ts`；**257 → 313**（`packages/core` 66 / `plugin-client` 102 / `plugin` 145）。
@@ -4071,12 +4072,12 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 - **活动历史**：任务/项目两个活动区，按 scope 读取（`activity/read`），空列表显示「暂无重要活动」而不是错误。
 - **测试**：扩 `board.test.ts`、`controller.test.ts`、`model.test.ts`；**313 → 357**（`packages/core` 66 / `plugin-client` 146 / `plugin` 145）。
 
-### 18.4 门禁复跑（2026-11-11，沙盒 @ `e2483f2`）
+### 18.4 门禁复跑（2026-11-11，沙盒 @ `e93ab9f`）
 
 | # | 门禁 | 结果 |
 | --- | --- | --- |
 | 1 | build + typecheck | `EXIT 0` |
-| 2 | 全量测试 | **357 passed**（core 66 / plugin-client 146 / plugin 145） |
+| 2 | 全量测试 | **360 passed**（core 66 / plugin-client 149 / plugin 145；`e2483f2` 时点为 357） |
 | 3 | `tools/verify-host-import.mjs` | **11/11 PASS** |
 | 4 | `tools/probe-host.mjs` | **5/5**；`channel=/aikanban registered=true path=compat dataLayerReady=true` |
 | 5 | `tools/verify-rpc-roundtrip.mjs` | **17/17 passed**（仍是 A 期工具：硬编码 5 端点/8 码；三新端点没有真实 HTTP 工具覆盖） |
@@ -4088,5 +4089,14 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 2. **真实写路径未验证**：状态/排序/撤销与 B 的创建/编辑/活动都仍只有单测/集成/协议证据，没有真实页面操作证据。
 3. **roundtrip 工具未扩展**：`task/create`、`task/fields.update`、`activity/read` 未纳入真实 HTTP 工具，`invalid-input` 也未在 carrier 上断言。
 4. **草稿持久化限制**：字段编辑失败时的草稿保留是页面内 `BoardState`（未接 core 草稿槽），F01-R05 的「重启后草稿恢复」仍无法声称成立。
-5. **产品验收未执行**：106 条原始 AT 仍全部待执行、27 条补充 AT 无执行记录、无 `verification.md`；B 完成判据/357 用例都不等于 F01/F02 验收通过。
+5. **产品验收未执行**：106 条原始 AT 仍全部待执行、27 条补充 AT 无执行记录、无 `verification.md`；B 完成判据/360 用例都不等于 F01/F02 验收通过。
+
+### 18.6 复核后修复（2026-11-11，提交 `e93ab9f`）
+
+独立复核发现并修复两项迟到响应缺陷：
+
+1. **活动区关闭后迟到响应重新打开**：`applyActivityResult` 现在要求当前状态仍为 `loading` 且 `scopeId` 相同才落地；task 与 project 两个 scope 一致。
+2. **看板读取中 resetSelection/切项目后迟到响应仍可能 applySnapshot**（Q1=B 泄漏）：`load()` 在 await 后增加单调 `readSeq` 与 `state.selectedProjectId === requested` 双重守卫；陈旧响应不再把面板置 `ready`。
+3. **测试**：新增 3 个 controller 用例（关闭后 task/project 活动不重开、resetSelection 后迟到 board read 丢弃）；plugin-client **146 → 149**，总数 **357 → 360**（core 66 / plugin-client 149 / plugin 145）。修复后 build/typecheck/全量测试/`verify-host-import` 11/11/`probe-host` 5/5/`verify-rpc-roundtrip` 17/17 全绿。
+4. **未变项**：§18.5 的安装/真实 GUI/roundtrip 工具/草稿持久化/AT 未执行等限制继续成立。
 

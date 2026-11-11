@@ -510,6 +510,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   const source = options.source
   const mintOperationId = options.newOperationId ?? nextOperationId
   const listeners = new Set<() => void>()
+  /** Monotone read generation: an answer may only land for the newest read. */
+  let readSeq = 0
 
   /** Per-task kept reason input, so a cancelled or invalid dialog loses nothing. */
   const keptReasons = new Map<string, string>()
@@ -1062,6 +1064,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     })
     if (scope === 'task') {
       if (state.openTaskId !== scopeId) return
+      // A closed/replaced area must not be reopened by a late answer.
+      if (state.taskActivity.kind !== 'loading' || state.taskActivity.scopeId !== scopeId) return
       setState({
         taskActivity: result.ok
           ? { kind: 'ready', scopeId, entries: deriveActivityEntries(result.entries) }
@@ -1070,6 +1074,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       return
     }
     if (state.selectedProjectId !== scopeId) return
+    // Same rule for the project area: idle/ready/failed is not "waiting".
+    if (state.projectActivity.kind !== 'loading' || state.projectActivity.scopeId !== scopeId) return
     setState({
       projectActivity: result.ok
         ? { kind: 'ready', scopeId, entries: deriveActivityEntries(result.entries) }
@@ -1141,8 +1147,14 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       // must keep showing the last known board (REC-05), not blank the panel.
       const keptBefore = currentView()
       const capabilitiesBefore = currentCapabilities()
+      const seq = ++readSeq
       setState({ read: { kind: 'loading', projectId: requested }, busy: { kind: 'read' } })
       const result: BoardReadResult = await source.readBoard(requested)
+
+      // Late-response guard: a reset/switch while this read was in flight must
+      // drop the answer. Without this, a stale read could render a board with no
+      // selection (Q1=B) and hide the "switch project" button.
+      if (seq !== readSeq || state.selectedProjectId !== requested) return
 
       // Late-response guard: a response for another project is dropped, so a
       // switch cannot be shown under the wrong name (F01-R01).

@@ -1523,3 +1523,50 @@ describe('activity history (F01-R07: explicit, honest, scoped)', () => {
     expect(controller.getState().taskActivity).toEqual({ kind: 'idle' })
   })
 })
+
+describe('late responses never resurrect closed areas or a reset selection', () => {
+  it('does not reopen the task activity when it was closed before the late answer', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    let release: (result: ActivityResult) => void = () => undefined
+    source.loadActivity = () => new Promise<ActivityResult>((resolve) => { release = resolve })
+    controller.openDetail('t1')
+    const pending = controller.loadTaskActivity()
+
+    controller.closeTaskActivity()
+    release({ ok: true, entries: [activityEntry()] })
+    await pending
+
+    expect(controller.getState().taskActivity).toEqual({ kind: 'idle' })
+  })
+
+  it('does not reopen the project activity when it was closed before the late answer', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source)
+    let release: (result: ActivityResult) => void = () => undefined
+    source.loadActivity = () => new Promise<ActivityResult>((resolve) => { release = resolve })
+    const pending = controller.loadProjectActivity()
+
+    controller.closeProjectActivity()
+    release({ ok: true, entries: [activityEntry()] })
+    await pending
+
+    expect(controller.getState().projectActivity).toEqual({ kind: 'idle' })
+  })
+
+  it('drops a late board read after the selection was reset (Q1=B)', async () => {
+    const source = fakeSource()
+    let release: (result: BoardReadResult) => void = () => undefined
+    source.readBoard = () => new Promise<BoardReadResult>((resolve) => { release = resolve })
+    const controller = controllerFor(source)
+
+    const selecting = controller.selectProject('ws-1')
+    controller.resetSelection()
+    release({ ok: true, snapshot: snapshot() as never })
+    await selecting
+
+    const state = controller.getState()
+    expect(state.selectedProjectId).toBeNull()
+    expect(state.read.kind).toBe('selection-required')
+  })
+})

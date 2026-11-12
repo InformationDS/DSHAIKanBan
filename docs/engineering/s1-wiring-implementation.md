@@ -4158,7 +4158,7 @@ node tools/install-to-profile.mjs --restore-latest
 
 - 2026-11-11 21:52（本地）从 p6c 把切片 B 安装进真实 `desktop` profile；安装器生成 `aikanban-profile-backup-20261111` 与 `-2` 两个备份，随后 21:54 重启。新 host 激活 `mwc04qv0-1`（pid 34496），GUI 端口 5791。
 - 安装文件与 p6c 的 B 构建逐字节一致：`lib/index.js` SHA256 `28347E35…`、`lib/client.js` `E6142509…`、`package.json` `A13D5DD3…`；profile 仍保留 10 个 bundle，patch 含 aikanban insert，anchor junction 指向安装副本。
-- 安装/重启后**没有新的 `crash-*` 日志**；host 自 2026-11-11 21:54 起持续运行。真实 GUI 的 storage 里出现：任务「测试」（21:54:50，目标「测试」）、`未开始→进行中`（21:55:28）、`进行中→未开始`（21:55:32），task activity 3 条、project activity 1 条。这证明**创建、状态写入、活动记录**三条真实 GUI 写路径已跑通；字段编辑仍未发生（`fieldsRevision=0`）。
+- 安装/重启后**没有新的 `crash-*` 日志**；host 自 2026-11-11 21:54 起持续运行。真实 GUI 的 storage 里出现：任务「测试」（21:54:50，目标「测试」）、`未开始→进行中`（21:55:28）、`进行中→未开始`（21:55:32），task activity 3 条、project activity 1 条。这证明**创建、状态写入、活动记录**三条真实 GUI 写路径已跑通。2026-11-12 的后续 storage 进一步显示：任务「测试1」的标题/目标已编辑（`fieldsRevision=1`），并出现撤销、列内重排、阻塞原因活动；旧句「字段编辑仍未发生」已不成立。
 
 ### 20.2 GUI 反馈缺陷与修复（提交 `1502a15`）
 
@@ -4175,8 +4175,8 @@ node tools/install-to-profile.mjs --restore-latest
 
 ### 20.4 仍未验证
 
-- 字段编辑/保存/失败草稿的真实 GUI；撤销；排序（含空列/非空列）；阻塞原因弹窗；重启后任务与编辑持久化；真实键盘与拖拽的浏览器行为。
-- 当前正在运行的是**修复前**的 B 构建；`1502a15` 需要重新安装并重启后才生效。
+- 2026-11-12 的真实 GUI storage 活动已观察：字段编辑（标题/目标，`fieldsRevision=1`）、撤销、列内重排、阻塞原因（`task-blocked`）；仍缺：完成/取消/重新打开、保存失败与草稿跨重启、重启后编辑持久化、键盘交互，以及真实拖拽的浏览器行为（拖拽结果已由 `task-order-changed` 间接观察）。
+- 当前运行的 B 构建已包含 `1502a15` 的修复（client bundle 58231B）；若后续重新安装，仍需重启 DSH 使 client 半重新加载。
 - AT 106 + 27 条仍全部待执行；本节不构成验收。
 
 ### 20.5 手工负载会被 pnpm 剪除（2026-11-12 22:02 事故）

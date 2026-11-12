@@ -4175,7 +4175,7 @@ node tools/install-to-profile.mjs --restore-latest
 
 ### 20.4 仍未验证
 
-- 2026-11-12 的真实 GUI storage 活动已观察：字段编辑（标题/目标，`fieldsRevision=1`）、撤销、列内重排、阻塞原因（`task-blocked`）；完成/取消/重开已通过菜单路径观察；仍缺失败草稿跨重启、重启后编辑持久化、拖拽/键盘交互、故障注入，以及真实拖拽的浏览器行为（拖拽结果已由 `task-order-changed` 间接观察）。
+- 2026-11-12 的真实 GUI storage 活动已观察：字段编辑（标题/目标，`fieldsRevision=1`）、撤销、列内重排、阻塞原因（`task-blocked`）；完成/取消/重开已通过菜单路径观察；仍缺失败草稿跨重启、重启失败草稿、故障注入；真实拖拽与键盘已于 2026-11-13 补测（AT-03 拖拽分支与 AT-109）。
 - 当前运行的 B 构建已包含 `1502a15` 的修复（client bundle 58231B）；若后续重新安装，仍需重启 DSH 使 client 半重新加载。
 - F01/F02 已部分执行（见 `verification.md`）；其余原始/补充 AT 仍待执行；本节不构成验收。
 

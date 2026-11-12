@@ -1,6 +1,8 @@
-# F01/F02 真实 GUI 验收执行记录（2026-11-12）
+# F01/F02 真实 GUI 验收执行记录（2026-11-12/13）
 
 执行人：Lead。环境：DSH desktop 0.2.2-rc.1 / Electron 44.7.0 / node v24.21.0 / Windows；真实 `desktop` profile；GUI `http://127.0.0.1:6369`。测试项目：`pluginInstall`（`bee90684-17b6-42f1-95c1-bdf7b6f36b24`）。
+
+> 2026-11-13 重启后的补充见文末；前文“拖拽/键盘未执行”只描述 2026-11-12 当轮。
 
 ## 方法与限制
 
@@ -42,3 +44,13 @@
 - 真实键盘：同上，未执行。
 - 故障注入：当前没有已登记注入开关，未执行。
 - 项目概况/总览（F03）、联合 AT 依赖功能：未实现，不能执行。
+
+
+## 2026-11-13 重启后补测（更新）
+
+2026-11-13 用户重启 DSH 后，GUI 为 `http://127.0.0.1:10526`（activation `mwdm0bh2-1`，pid 4336），主窗口 handle 1902338；真实鼠标与键盘均已可用。前文第 8、36、40-43 行的“未执行”只描述 2026-11-12 当轮。
+
+- 重启持久化：t82 仍为 cancelled（statusRevision=6、activity 7 条），t11 仍为 todo（fieldsRevision=1、activity 2 条）；选中 `pluginInstall` 后看板显示 t11 在未开始、已取消折叠 1 项 t82。证据：`at01-post-restart-state.txt`。
+- AT-03 真实拖拽：t11 todo→doing 成功（`已保存：状态为「进行中」`）；doing→blocked 弹出原因对话框，空原因取消后仍 doing；再次拖入并填 `AT-03 拖拽验收阻塞原因`，确认后 blocked、原因可见（`已保存：状态为「已阻塞」`）。截图：`at03-blocked-dialog.png`。
+- AT-109 真实键盘：UIA `SetFocus` 到 t11 状态 ComboBox，真实 `SendKeys('{DOWN}')` → done（`已保存：状态为「已完成」`）；`SetFocus` 到“展开”+真实 `{ENTER}` 展开已取消列；`SetFocus` 到“查看详情”+真实 `{ENTER}` 打开详情，`SetFocus` 到“返回看板”+真实 `{ENTER}` 返回，t11 仍在已完成列、已取消列保持展开。截图：`at03-at109-after.png`；快照：`at03-at109-state.txt`。
+- 结论：AT-03 的真实拖拽分支已通过，但故障注入/后续修改竞争未执行，仍记 `部分执行`；AT-109 记 `通过（真实操作）`；AT-01 重启持久化已观察，但连续两次提交的真实幂等路径仍不成立，仍记 `部分执行`。

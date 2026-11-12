@@ -1,0 +1,41 @@
+AikanBan F01/F02 evidence snapshot
+Captured: 2026-11-13T01:00+11:00 (Australia/Sydney)
+Source: %USERPROFILE%/.dsh/storages/aikanban_core.json
+Plugin: @aikanban/dsh-aikanban@0.0.0, activation mwdm0bh2-1, pid 4336; GUI http://127.0.0.1:10526
+
+taskId: t82ce5472e6c70a3982d22609b99a4f8e
+  projectId: bee90684-17b6-42f1-95c1-bdf7b6f36b24
+  title: AT-01 收口-2026-11-12
+  goal: 验收：空项目创建、连点、无 AI 副作用
+  status: cancelled
+  blockedReason: None
+  order: 0
+  fieldsRevision: 0  statusRevision: 6  goalRevision: 0
+  pendingFieldDraft: None
+  createdAt: 2026-11-12T12:07:12.105Z  updatedAt: 2026-11-12T12:13:33.873Z
+  activity entries: 7
+    - 2026-11-12T12:07:12.105Z task-created {"goal": "验收：空项目创建、连点、无 AI 副作用", "projectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24", "status": "todo", "taskId": "t82ce5472e6c70a3982d22609b99a4f8e"}
+    - 2026-11-12T12:10:55.081Z task-status-changed {"from": "todo", "requestId": "op-mwdib2sl-3", "taskId": "t82ce5472e6c70a3982d22609b99a4f8e", "to": "doing"}
+    - 2026-11-12T12:12:02.212Z task-blocked {"from": "doing", "reason": "AT-03 验收阻塞原因", "reopened": "false", "requestId": "op-mwdicild-4", "taskId": "t82ce5472e6c70a3982d22609b99a4f8e", "to": "blocked"}
+    - 2026-11-12T12:12:32.891Z task-undone {"from": "blocked", "requestId": "op-mwdid69k-5", "taskId": "t82ce5472e6c70a3982d22609b99a4f8e", "to": "doing", "undoneUpdateId": "op-mwdicild-4"}
+    - 2026-11-12T12:12:53.424Z task-status-changed {"from": "doing", "requestId": "op-mwdidm3x-6", "taskId": "t82ce5472e6c70a3982d22609b99a4f8e", "to": "done"}
+    - 2026-11-12T12:13:13.959Z task-reopened {"from": "done", "requestId": "op-mwdie1yd-7", "taskId": "t82ce5472e6c70a3982d22609b99a4f8e", "to": "todo"}
+    - 2026-11-12T12:13:33.873Z task-status-changed {"from": "todo", "requestId": "op-mwdiehbi-8", "taskId": "t82ce5472e6c70a3982d22609b99a4f8e", "to": "cancelled"}
+
+taskId: t11e8f75da2b33f6c11e6b8c6dd77ef13
+  projectId: bee90684-17b6-42f1-95c1-bdf7b6f36b24
+  title: AT-01 收口-2026-11-12
+  goal: AT-01 补充任务（同标题）
+  status: done
+  blockedReason: None
+  order: 1
+  fieldsRevision: 1  statusRevision: 3  goalRevision: 1
+  pendingFieldDraft: None
+  createdAt: 2026-11-12T12:10:22.310Z  updatedAt: 2026-11-12T13:59:52.827Z
+  activity entries: 5
+    - 2026-11-12T12:10:22.310Z task-created {"goal": "", "projectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24", "status": "todo", "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13"}
+    - 2026-11-12T12:19:23.394Z task-goal-changed {"from": "", "requestId": "op-mwdilkc3-9", "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13", "to": "AT-01 补充任务（同标题）"}
+    - 2026-11-12T13:58:37.964Z task-status-changed {"from": "todo", "requestId": "op-mwdm5ll5-1", "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13", "to": "doing"}
+    - 2026-11-12T13:59:27.991Z task-blocked {"from": "doing", "reason": "AT-03 拖拽验收阻塞原因", "reopened": "false", "requestId": "op-mwdm6o6t-2", "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13", "to": "blocked"}
+    - 2026-11-12T13:59:52.827Z task-unblocked {"from": "blocked", "previousReason": "AT-03 拖拽验收阻塞原因", "requestId": "op-mwdm77cp-3", "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13", "to": "done"}
+

@@ -20,17 +20,30 @@
  *   2. `board/read`  — a positive roundtrip; the snapshot comes from
  *      `@aikanban/core` behind the real adapter (the adapter registers the
  *      project with core as part of the same request).
- *   3. The fence negatives: no cookie → 401, bad `Origin` → 403, missing
+ *   3. `task/create` — a positive roundtrip with a unique `requestId`; the value
+ *      must carry the created task (id, `fver1:`/`ver1:` baselines) and a
+ *      refreshed snapshot containing it.
+ *   4. `task/fields.update` — a positive roundtrip that decodes the baselines
+ *      returned by step 3, saves a new title, and must report `saved`, the new
+ *      `fieldsRevision`, and the refreshed snapshot.
+ *   5. `activity/read` — a positive roundtrip for the task created in step 3;
+ *      entries are newest-first and carry `task-created` + `task-title-changed`
+ *      with string-only `details`.
+ *   6. The fence negatives: no cookie → 401, bad `Origin` → 403, missing
  *      `content-type: application/json` → 415, non-POST method / missing
  *      endpoint segment → 404. A post-fence control request proves the cookie
  *      is still valid after the negative batch, so those statuses are caused by
  *      the deviation and not by a broken session.
- *   4. Two supplementary contract negatives, clearly separated from the fence:
- *      an endpoint name outside the five-endpoint contract answers
- *      HTTP 200 + `{ok:false,error:{code:'unknown-endpoint'}}`, and an
- *      unregistered `projectId` answers HTTP 200 +
- *      `{ok:false,error:{code:'unknown-project'}}` — the handler returns
- *      failures instead of throwing (an exception would be HTTP 500).
+ *   7. Supplementary contract negatives, clearly separated from the fence: an
+ *      endpoint name outside the eight-endpoint contract answers HTTP 200 +
+ *      `{ok:false,error:{code:'unknown-endpoint'}}`; an unregistered `projectId`
+ *      answers HTTP 200 + `{ok:false,error:{code:'unknown-project'}}`; a
+ *      `task/create` with a blank title answers HTTP 200 +
+ *      `{ok:false,error:{code:'invalid-input'}}` with `details.keptInput`; a
+ *      `task/fields.update` whose baseline is not `fver1:<n>` answers HTTP 200 +
+ *      `{ok:false,error:{code:'invalid-payload'}}` before the port is reached.
+ *      The handler returns failures instead of throwing (an exception would be
+ *      HTTP 500).
  *
  * ## What this tool does NOT prove (never claim otherwise)
  *
@@ -119,15 +132,20 @@ const OUT_DIR = join(WORKSPACE_ROOT, '.probe-out-scaffold', 'rpc-roundtrip')
 
 /** The one channel this repository registers (ADR-005). */
 const CHANNEL = '/aikanban'
-/** The five-endpoint contract, in the order the handler reports it. */
-const CONTRACT_ENDPOINTS = ['board/read', 'project/list', 'task/status.set', 'task/reorder', 'task/status.undo']
+/** The eight-endpoint contract (slice A's five + slice B's three). */
+const CONTRACT_ENDPOINTS = [
+  'board/read', 'project/list', 'task/status.set', 'task/reorder', 'task/status.undo',
+  'task/create', 'task/fields.update', 'activity/read',
+]
 /** The five board columns core produces for a fresh project. */
 const CONTRACT_COLUMN_STATUSES = ['todo', 'doing', 'blocked', 'done', 'cancelled']
-/** The eight browser failure codes (unchanged by this milestone). */
+/** The nine browser failure codes (slice B added `invalid-input`). */
 const CONTRACT_FAILURE_CODES = [
-  'unknown-endpoint', 'invalid-payload', 'invalid-reason', 'read-failed',
-  'not-found', 'save-failed', 'stale-baseline', 'unknown-result',
+  'invalid-reason', 'invalid-input', 'not-found', 'save-failed', 'stale-baseline',
+  'unknown-result', 'read-failed', 'unknown-project', 'unavailable',
 ]
+/** Host-only protocol codes: these never travel as browser failure codes. */
+const HOST_PROTOCOL_CODES = ['invalid-payload', 'unknown-endpoint']
 /** An id that cannot be in the isolated home's workspace fixture. */
 const UNREGISTERED_PROJECT_ID = '00000000-0000-4000-8000-000000000000'
 
@@ -139,11 +157,14 @@ POST /aikanban/<endpoint> requests to verify the RPC roundtrip and the fence.
 
 What it verifies:
   positive   project/list and board/read return HTTP 200 + a valid
-             {type:'server-response', rpcId, result} envelope
+             {type:'server-response', rpcId, result} envelope; task/create,
+             task/fields.update and activity/read roundtrip a real fixture
+             (create -> field save -> newest-first history)
   fence      no cookie -> 401, bad Origin -> 403, non-JSON content-type -> 415,
              non-POST / missing endpoint segment -> 404
-  contract   unknown endpoint -> 200 + error.code 'unknown-endpoint',
-             unregistered project -> 200 + error.code 'unknown-project'
+  contract   unknown endpoint -> 'unknown-endpoint', unregistered project ->
+             'unknown-project', blank-title create -> 'invalid-input',
+             malformed fver1 baseline -> 'invalid-payload'
 
 Options:
   --profile <name>   isolated probe profile name (default: probe)
@@ -509,6 +530,150 @@ function validateBoardSnapshot(value, projectRow) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Slice B value validation (task/create, task/fields.update, activity/read)
+ * ------------------------------------------------------------------ */
+
+const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value)
+const isNonNegativeInteger = (value) => typeof value === 'number' && Number.isInteger(value) && value >= 0
+/** Encode a fields revision the way the wire baseline parser requires. */
+const fieldsVersionOf = (revision) => `fver1:${String(revision)}`
+/** Encode a status revision the way the wire baseline parser requires. */
+const statusVersionOf = (revision) => `ver1:${String(revision)}`
+
+/**
+ * Validate a `task/create` success value against the request that produced it.
+ * `snapshot` must be non-null: a landed create that cannot re-read the board is
+ * a real failure for this tool's purpose, not a result to hide.
+ *
+ * @param {unknown} value - envelope `result.value`.
+ * @param {{ projectId: string, title: string, path: string }} projectRow - the registered project (from `project/list`).
+ * @param {string} expectedTitle - the title sent in the request.
+ * @returns {{ issues: string[], summary: string, taskId: string | null, fieldsRevision: number | null, statusRevision: number | null }} validation result.
+ */
+function validateCreateTaskValue(value, projectRow, expectedTitle) {
+  if (!isRecord(value)) {
+    return { issues: ['value is not an object'], summary: 'value is not an object', taskId: null, fieldsRevision: null, statusRevision: null }
+  }
+  const issues = []
+  if (value.outcome !== 'created' && value.outcome !== 'already-created') issues.push(`outcome=${JSON.stringify(value.outcome)}`)
+  const task = value.task
+  if (!isRecord(task)) {
+    issues.push('value.task is not an object')
+  } else {
+    if (typeof task.taskId !== 'string' || task.taskId.length === 0) issues.push('task.taskId is not a non-empty string')
+    if (task.projectId !== projectRow.projectId) issues.push(`task.projectId=${JSON.stringify(task.projectId)} (expected ${JSON.stringify(projectRow.projectId)})`)
+    if (task.title !== expectedTitle) issues.push(`task.title=${JSON.stringify(task.title)} (expected the request title)`)
+    if (typeof task.status !== 'string' || task.status.length === 0) issues.push('task.status is not a non-empty string')
+    if (typeof task.statusRevision !== 'number') issues.push('task.statusRevision is not a number')
+    if (!isNonNegativeInteger(task.fieldsRevision)) issues.push(`task.fieldsRevision=${JSON.stringify(task.fieldsRevision)}`)
+  }
+  const snapshot = value.snapshot
+  if (!isRecord(snapshot)) {
+    issues.push('value.snapshot is not an object (a landed create must not hide a re-read failure)')
+  } else if (!Array.isArray(snapshot.tasks)) {
+    issues.push('snapshot.tasks is not an array')
+  } else if (isRecord(task) && !snapshot.tasks.some((item) => item?.taskId === task.taskId)) {
+    issues.push(`snapshot.tasks does not contain the created task ${JSON.stringify(task.taskId)}`)
+  }
+  const taskId = isRecord(task) && typeof task.taskId === 'string' ? task.taskId : null
+  const fieldsRevision = isRecord(task) && isNonNegativeInteger(task.fieldsRevision) ? task.fieldsRevision : null
+  const statusRevision = isRecord(task) && isNonNegativeInteger(task.statusRevision) ? task.statusRevision : null
+  const summary = `outcome=${String(value.outcome)} taskId=${String(taskId)} title=${JSON.stringify(isRecord(task) ? task.title : null)} fieldsRevision=${String(fieldsRevision)} statusRevision=${String(statusRevision)} snapshotTasks=${Array.isArray(snapshot?.tasks) ? String(snapshot.tasks.length) : 'n/a'}`
+  return { issues, summary, taskId, fieldsRevision, statusRevision }
+}
+
+/**
+ * Validate a `task/fields.update` success value: the outcome vocabulary, the
+ * advanced `fieldsRevision`, and the refreshed snapshot carrying the new title.
+ *
+ * @param {unknown} value - envelope `result.value`.
+ * @param {string} expectedTaskId - the task created earlier in this run.
+ * @param {number} previousFieldsRevision - the revision returned by task/create.
+ * @param {string} expectedTitle - the title sent in the update request.
+ * @returns {{ issues: string[], summary: string, fieldsRevision: number | null }} validation result.
+ */
+function validateFieldsUpdateValue(value, expectedTaskId, previousFieldsRevision, expectedTitle) {
+  if (!isRecord(value)) return { issues: ['value is not an object'], summary: 'value is not an object', fieldsRevision: null }
+  const issues = []
+  if (!['saved', 'no-change', 'already-applied'].includes(value.outcome)) issues.push(`outcome=${JSON.stringify(value.outcome)}`)
+  const task = value.task
+  if (!isRecord(task)) {
+    issues.push('value.task is not an object')
+  } else {
+    if (task.taskId !== expectedTaskId) issues.push(`task.taskId=${JSON.stringify(task.taskId)}`)
+    if (value.outcome === 'saved' && task.title !== expectedTitle) issues.push(`task.title=${JSON.stringify(task.title)} (expected the updated title)`)
+    if (typeof task.status !== 'string' || task.status.length === 0) issues.push('task.status is not a non-empty string')
+    if (typeof task.statusRevision !== 'number') issues.push('task.statusRevision is not a number')
+  }
+  if (!Array.isArray(value.changed)) issues.push('value.changed is not an array')
+  else if (value.outcome === 'saved' && !value.changed.includes('title')) issues.push(`changed=[${value.changed.map(String).join(', ')}] does not include title`)
+  if (!isNonNegativeInteger(value.fieldsRevision)) issues.push(`value.fieldsRevision=${JSON.stringify(value.fieldsRevision)}`)
+  else if (value.outcome === 'saved' && value.fieldsRevision !== previousFieldsRevision + 1) {
+    issues.push(`fieldsRevision=${String(value.fieldsRevision)} (expected ${String(previousFieldsRevision + 1)})`)
+  }
+  const snapshot = value.snapshot
+  if (!isRecord(snapshot)) {
+    issues.push('value.snapshot is not an object (a landed save must not hide a re-read failure)')
+  } else if (!Array.isArray(snapshot.tasks)) {
+    issues.push('snapshot.tasks is not an array')
+  } else if (value.outcome === 'saved') {
+    const saved = snapshot.tasks.find((item) => item?.taskId === expectedTaskId)
+    if (saved === undefined) issues.push(`snapshot.tasks does not contain ${JSON.stringify(expectedTaskId)}`)
+    else if (saved.title !== expectedTitle) issues.push(`snapshot task title=${JSON.stringify(saved.title)}`)
+  }
+  const fieldsRevision = isNonNegativeInteger(value.fieldsRevision) ? value.fieldsRevision : null
+  const summary = `outcome=${String(value.outcome)} fieldsRevision=${String(fieldsRevision)} changed=[${Array.isArray(value.changed) ? value.changed.map(String).join(', ') : 'n/a'}] snapshotTasks=${Array.isArray(snapshot?.tasks) ? String(snapshot.tasks.length) : 'n/a'}`
+  return { issues, summary, fieldsRevision }
+}
+
+/**
+ * Validate an `activity/read` success value for the task created in this run:
+ * newest-first ordering, verbatim string-only `details`, and the two entries the
+ * create + rename must have produced.
+ *
+ * @param {unknown} value - envelope `result.value`.
+ * @param {string} expectedTaskId - the task the history is scoped to.
+ * @returns {{ issues: string[], summary: string, entryCount: number | null, codes: string[] }} validation result.
+ */
+function validateActivityValue(value, expectedTaskId) {
+  if (!isRecord(value)) return { issues: ['value is not an object'], summary: 'value is not an object', entryCount: null, codes: [] }
+  const entries = value.entries
+  if (!Array.isArray(entries)) return { issues: ['value.entries is not an array'], summary: 'value.entries is not an array', entryCount: null, codes: [] }
+  const issues = []
+  if (entries.length === 0) issues.push('entries is empty (this run created and renamed a task)')
+  for (const [index, entry] of entries.entries()) {
+    if (!isRecord(entry)) {
+      issues.push(`entries[${index}] is not an object`)
+      continue
+    }
+    if (typeof entry.activityId !== 'string' || entry.activityId.length === 0) issues.push(`entries[${index}].activityId is not a non-empty string`)
+    if (typeof entry.at !== 'string' || entry.at.length === 0) issues.push(`entries[${index}].at is not a non-empty string`)
+    else if (Number.isNaN(Date.parse(entry.at))) issues.push(`entries[${index}].at=${JSON.stringify(entry.at)} is not a parseable date`)
+    if (entry.scopeKind !== 'task') issues.push(`entries[${index}].scopeKind=${JSON.stringify(entry.scopeKind)}`)
+    if (entry.scopeId !== expectedTaskId) issues.push(`entries[${index}].scopeId=${JSON.stringify(entry.scopeId)}`)
+    if (typeof entry.code !== 'string' || entry.code.length === 0) issues.push(`entries[${index}].code is not a non-empty string`)
+    if (typeof entry.summary !== 'string') issues.push(`entries[${index}].summary is not a string`)
+    if (!isRecord(entry.details)) {
+      issues.push(`entries[${index}].details is not an object`)
+    } else {
+      for (const [key, detail] of Object.entries(entry.details)) {
+        if (typeof detail !== 'string') issues.push(`entries[${index}].details.${key} is not a string`)
+      }
+    }
+  }
+  const codes = entries.filter(isRecord).map((entry) => entry.code)
+  const titleChangedIndex = codes.indexOf('task-title-changed')
+  const createdIndex = codes.indexOf('task-created')
+  if (titleChangedIndex === -1) issues.push('no task-title-changed entry')
+  if (createdIndex === -1) issues.push('no task-created entry')
+  if (titleChangedIndex !== -1 && createdIndex !== -1 && titleChangedIndex > createdIndex) {
+    issues.push(`entries are not newest-first: task-title-changed index=${String(titleChangedIndex)} after task-created index=${String(createdIndex)}`)
+  }
+  const summary = `${String(entries.length)} entries newest-first codes=[${codes.map(String).join(', ')}]`
+  return { issues, summary, entryCount: entries.length, codes }
+}
+
+/* ------------------------------------------------------------------ *
  * HTTP plumbing
  * ------------------------------------------------------------------ */
 
@@ -628,6 +793,19 @@ function failureCodeOf(parsed) {
 }
 
 /**
+ * Extract the whole failure object (`{code, message, details}`) of an envelope.
+ *
+ * @param {Record<string, unknown> | null} parsed - parsed envelope.
+ * @returns {Record<string, unknown> | null} the error object or null.
+ */
+function failureOf(parsed) {
+  const result = resultOf(parsed)
+  if (result === null || result.ok !== false) return null
+  const error = result.error
+  return isRecord(error) ? error : null
+}
+
+/**
  * Parse the diagnostics-channel lines the observer preload wrote to stderr.
  *
  * @param {string} log - the host log.
@@ -702,6 +880,12 @@ function printReport(context) {
   const projectsOk = projectsChecks.length === 3 && projectsChecks.every((check) => check.ok)
   const boardChecks = checks.filter((check) => ['POS-4', 'POS-5', 'POS-6'].includes(check.id))
   const boardOk = boardChecks.length === 3 && boardChecks.every((check) => check.ok)
+  const createChecks = checks.filter((check) => ['POS-7', 'POS-8', 'POS-9'].includes(check.id))
+  const createOk = createChecks.length === 3 && createChecks.every((check) => check.ok)
+  const fieldsChecks = checks.filter((check) => ['POS-10', 'POS-11', 'POS-12'].includes(check.id))
+  const fieldsOk = fieldsChecks.length === 3 && fieldsChecks.every((check) => check.ok)
+  const activityChecks = checks.filter((check) => ['POS-13', 'POS-14', 'POS-15'].includes(check.id))
+  const activityOk = activityChecks.length === 3 && activityChecks.every((check) => check.ok)
   const fenceChecks = checks.filter((check) => check.group === 'fence')
   const fenceOk = fenceChecks.length > 0 && fenceChecks.every((check) => check.ok)
   const infrastructureOk = (context.bootError ?? null) === null
@@ -709,6 +893,9 @@ function printReport(context) {
   write('\n[verdict]')
   write(`  project/list over real HTTP : ${projectsOk ? 'RPC roundtrip observed (envelope + candidate set)' : 'NOT proven this run'}`)
   write(`  board/read over real HTTP   : ${boardOk ? 'RPC roundtrip observed (envelope + snapshot)' : 'NOT proven this run'}`)
+  write(`  task/create over real HTTP  : ${createOk ? 'RPC roundtrip observed (idempotent creation + refreshed snapshot)' : 'NOT proven this run'}`)
+  write(`  task/fields.update over HTTP: ${fieldsOk ? 'RPC roundtrip observed (decoded fver1/ver1 baselines + saved fields)' : 'NOT proven this run'}`)
+  write(`  activity/read over real HTTP: ${activityOk ? 'RPC roundtrip observed (newest-first entries + string-only details)' : 'NOT proven this run'}`)
   write(`  carrier fence               : ${fenceOk ? 'authentication + Host/Origin enforced (401/403/415/404 observed)' : 'one or more fence assertions FAILED'}`)
   write(`  registration path evidence  : ${evidence.registration?.observed === true ? `process-internal path=${String(evidence.registration.path)} (separate from the HTTP result)` : 'NOT OBSERVED this run'}`)
   write('  NOT proven here             : the browser half (a page\'s rpc.call after __DSH_BOOT__ assembly),')
@@ -741,8 +928,9 @@ async function main() {
   write(`  isolated home    ${home}`)
   write(`  probe profile    ${profileDir}`)
   write(`  port             ${port === '0' ? '0 (OS-assigned — never hardcode a GUI port)' : port}`)
-  write(`  channel          ${CHANNEL} (5 endpoints: ${CONTRACT_ENDPOINTS.join(', ')})`)
-  write(`  failure codes    ${String(CONTRACT_FAILURE_CODES.length)} (unchanged): ${CONTRACT_FAILURE_CODES.join(', ')}`)
+  write(`  channel          ${CHANNEL} (${String(CONTRACT_ENDPOINTS.length)} endpoints: ${CONTRACT_ENDPOINTS.join(', ')})`)
+  write(`  failure codes    ${String(CONTRACT_FAILURE_CODES.length)} browser codes (includes invalid-input): ${CONTRACT_FAILURE_CODES.join(', ')}`)
+  write(`  host protocol    ${String(HOST_PROTOCOL_CODES.length)} host-only codes: ${HOST_PROTOCOL_CODES.join(', ')}`)
   write('')
 
   if (!existsSync(join(PACKAGE_DIR, 'lib', 'index.js'))) {
@@ -792,7 +980,7 @@ async function main() {
   // primary repo workspace so the report names the expected project.
   const primaryRow = fixtureRows.find((row) => normalizePath(row.path) === normalizePath(PRIMARY_WORKSPACE_PATH)) ?? fixtureRows[0]
 
-  write('\n[1/6] booting the isolated host (own DSH_HOME, --port 0, --no-open)')
+  write('\n[1/9] booting the isolated host (own DSH_HOME, --port 0, --no-open)')
   writeFileSync(observerPath, `// Generated by tools/verify-rpc-roundtrip.mjs — subscribes to the AIKanBan diagnostics channels.
 const dc = require('node:diagnostics_channel')
 dc.subscribe('aikanban:activation', (payload) => {
@@ -860,7 +1048,7 @@ dc.subscribe('aikanban:board-channel', (payload) => {
     transcript.push({ label: 'host settled', urlLine: urlLine.replace(/token=[^&\s]+/, 'token=<redacted>') })
 
     // ---- authentication: launch token → signed cookie ----------------
-    write('\n[2/6] exchanging the launch token for the signed session cookie')
+    write('\n[2/9] exchanging the launch token for the signed session cookie')
     if (token === null) {
       record({
         id: 'AUTH-1', group: 'setup', name: 'launch URL carries a token and exchanges for a cookie',
@@ -898,7 +1086,7 @@ dc.subscribe('aikanban:board-channel', (payload) => {
     }
 
     // ---- positive: project/list --------------------------------------
-    write('\n[3/6] positive: POST /aikanban/project/list over real HTTP')
+    write('\n[3/9] positive: POST /aikanban/project/list over real HTTP')
     // The delayed-ready board port answers `unavailable` until the core domain
     // has opened; polling is the black-box equivalent of the browser's retry and
     // keeps the tool honest about readiness instead of assuming a boot window.
@@ -951,7 +1139,7 @@ dc.subscribe('aikanban:board-channel', (payload) => {
     })
 
     // ---- positive: board/read ----------------------------------------
-    write('\n[4/6] positive: POST /aikanban/board/read over real HTTP')
+    write('\n[4/9] positive: POST /aikanban/board/read over real HTTP')
     const listedProjects = listResult?.ok === true && Array.isArray(listValue?.projects) ? listValue.projects : []
     const selectedProject = listedProjects.find((item) => item?.projectId === primaryRow.id) ?? listedProjects[0]
     if (selectedProject === undefined) {
@@ -1012,8 +1200,219 @@ dc.subscribe('aikanban:board-channel', (payload) => {
       }
     }
 
+    // ---- positive: task/create ---------------------------------------
+    write('\n[5/9] positive: POST /aikanban/task/create over real HTTP')
+    // A unique requestId makes the retry idempotent: if the data layer is still
+    // opening, a replay returns `already-created` for the same task instead of
+    // creating a second one.
+    const createRequestId = `roundtrip-create-${randomUUID()}`
+    const createTitle = `RPC roundtrip 任务 ${createRequestId.slice(-8)}`
+    let createdTask = null
+    if (selectedProject === undefined) {
+      for (const id of ['POS-7', 'POS-8', 'POS-9']) {
+        record({
+          id, group: 'positive', name: 'task/create over real HTTP',
+          expected: 'HTTP 200 + valid envelope + created task', actual: 'not attempted: project/list returned no project to create a task in', ok: false,
+        })
+      }
+    } else {
+      const createDeadline = Date.now() + timeoutSec * 1000
+      let createAttempts = 0
+      let createResponse
+      for (;;) {
+        createAttempts += 1
+        createResponse = await postEnvelope({
+          label: `task/create attempt ${String(createAttempts)}`,
+          endpoint: 'task/create',
+          payload: {
+            projectId: selectedProject.projectId,
+            requestId: createRequestId,
+            title: createTitle,
+            goal: 'slice B contract verification',
+          },
+        })
+        const code = failureCodeOf(createResponse.parsed)
+        if (createResponse.status === 200 && (resultOf(createResponse.parsed)?.ok === true || code !== 'unavailable')) break
+        if (Date.now() > createDeadline) break
+        await sleep(500)
+      }
+      assertCheck({
+        id: 'POS-7', group: 'positive',
+        name: 'task/create answers HTTP 200 (after data-layer readiness, if needed)',
+        expected: 'HTTP 200',
+        actual: `HTTP ${String(createResponse.status)} after ${String(createAttempts)} attempt(s)`,
+        httpStatus: createResponse.status,
+        ok: createResponse.status === 200,
+      })
+      const createResult = resultOf(createResponse.parsed)
+      const createEnvelopeOk = createResponse.issues.length === 0
+        && createResult?.ok === true
+        && createResponse.parsed?.type === 'server-response'
+        && createResponse.parsed?.rpcId === createResponse.rpcId
+      assertCheck({
+        id: 'POS-8', group: 'positive',
+        name: 'task/create response is a valid RPC envelope (type/rpcId echo/result.ok)',
+        expected: "type='server-response', rpcId echoes the request, result.ok=true",
+        actual: createResponse.issues.length > 0
+          ? `envelope issues: ${createResponse.issues.join('; ')}`
+          : `type=${String(createResponse.parsed?.type)} rpcId-echo=${String(createResponse.parsed?.rpcId === createResponse.rpcId)} result.ok=${String(createResult?.ok)}`,
+        httpStatus: createResponse.status,
+        ok: createEnvelopeOk,
+      })
+      const createValidation = createResult?.ok === true
+        ? validateCreateTaskValue(createResult.value, selectedProject, createTitle)
+        : { issues: [`result.ok=${String(createResult?.ok)} so there is no created task to validate`], summary: 'no success value', taskId: null, fieldsRevision: null, statusRevision: null }
+      assertCheck({
+        id: 'POS-9', group: 'positive',
+        name: 'task/create value carries the created task and a refreshed snapshot',
+        expected: "outcome created|already-created; task.taskId/projectId/title; non-negative fieldsRevision; snapshot contains the task",
+        actual: createValidation.summary,
+        httpStatus: createResponse.status,
+        ok: createValidation.issues.length === 0,
+        actualWhenFail: `${createValidation.summary}; issues: ${createValidation.issues.join('; ')}`,
+      })
+      if (createValidation.taskId !== null && createValidation.fieldsRevision !== null && createValidation.statusRevision !== null) {
+        createdTask = {
+          taskId: createValidation.taskId,
+          title: createTitle,
+          fieldsRevision: createValidation.fieldsRevision,
+          statusRevision: createValidation.statusRevision,
+        }
+        evidence.taskCreate = {
+          taskId: createdTask.taskId,
+          outcome: createResult?.ok === true ? createResult.value.outcome : null,
+          fieldsRevision: createdTask.fieldsRevision,
+          statusRevision: createdTask.statusRevision,
+        }
+      }
+    }
+
+    // ---- positive: task/fields.update --------------------------------
+    write('\n[6/9] positive: POST /aikanban/task/fields.update over real HTTP')
+    const updatedTitle = createdTask === null ? null : `${String(createdTask.title)} · updated`
+    if (createdTask === null || updatedTitle === null) {
+      for (const id of ['POS-10', 'POS-11', 'POS-12']) {
+        record({
+          id, group: 'positive', name: 'task/fields.update over real HTTP',
+          expected: 'HTTP 200 + valid envelope + saved fields', actual: 'not attempted: task/create produced no task id and baselines', ok: false,
+        })
+      }
+    } else {
+      const updateResponse = await postEnvelope({
+        label: 'task/fields.update',
+        endpoint: 'task/fields.update',
+        payload: {
+          taskId: createdTask.taskId,
+          requestId: `roundtrip-fields-${randomUUID()}`,
+          expectedFieldsVersion: fieldsVersionOf(createdTask.fieldsRevision),
+          expectedStatusVersion: statusVersionOf(createdTask.statusRevision),
+          title: updatedTitle,
+        },
+      })
+      const updateResult = resultOf(updateResponse.parsed)
+      assertCheck({
+        id: 'POS-10', group: 'positive',
+        name: 'task/fields.update answers HTTP 200 with the decoded baselines',
+        expected: 'HTTP 200',
+        actual: `HTTP ${String(updateResponse.status)} for taskId=${String(createdTask.taskId)}`,
+        httpStatus: updateResponse.status,
+        ok: updateResponse.status === 200,
+      })
+      const updateEnvelopeOk = updateResponse.issues.length === 0
+        && updateResult?.ok === true
+        && updateResponse.parsed?.type === 'server-response'
+        && updateResponse.parsed?.rpcId === updateResponse.rpcId
+      assertCheck({
+        id: 'POS-11', group: 'positive',
+        name: 'task/fields.update response is a valid RPC envelope (type/rpcId echo/result.ok)',
+        expected: "type='server-response', rpcId echoes the request, result.ok=true",
+        actual: updateResponse.issues.length > 0
+          ? `envelope issues: ${updateResponse.issues.join('; ')}`
+          : `type=${String(updateResponse.parsed?.type)} rpcId-echo=${String(updateResponse.parsed?.rpcId === updateResponse.rpcId)} result.ok=${String(updateResult?.ok)}`,
+        httpStatus: updateResponse.status,
+        ok: updateEnvelopeOk,
+      })
+      const updateValidation = updateResult?.ok === true
+        ? validateFieldsUpdateValue(updateResult.value, createdTask.taskId, createdTask.fieldsRevision, updatedTitle)
+        : { issues: [`result.ok=${String(updateResult?.ok)} so there is no saved task to validate`], summary: 'no success value', fieldsRevision: null }
+      assertCheck({
+        id: 'POS-12', group: 'positive',
+        name: 'task/fields.update value reports saved fields and a refreshed snapshot',
+        expected: "outcome saved; changed includes title; fieldsRevision advanced by 1; snapshot task carries the new title",
+        actual: updateValidation.summary,
+        httpStatus: updateResponse.status,
+        ok: updateValidation.issues.length === 0,
+        actualWhenFail: `${updateValidation.summary}; issues: ${updateValidation.issues.join('; ')}`,
+      })
+      if (updateValidation.fieldsRevision !== null) {
+        createdTask = { ...createdTask, title: updatedTitle, fieldsRevision: updateValidation.fieldsRevision }
+      }
+      evidence.taskFieldsUpdate = {
+        taskId: createdTask.taskId,
+        outcome: updateResult?.ok === true ? updateResult.value.outcome : null,
+        fieldsRevision: createdTask.fieldsRevision,
+      }
+    }
+
+    // ---- positive: activity/read -------------------------------------
+    write('\n[7/9] positive: POST /aikanban/activity/read over real HTTP')
+    if (createdTask === null) {
+      for (const id of ['POS-13', 'POS-14', 'POS-15']) {
+        record({
+          id, group: 'positive', name: 'activity/read over real HTTP',
+          expected: 'HTTP 200 + valid envelope + newest-first entries', actual: 'not attempted: task/create produced no task id', ok: false,
+        })
+      }
+    } else {
+      const activityResponse = await postEnvelope({
+        label: 'activity/read',
+        endpoint: 'activity/read',
+        payload: { scopeKind: 'task', scopeId: createdTask.taskId, limit: 20 },
+      })
+      const activityResult = resultOf(activityResponse.parsed)
+      assertCheck({
+        id: 'POS-13', group: 'positive',
+        name: 'activity/read answers HTTP 200 for the task scope',
+        expected: 'HTTP 200',
+        actual: `HTTP ${String(activityResponse.status)} for scopeId=${String(createdTask.taskId)}`,
+        httpStatus: activityResponse.status,
+        ok: activityResponse.status === 200,
+      })
+      const activityEnvelopeOk = activityResponse.issues.length === 0
+        && activityResult?.ok === true
+        && activityResponse.parsed?.type === 'server-response'
+        && activityResponse.parsed?.rpcId === activityResponse.rpcId
+      assertCheck({
+        id: 'POS-14', group: 'positive',
+        name: 'activity/read response is a valid RPC envelope (type/rpcId echo/result.ok)',
+        expected: "type='server-response', rpcId echoes the request, result.ok=true",
+        actual: activityResponse.issues.length > 0
+          ? `envelope issues: ${activityResponse.issues.join('; ')}`
+          : `type=${String(activityResponse.parsed?.type)} rpcId-echo=${String(activityResponse.parsed?.rpcId === activityResponse.rpcId)} result.ok=${String(activityResult?.ok)}`,
+        httpStatus: activityResponse.status,
+        ok: activityEnvelopeOk,
+      })
+      const activityValidation = activityResult?.ok === true
+        ? validateActivityValue(activityResult.value, createdTask.taskId)
+        : { issues: [`result.ok=${String(activityResult?.ok)} so there are no activity entries to validate`], summary: 'no success value', entryCount: null, codes: [] }
+      assertCheck({
+        id: 'POS-15', group: 'positive',
+        name: 'activity/read value is newest-first task history with string-only details',
+        expected: "entries newest-first; task-title-changed before task-created; scopeKind='task'; details Record<string,string>",
+        actual: activityValidation.summary,
+        httpStatus: activityResponse.status,
+        ok: activityValidation.issues.length === 0,
+        actualWhenFail: `${activityValidation.summary}; issues: ${activityValidation.issues.join('; ')}`,
+      })
+      evidence.activity = {
+        scopeId: createdTask.taskId,
+        entryCount: activityValidation.entryCount,
+        codes: activityValidation.codes,
+      }
+    }
+
     // ---- fence negatives ---------------------------------------------
-    write('\n[5/6] negative: carrier fence and authentication')
+    write('\n[8/9] negative: carrier fence and authentication')
     // Each deviation changes exactly one request property. FEN-7 repeats a
     // healthy request afterwards so the 401/403/415/404 statuses cannot be
     // explained by a session that broke midway through the batch.
@@ -1096,11 +1495,11 @@ dc.subscribe('aikanban:board-channel', (payload) => {
     })
 
     // ---- contract negatives ------------------------------------------
-    write('\n[6/6] supplementary: contract-level failures over real HTTP (not fence evidence)')
+    write('\n[9/9] supplementary: contract-level failures over real HTTP (not fence evidence)')
     const unknownEndpoint = await postEnvelope({ label: 'contract: unknown endpoint', endpoint: 'does-not-exist', payload: {} })
     assertCheck({
       id: 'CON-1', group: 'contract',
-      name: 'endpoint outside the five-endpoint contract returns a failure envelope, not a throw',
+      name: 'endpoint outside the eight-endpoint contract returns a failure envelope, not a throw',
       expected: "HTTP 200 + result.ok=false + error.code='unknown-endpoint'",
       actual: `HTTP ${String(unknownEndpoint.status)} code=${JSON.stringify(failureCodeOf(unknownEndpoint.parsed))}`,
       httpStatus: unknownEndpoint.status,
@@ -1114,6 +1513,63 @@ dc.subscribe('aikanban:board-channel', (payload) => {
       actual: `HTTP ${String(unknownProject.status)} code=${JSON.stringify(failureCodeOf(unknownProject.parsed))}`,
       httpStatus: unknownProject.status,
       ok: unknownProject.status === 200 && failureCodeOf(unknownProject.parsed) === 'unknown-project',
+    })
+
+    // CON-3 exercises the slice-B `invalid-input` code through the real adapter:
+    // a blank title is a legal payload shape (core owns the title policy) and the
+    // handler must keep the input for the form instead of throwing.
+    let invalidInputStatus = null
+    let invalidInputOk = false
+    let invalidInputActual = 'not attempted: project/list returned no project to target'
+    if (selectedProject !== undefined) {
+      const blankTitle = await postEnvelope({
+        label: 'contract: blank-title create',
+        endpoint: 'task/create',
+        payload: { projectId: selectedProject.projectId, requestId: `roundtrip-invalid-${randomUUID()}`, title: '   ' },
+      })
+      const blankError = failureOf(blankTitle.parsed)
+      const keptTitle = isRecord(blankError?.details?.keptInput) ? blankError.details.keptInput.title : undefined
+      invalidInputStatus = blankTitle.status
+      invalidInputActual = `HTTP ${String(blankTitle.status)} code=${JSON.stringify(blankError?.code ?? null)} keptInput.title=${JSON.stringify(keptTitle)}`
+      invalidInputOk = blankTitle.status === 200 && blankError?.code === 'invalid-input' && keptTitle === '   '
+    }
+    assertCheck({
+      id: 'CON-3', group: 'contract',
+      name: 'task/create with a blank title returns invalid-input with the kept input',
+      expected: "HTTP 200 + result.ok=false + error.code='invalid-input' + details.keptInput.title='   '",
+      actual: invalidInputActual,
+      httpStatus: invalidInputStatus,
+      ok: invalidInputOk,
+    })
+
+    // CON-4 proves the host decodes the baseline notation itself: the wire says
+    // `fver1:<n>`, so a bare `3` must fail before the port can read it as 3.
+    let malformedStatus = null
+    let malformedOk = false
+    let malformedActual = 'not attempted: task/create produced no task id'
+    if (createdTask !== null) {
+      const malformed = await postEnvelope({
+        label: 'contract: malformed fver1 baseline',
+        endpoint: 'task/fields.update',
+        payload: {
+          taskId: createdTask.taskId,
+          requestId: `roundtrip-baseline-${randomUUID()}`,
+          expectedFieldsVersion: '3',
+          expectedStatusVersion: statusVersionOf(createdTask.statusRevision),
+          title: 'must not be written',
+        },
+      })
+      malformedStatus = malformed.status
+      malformedActual = `HTTP ${String(malformed.status)} code=${JSON.stringify(failureCodeOf(malformed.parsed))}`
+      malformedOk = malformed.status === 200 && failureCodeOf(malformed.parsed) === 'invalid-payload'
+    }
+    assertCheck({
+      id: 'CON-4', group: 'contract',
+      name: 'task/fields.update with a non-canonical fver1 baseline returns invalid-payload',
+      expected: "HTTP 200 + result.ok=false + error.code='invalid-payload' (handler decodes the baseline; the port never sees '3')",
+      actual: malformedActual,
+      httpStatus: malformedStatus,
+      ok: malformedOk,
     })
 
     // ---- process-internal registration evidence (separate from HTTP) --
@@ -1179,6 +1635,7 @@ dc.subscribe('aikanban:board-channel', (payload) => {
         channel: CHANNEL,
         endpoints: CONTRACT_ENDPOINTS,
         failureCodes: CONTRACT_FAILURE_CODES,
+        hostOnlyProtocolCodes: HOST_PROTOCOL_CODES,
       },
       workspaceFixture: fixtureRows,
       checks,

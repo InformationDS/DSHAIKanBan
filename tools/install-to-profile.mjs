@@ -172,6 +172,32 @@ function resolveDshHome(explicit) {
 }
 
 /**
+ * Resolve the stable payload directory when the profile declares AIKanBan as a
+ * pnpm `file:` dependency. In that managed mode `pnpm install` keeps the package
+ * in `node_modules`, but the dependency points at this directory, so an upgrade
+ * must refresh both the install point and this source of truth.
+ *
+ * @param {string} profileDir - the profile whose package.json is inspected.
+ * @returns {string | undefined} the absolute payload directory, when managed.
+ */
+function resolveManagedPayloadDir(profileDir) {
+  try {
+    const manifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))
+    const spec = manifest?.dependencies?.[PACKAGE_NAME]
+    if (typeof spec !== 'string' || !spec.startsWith('file:')) return undefined
+    let raw = spec.slice('file:'.length)
+    if (raw.startsWith('//')) raw = raw.slice(2)
+    if (/^\/[A-Za-z]:[\\/]/.test(raw)) raw = raw.slice(1)
+    if (raw.trim() === '') return undefined
+    return /^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith('\\\\')
+      ? resolve(raw)
+      : resolve(profileDir, raw)
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Reject profile names the host itself would reject.
  *
  * @param {string} name - the candidate profile name.
@@ -782,6 +808,13 @@ for (const entry of PAYLOAD) {
 }
 process.stdout.write('\n')
 
+const managedPayloadDir = resolveManagedPayloadDir(profileDir)
+const syncManagedPayload = managedPayloadDir !== undefined && resolve(managedPayloadDir) !== resolve(installDir)
+if (syncManagedPayload) {
+  process.stdout.write(`managed payload  ${managedPayloadDir}\n`)
+  process.stdout.write('  (profile package.json declares a file: dependency; this directory must be refreshed too)\n\n')
+}
+
 const python = locatePython(pythonOption)
 if (python === undefined) {
   process.stderr.write(
@@ -837,6 +870,9 @@ if (dryRun) {
   process.stdout.write('\ndry run plan (nothing was written)\n')
   process.stdout.write(`  1. copy ${MANIFESTS.join(', ')} → ${backupDir}\n`)
   process.stdout.write(`  2. copy ${PAYLOAD.join(', ')} → ${installDir}\n`)
+  if (syncManagedPayload) {
+    process.stdout.write(`     and refresh the managed payload → ${managedPayloadDir}\n`)
+  }
   process.stdout.write(`  3. append the insert entry to ${patchPath} (delta ${String(expectedDelta)}), then validate with PyYAML\n`)
   process.stdout.write(`  4. recreate the junction ${anchorPath} → ${installDir}\n`)
   process.stdout.write('\ndry run: nothing was written.\n')
@@ -882,6 +918,13 @@ try {
     cpSync(join(PACKAGE_DIR, entry), join(installDir, entry), { recursive: true })
   }
   process.stdout.write(`copied payload ${humanBytes(measure(installDir))} → ${installDir}\n`)
+  if (syncManagedPayload) {
+    mkdirSync(managedPayloadDir, { recursive: true })
+    for (const entry of PAYLOAD) {
+      cpSync(join(PACKAGE_DIR, entry), join(managedPayloadDir, entry), { recursive: true })
+    }
+    process.stdout.write(`synced managed payload → ${managedPayloadDir}\n`)
+  }
 } catch (error) {
   process.stderr.write(`install-to-profile: payload copy failed — ${error instanceof Error ? error.message : String(error)}\n`)
   process.exit(6)

@@ -40,6 +40,12 @@
  *    becomes `stale-baseline` with `current` and both expected/actual baselines.
  * 9. **Activity read** (`activity/read`, F01-R07): history is read-only, passed
  *    through with its `details` bag verbatim; an empty history is a success.
+ * 10. **Manual summary** (`summary/read`, `summary/save`, F03): a missing task is
+ *    `not-found`, an unregistered project is `unknown-project`, and an existing
+ *    scope with no official body is the legal `summary: null`; a stale baseline
+ *    is `stale-baseline` with both halves. The save never touches task fields,
+ *    never reuses the paired confirm's fixed-attribution check, and returns
+ *    `view: null` when the write landed but the re-read failed.
  *
  * ## What does not cross this boundary
  *
@@ -55,15 +61,22 @@
 import type {
   ActivityEntry,
   BoardReadResult,
+  DraftRecord,
   FieldsBaseline,
   KanbanCore,
   KeptTaskInput,
+  ManualSummaryOutcome,
+  ObjectContent,
   ProjectView,
   StatusSnapshot,
+  SummaryBaseline,
+  SummaryView,
+  SummaryVersionView,
   TaskStatus,
   TaskView,
   WorkScopeAvailability,
 } from '@aikanban/core'
+import { CoreError } from '@aikanban/core'
 import {
   encodeFieldsVersion,
   encodeStatusVersion,
@@ -76,6 +89,13 @@ import {
   type KeptTaskInputWire,
   type ProjectListItem,
   type ReadBoardPayload,
+  type SummaryBaselineWire,
+  type SummaryContentValue,
+  type SummaryContentWire,
+  type SummaryDraftValue,
+  type SummaryRecheckValue,
+  type SummaryVersionValue,
+  type SummaryViewValue,
 } from '@aikanban/plugin-client/wire'
 
 import type {
@@ -88,6 +108,12 @@ import type {
   HostReadOutcome,
   HostReorderInput,
   HostSetStatusInput,
+  HostSummaryReadInput,
+  HostSummaryReadOutcome,
+  HostSummarySaveInput,
+  HostSummarySaveOutcome,
+  HostSummaryDraftSaveInput,
+  HostSummaryDraftSaveOutcome,
   HostUndoInput,
   HostUpdateFieldsInput,
   HostUpdateFieldsOutcome,
@@ -197,6 +223,129 @@ function activityEntryOf(entry: ActivityEntry): ActivityEntryValue {
     code: entry.code,
     summary: entry.summary,
     details: { ...entry.details },
+  }
+}
+
+/** One SAVE-05 summary baseline, as the manual editor carries it. */
+function summaryBaselineValueOf(baseline: SummaryBaseline): SummaryBaselineWire {
+  return {
+    revision: baseline.revision,
+    applicabilityRevision: baseline.applicabilityRevision,
+    summaryVersionId: baseline.summaryVersionId,
+  }
+}
+
+/** A draft body: no amendments apply to a candidate, so states are as written. */
+function summaryDraftContentOf(content: ObjectContent): SummaryContentValue {
+  return {
+    sections: content.sections.map((section) => ({ id: section.id, title: section.title, body: section.body })),
+    conclusions: (content.conclusions ?? []).map((conclusion) => ({
+      id: conclusion.id,
+      text: conclusion.text,
+      statedState: conclusion.statedState,
+      state: conclusion.statedState,
+      amendedBy: null,
+    })),
+  }
+}
+
+/** The inverse of {@link summaryDraftContentOf}: a validated draft body for core. */
+function objectContentOf(content: SummaryContentWire): ObjectContent {
+  return {
+    sections: content.sections.map((section) => ({ id: section.id, title: section.title, body: section.body })),
+    conclusions: (content.conclusions ?? []).map((conclusion) => ({
+      id: conclusion.id,
+      text: conclusion.text,
+      statedState: conclusion.statedState,
+    })),
+  }
+}
+
+/** One official summary version, including the write's 修改结果 (F03-R02). */
+function summaryVersionValueOf(entry: SummaryVersionView): SummaryVersionValue {
+  const conclusions = entry.conclusions.map((conclusion) => ({
+    id: conclusion.id,
+    text: conclusion.text,
+    statedState: conclusion.statedState,
+    state: conclusion.state,
+    amendedBy: conclusion.amendedBy,
+  }))
+  return {
+    versionId: entry.versionId,
+    seq: entry.seq,
+    confirmedAt: entry.confirmedAt,
+    origin: entry.origin,
+    changeKind: entry.changeKind,
+    previousVersionId: entry.previousVersionId,
+    content: {
+      sections: entry.content.sections.map((section) => ({ id: section.id, title: section.title, body: section.body })),
+      conclusions,
+    },
+    conclusions,
+    readToken: entry.readToken,
+  }
+}
+
+/** The active manual draft, if any (F03-R07). */
+function summaryDraftValueOf(draft: DraftRecord): SummaryDraftValue {
+  return {
+    draftId: draft.draftId,
+    state: draft.state,
+    updateId: draft.updateId,
+    updatedAt: draft.updatedAt,
+    base: {
+      scopeRevision: draft.base.scopeRevision,
+      applicabilityRevision: draft.base.applicabilityRevision,
+    },
+    content: summaryDraftContentOf(draft.content),
+  }
+}
+
+/**
+ * One scope's manual summary state (F03).
+ *
+ * `needsRecheck` and `recheck` are read-only here: F03 does not create or clear
+ * recheck flags, it only surfaces the ones a substantive field edit produced.
+ */
+function summaryViewValueOf(view: SummaryView): SummaryViewValue {
+  const flag = view.scopeKind === 'task' ? view.recheck.taskSummary : view.recheck.projectOverview
+  const recheck: SummaryRecheckValue = {
+    pending: flag.pending,
+    reasons: flag.reasons.map((reason) => ({
+      code: reason.code,
+      detail: reason.detail,
+      updateId: reason.updateId,
+      draftId: reason.draftId,
+      at: reason.at,
+    })),
+    markedAt: flag.markedAt,
+  }
+  return {
+    scopeKind: view.scopeKind,
+    scopeId: view.scopeId,
+    revision: view.revision,
+    applicabilityRevision: view.applicabilityRevision,
+    baseline: summaryBaselineValueOf(view.baseline),
+    current: view.current === null ? null : summaryVersionValueOf(view.current),
+    history: view.history.map(summaryVersionValueOf),
+    draft: view.draft === null ? null : summaryDraftValueOf(view.draft),
+    needsRecheck: view.needsRecheck,
+    recheck,
+  }
+}
+
+/**
+ * The authoritative re-read after a summary save.
+ *
+ * `null` means the view could not be refreshed (or the scope vanished mid-save):
+ * the caller reports "已保存、视图未刷新" and retries the READ, never the write.
+ */
+function summaryViewAfterSave(core: KanbanCore, scope: { scopeKind: 'task' | 'project'; scopeId: string }): SummaryViewValue | null {
+  try {
+    const view = core.readSummary({ scopeKind: scope.scopeKind, scopeId: scope.scopeId })
+    return view === null ? null : summaryViewValueOf(view)
+  } catch {
+    return null
   }
 }
 
@@ -785,6 +934,279 @@ export function createHostBoardPort(deps: HostBoardAdapterDeps): HostBoardPort {
         return { ok: true, entries: entries.map(activityEntryOf) }
       } catch (error) {
         return { ok: false, code: 'read-failed', message: `读取活动历史失败：${messageOf(error)}` }
+      }
+    },
+
+    /**
+     * Read one task's manual summary or one project's manual overview (F03).
+     *
+     * A missing task is `not-found`; an unregistered project is
+     * `unknown-project`; neither is ever reported as `summary: null` (which
+     * means "this scope exists but has no official body yet"). History is
+     * read-only: no registration write and no draft change happens here.
+     */
+    async readSummary(input: HostSummaryReadInput, signal?: AbortSignal): Promise<HostSummaryReadOutcome> {
+      try {
+        if (signal?.aborted === true) {
+          return { ok: false, code: 'read-failed', message: '读取概况已取消；未显示任何概况数据。' }
+        }
+        const core = deps.core()
+        if (core === null) {
+          return { ok: false, code: 'unavailable', message: '数据层尚未就绪，概况暂不可用；不显示空概况。' }
+        }
+        if (input.scopeKind !== 'task' && input.scopeKind !== 'project') {
+          return { ok: false, code: 'invalid-input', message: '概况读取被拒绝：scopeKind 只允许 task 或 project。' }
+        }
+        if (typeof input.scopeId !== 'string' || input.scopeId.length === 0) {
+          return { ok: false, code: 'invalid-input', message: '概况读取被拒绝：缺少范围 id。' }
+        }
+        if (input.scopeKind === 'task') {
+          const pre = preReadTask(core, input.scopeId)
+          if (!pre.ok) {
+            const refusal = pre.outcome
+            if (refusal.ok) return { ok: false, code: 'read-failed', message: '读取任务状态失败；未显示任何概况数据。' }
+            return {
+              ok: false,
+              code: refusal.code === 'not-found' ? 'not-found' : 'read-failed',
+              message: refusal.message,
+            }
+          }
+        } else {
+          const resolution = await resolveProject(input.scopeId)
+          if (!resolution.ok) {
+            return {
+              ok: false,
+              code: resolution.code === 'unknown-project' ? 'unknown-project' : 'read-failed',
+              message: resolution.message,
+            }
+          }
+        }
+        let view: SummaryView | null
+        try {
+          view = core.readSummary({ scopeKind: input.scopeKind, scopeId: input.scopeId })
+        } catch (error) {
+          return { ok: false, code: 'read-failed', message: `读取概况失败：${messageOf(error)}` }
+        }
+        return { ok: true, summary: view === null ? null : summaryViewValueOf(view) }
+      } catch (error) {
+        return { ok: false, code: 'read-failed', message: `读取概况失败：${messageOf(error)}` }
+      }
+    },
+
+    /**
+     * Save (or clear) one manual summary under its SAVE-05 baseline (F03-R02).
+     *
+     * The data layer writes one scope head and may produce one new summary
+     * version; this method never retries automatically. `already-applied` and
+     * `no-change` are known results (the UI must not resend them). A stale
+     * baseline is `stale-baseline` with both baselines so the editor can show
+     * what moved (F03-R04).
+     */
+    async saveSummary(input: HostSummarySaveInput): Promise<HostSummarySaveOutcome> {
+      try {
+        const core = deps.core()
+        if (core === null) {
+          return { ok: false, code: 'unavailable', message: '数据层尚未就绪，概况未保存；正式内容未改变。' }
+        }
+        if (input.scopeKind !== 'task' && input.scopeKind !== 'project') {
+          return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：scopeKind 只允许 task 或 project。' }
+        }
+        if (typeof input.scopeId !== 'string' || input.scopeId.length === 0) {
+          return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：缺少范围 id。' }
+        }
+        if (typeof input.updateId !== 'string' || input.updateId.length === 0) {
+          return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：缺少 updateId；未保存任何内容。' }
+        }
+        if (!Number.isInteger(input.expected.revision) || input.expected.revision < 0) {
+          return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：expected.revision 必须是非负整数。' }
+        }
+        if (!Number.isInteger(input.expected.applicabilityRevision) || input.expected.applicabilityRevision < 0) {
+          return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：expected.applicabilityRevision 必须是非负整数。' }
+        }
+        if (
+          input.expected.summaryVersionId !== null &&
+          (typeof input.expected.summaryVersionId !== 'string' || input.expected.summaryVersionId.length === 0)
+        ) {
+          return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：expected.summaryVersionId 必须是版本 id 或 null。' }
+        }
+        if (input.content === undefined && input.cleared !== true) {
+          return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：没有要保存的内容。' }
+        }
+        if (input.content !== undefined && input.cleared === true) {
+          return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：content 与 cleared 不能同时出现。' }
+        }
+        if (input.scopeKind === 'task') {
+          const pre = preReadTask(core, input.scopeId)
+          if (!pre.ok) {
+            const refusal = pre.outcome
+            if (refusal.ok) return { ok: false, code: 'save-failed', message: '读取任务状态失败，概况未保存。' }
+            return {
+              ok: false,
+              code: refusal.code === 'not-found' ? 'not-found' : 'save-failed',
+              message: refusal.message,
+            }
+          }
+        } else {
+          const resolution = await resolveProject(input.scopeId)
+          if (!resolution.ok) {
+            return {
+              ok: false,
+              code: resolution.code === 'unknown-project' ? 'unknown-project' : 'save-failed',
+              message: resolution.message,
+            }
+          }
+        }
+
+        let outcome: ManualSummaryOutcome
+        try {
+          outcome = await core.saveManualSummary({
+            scopeKind: input.scopeKind,
+            scopeId: input.scopeId,
+            updateId: input.updateId,
+            expected: {
+              revision: input.expected.revision,
+              applicabilityRevision: input.expected.applicabilityRevision,
+              summaryVersionId: input.expected.summaryVersionId,
+            },
+            ...(input.content === undefined ? {} : { content: input.content }),
+            ...(input.cleared === undefined ? {} : { cleared: true as const }),
+            ...(input.consumeDraftIds === undefined ? {} : { consumeDraftIds: input.consumeDraftIds }),
+          })
+        } catch (error) {
+          return {
+            ok: false,
+            code: 'unknown-result',
+            message: `概况保存结果未知：${messageOf(error)}；${VERIFY_FIRST}`,
+          }
+        }
+
+        switch (outcome.status) {
+          case 'committed':
+            return {
+              ok: true,
+              value: {
+                outcome: 'committed',
+                revision: outcome.revision,
+                applicabilityRevision: outcome.applicabilityRevision,
+                versionId: outcome.versionId,
+                changeKind: outcome.changeKind,
+                consumedDraftIds: outcome.consumedDraftIds,
+                draftUpdateFailures: outcome.draftUpdateFailures,
+                needsRecheck: outcome.needsRecheck,
+                view: summaryViewAfterSave(core, input),
+              },
+            }
+          case 'already-applied':
+            return {
+              ok: true,
+              value: {
+                outcome: 'already-applied',
+                revision: outcome.revision,
+                applicabilityRevision: outcome.applicabilityRevision,
+                appliedRevision: outcome.appliedRevision,
+                appliedAt: outcome.appliedAt,
+                versionId: outcome.versionId,
+                consumedDraftIds: outcome.consumedDraftIds,
+                view: summaryViewAfterSave(core, input),
+              },
+            }
+          case 'no-change':
+            return {
+              ok: true,
+              value: {
+                outcome: 'no-change',
+                revision: outcome.revision,
+                summaryVersionId: outcome.summaryVersionId,
+                view: summaryViewAfterSave(core, input),
+              },
+            }
+          case 'blocked':
+            return {
+              ok: false,
+              code: 'stale-baseline',
+              message: '概况已被其他操作更新，本次未保存；请核对最新内容后再提交。',
+              baseline: {
+                expected: summaryBaselineValueOf(outcome.expected),
+                actual: summaryBaselineValueOf(outcome.actual),
+              },
+            }
+          case 'rejected':
+            return {
+              ok: false,
+              code: outcome.code === 'unknown-scope' ? (input.scopeKind === 'task' ? 'not-found' : 'unknown-project') : 'invalid-input',
+              message: outcome.message,
+            }
+        }
+        return { ok: false, code: 'save-failed', message: '概况保存结果无法识别；正式内容未改变。' }
+      } catch (error) {
+        return { ok: false, code: 'save-failed', message: `概况保存失败：${messageOf(error)}；正式内容未改变。` }
+      }
+    },
+
+    /**
+     * Save the in-flight manual draft for one scope (F03-R07).
+     *
+     * The draft lives in its own slot (`summaryDraft`/`overviewDraft`) and never
+     * touches official versions: no baseline is checked here and no version is
+     * appended. The slot is upserted, so re-saving the same scope returns the
+     * same `draftId`. Official content is never reported as saved by this path.
+     */
+    async saveSummaryDraft(
+      input: HostSummaryDraftSaveInput,
+      signal?: AbortSignal,
+    ): Promise<HostSummaryDraftSaveOutcome> {
+      try {
+        if (signal?.aborted === true) {
+          return { ok: false, code: 'save-failed', message: '概况草稿保存已取消；正式内容未改变。' }
+        }
+        const core = deps.core()
+        if (core === null) {
+          return { ok: false, code: 'unavailable', message: '数据层尚未就绪，概况草稿未保存；正式内容未改变。' }
+        }
+        if (input.scopeKind !== 'task' && input.scopeKind !== 'project') {
+          return { ok: false, code: 'invalid-input', message: '概况草稿保存被拒绝：scopeKind 只允许 task 或 project。' }
+        }
+        if (typeof input.scopeId !== 'string' || input.scopeId.length === 0) {
+          return { ok: false, code: 'invalid-input', message: '概况草稿保存被拒绝：缺少范围 id。' }
+        }
+        if (input.updateId !== undefined && (typeof input.updateId !== 'string' || input.updateId.length === 0)) {
+          return { ok: false, code: 'invalid-input', message: '概况草稿保存被拒绝：updateId 必须是非空字符串。' }
+        }
+        if (input.scopeKind === 'task') {
+          const pre = preReadTask(core, input.scopeId)
+          if (!pre.ok) {
+            const refusal = pre.outcome
+            if (refusal.ok) return { ok: false, code: 'save-failed', message: '读取任务状态失败，概况草稿未保存。' }
+            return { ok: false, code: refusal.code, message: refusal.message }
+          }
+        } else {
+          const resolution = await resolveProject(input.scopeId)
+          if (!resolution.ok) return { ok: false, code: resolution.code, message: resolution.message }
+        }
+
+        try {
+          const draft = await core.saveDraft({
+            kind: input.scopeKind === 'task' ? 'summaryDraft' : 'overviewDraft',
+            scopeKind: input.scopeKind,
+            scopeId: input.scopeId,
+            objectId: input.scopeId,
+            content: objectContentOf(input.content),
+            ...(input.updateId === undefined ? {} : { updateId: input.updateId }),
+          })
+          return { ok: true, draft: summaryDraftValueOf(draft) }
+        } catch (error) {
+          if (error instanceof CoreError && error.code === 'invalid-input') {
+            return { ok: false, code: 'invalid-input', message: error.message }
+          }
+          if (error instanceof CoreError && error.code === 'missing-scope') {
+            return input.scopeKind === 'task'
+              ? { ok: false, code: 'not-found', message: `任务 '${input.scopeId}' 不存在；概况草稿未保存。` }
+              : { ok: false, code: 'unknown-project', message: `项目 '${input.scopeId}' 尚未登记，概况草稿未保存。` }
+          }
+          return { ok: false, code: 'save-failed', message: `概况草稿保存失败：${messageOf(error)}；正式内容未改变。` }
+        }
+      } catch (error) {
+        return { ok: false, code: 'save-failed', message: `概况草稿保存失败：${messageOf(error)}；正式内容未改变。` }
       }
     },
 

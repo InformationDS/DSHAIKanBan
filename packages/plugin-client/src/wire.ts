@@ -126,6 +126,27 @@ export const BOARD_ENDPOINTS = {
   taskFieldsUpdate: 'task/fields.update',
   /** Important-change history for one task or one project (F01-R07/SAVE-08). */
   activityRead: 'activity/read',
+  /**
+   * Read the official summary/overview and its history for one scope (F03).
+   *
+   * A scope with no summary yet answers `summary: null` with `ok: true` — it is
+   * an explicit empty state, not a failure (F03-R01: a manual summary starts
+   * independently of any AI-written body).
+   */
+  summaryRead: 'summary/read',
+  /**
+   * Save one manual summary/project overview (F03-R02/R07).
+   *
+   * A manual save is deliberately not a paired confirmation: no conversation
+   * or outcome link is required, and only the summary chain of the scope moves.
+   */
+  summarySave: 'summary/save',
+  /**
+   * Save the in-flight manual draft of one scope (F03-R07, separate from the
+   * record/summary paired draft). A draft save never creates an official
+   * version; the editor restores it later and confirms explicitly.
+   */
+  summaryDraftSave: 'summary/draft.save',
 } as const
 
 /** One endpoint name. */
@@ -271,6 +292,87 @@ export interface ActivityPayload {
   readonly scopeKind: 'task' | 'project'
   readonly scopeId: string
   readonly limit?: number
+}
+
+/**
+ * `summary/read` payload.
+ *
+ * The scope is addressed explicitly and must be a task or a project. An
+ * existing scope with no summary yet is not an error: it answers `summary:null`.
+ */
+export interface SummaryReadPayload {
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+}
+
+/**
+ * Body of a manual summary as it travels.
+ *
+ * The same normalised body shape core stores: ordered sections plus conclusions.
+ * `conclusions` is optional on input (an editor that writes only prose omits it).
+ */
+export interface SummaryContentWire {
+  readonly sections: readonly SummaryContentSectionWire[]
+  readonly conclusions?: readonly SummaryConclusionWire[]
+}
+
+/** One body section of a manual summary. */
+export interface SummaryContentSectionWire {
+  readonly id: string
+  readonly title: string
+  readonly body: string
+}
+
+/** One conclusion written into a manual summary body. */
+export interface SummaryConclusionWire {
+  readonly id: string
+  readonly text: string
+  readonly statedState: 'current' | 'superseded' | 'negated' | 'pending'
+  /** Effective state after applicability amendments; equals `statedState` on a manual body. */
+  readonly state: 'current' | 'superseded' | 'negated' | 'pending'
+  /** Amendment id that changed the effective state, if any. */
+  readonly amendedBy: string | null
+}
+
+/**
+ * `summary/save` payload (F03-R02/R04/R07).
+ *
+ * - `updateId` is the identity of this save intent; a double click/retry reuses
+ *   it and the data layer answers `already-applied` instead of writing twice.
+ * - `expected*` is the SAVE-05 baseline read from the editor. The data layer
+ *   refuses a stale baseline with `stale-baseline` and returns the actual one.
+ * - exactly one of `content`/`cleared` is meaningful; core refuses both/neither
+ *   as `invalid-input` (the parser keeps the shapes intact so core owns the rule).
+ * - `consumeDraftIds` names manual drafts to consume **after** the commit; they
+ *   are never consumed by a no-change/refused/blocked save (F03-R07).
+ */
+export interface SummarySavePayload {
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  readonly updateId: string
+  readonly expectedRevision: number
+  readonly expectedApplicabilityRevision: number
+  readonly expectedSummaryVersionId: string | null
+  readonly content?: SummaryContentWire
+  /** `true` means "clear the official body"; absent means a body save. */
+  readonly cleared?: true
+  readonly consumeDraftIds?: readonly string[]
+}
+
+/**
+ * `summary/draft.save` payload (F03-R07).
+ *
+ * Saves the in-flight manual draft only: no baseline is carried (a draft is
+ * not an official version) and nothing is confirmed. Re-saving the same scope
+ * updates the same draft slot; `updateId` links the draft to a later save
+ * intent so a successful commit can consume it.
+ */
+export interface SummaryDraftSavePayload {
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  readonly content: SummaryContentWire
+  /** Optional identity of the save intent this draft belongs to. */
+  readonly updateId?: string
 }
 
 /* ------------------------------------------------------------------ *
@@ -504,6 +606,140 @@ export interface UpdateFieldsFailureDetails {
   readonly current?: FormalStatusValueWire
   readonly keptInput?: KeptFieldInputWire
   readonly baseline?: { readonly expected: FieldsBaselineWire; readonly actual: FieldsBaselineWire }
+}
+
+/* ------------------------------------------------------------------ *
+ * Manual summary values (F03)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The SAVE-05 baseline a manual summary save was edited against (F03-R04).
+ *
+ * `summaryVersionId` is `null` when the scope has no official summary yet; the
+ * two revisions make a stale baseline detectable even before the first save.
+ */
+export interface SummaryBaselineWire {
+  readonly revision: number
+  readonly applicabilityRevision: number
+  readonly summaryVersionId: string | null
+}
+
+/** A normalised summary body as read back: sections plus effective conclusions. */
+export interface SummaryContentValue {
+  readonly sections: readonly SummaryContentSectionWire[]
+  readonly conclusions: readonly SummaryConclusionWire[]
+}
+
+/** One official summary/overview version (newest-first history entries). */
+export interface SummaryVersionValue {
+  readonly versionId: string
+  readonly seq: number
+  readonly confirmedAt: string
+  readonly origin: 'ai' | 'user' | 'ai+user'
+  /** `created`/`modified`/`cleared` — the 修改结果 shown by the editor (F03-R02). */
+  readonly changeKind: 'created' | 'modified' | 'cleared'
+  readonly previousVersionId: string | null
+  readonly content: SummaryContentValue
+  readonly conclusions: readonly SummaryConclusionWire[]
+  /** Change token for "did the body I rendered change underneath me". */
+  readonly readToken: string
+}
+
+/** One active manual draft as the editor sees it (F03-R07). */
+export interface SummaryDraftValue {
+  readonly draftId: string
+  readonly state: string
+  readonly updateId: string | null
+  readonly updatedAt: string
+  /** Baseline the draft was built from; a mismatch is the F08 stale-draft case. */
+  readonly base: { readonly scopeRevision: number; readonly applicabilityRevision: number }
+  readonly content: SummaryContentValue
+}
+
+/** `summary/draft.save` success value: the draft record as stored, never a version. */
+export interface SummaryDraftSaveValue {
+  readonly draft: SummaryDraftValue
+}
+
+/** One persisted 待核对 reason (F07 boundary; read-only here). */
+export interface SummaryRecheckReasonWire {
+  readonly code: string
+  readonly detail: string
+  readonly updateId: string | null
+  readonly draftId: string | null
+  readonly at: string
+}
+
+/** The scope's 待核对 flag and its reasons. */
+export interface SummaryRecheckValue {
+  readonly pending: boolean
+  readonly reasons: readonly SummaryRecheckReasonWire[]
+  readonly markedAt: string | null
+}
+
+/**
+ * `summary/read` success value.
+ *
+ * `summary: null` is an existing scope with no official body yet — an explicit
+ * empty state (a manual summary may start here), not a failed read.
+ */
+export interface SummaryViewValue {
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  readonly revision: number
+  readonly applicabilityRevision: number
+  readonly baseline: SummaryBaselineWire
+  readonly current: SummaryVersionValue | null
+  readonly history: readonly SummaryVersionValue[]
+  readonly draft: SummaryDraftValue | null
+  readonly needsRecheck: boolean
+  readonly recheck: SummaryRecheckValue
+}
+
+/** `summary/read` success value wrapper. */
+export interface SummaryReadValue {
+  readonly summary: SummaryViewValue | null
+}
+
+/**
+ * `summary/save` success value (F03-R02/R07).
+ *
+ * All three outcomes are **known** results. `view` is the authoritative re-read
+ * after the write; `null` means the save landed but the re-read failed — the UI
+ * must say "已保存、视图未刷新" and retry the READ, never resend the write.
+ */
+export type SummarySaveValue =
+  | {
+      readonly outcome: 'committed'
+      readonly revision: number
+      readonly applicabilityRevision: number
+      readonly versionId: string
+      readonly changeKind: 'created' | 'modified' | 'cleared'
+      readonly consumedDraftIds: readonly string[]
+      readonly draftUpdateFailures: readonly string[]
+      readonly needsRecheck: boolean
+      readonly view: SummaryViewValue | null
+    }
+  | {
+      readonly outcome: 'already-applied'
+      readonly revision: number
+      readonly applicabilityRevision: number
+      readonly appliedRevision: number
+      readonly appliedAt: string
+      readonly versionId: string
+      readonly consumedDraftIds: readonly string[]
+      readonly view: SummaryViewValue | null
+    }
+  | {
+      readonly outcome: 'no-change'
+      readonly revision: number
+      readonly summaryVersionId: string | null
+      readonly view: SummaryViewValue | null
+    }
+
+/** `details` of a `summary/save` failure (F03-R04 baseline conflict). */
+export interface SummarySaveFailureDetails {
+  readonly baseline?: { readonly expected: SummaryBaselineWire; readonly actual: SummaryBaselineWire }
 }
 
 /* ------------------------------------------------------------------ *
@@ -1246,4 +1482,417 @@ export function parseActivityPayload(value: unknown): ActivityPayload | null {
     scopeId,
     ...(limit === undefined ? {} : { limit }),
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Manual summary parsers (F03)
+ * ------------------------------------------------------------------ */
+
+const CONCLUSION_STATES = ['current', 'superseded', 'negated', 'pending'] as const
+type ConclusionStateWire = (typeof CONCLUSION_STATES)[number]
+
+const CHANGE_KINDS = ['created', 'modified', 'cleared'] as const
+const ORIGINS = ['ai', 'user', 'ai+user'] as const
+const DRAFT_STATES = ['editing', 'ready', 'needsRecheck', 'saved', 'abandoned', 'failed'] as const
+
+function isConclusionState(value: unknown): value is ConclusionStateWire {
+  return typeof value === 'string' && (CONCLUSION_STATES as readonly string[]).includes(value)
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
+function parseSummarySectionWire(value: unknown): SummaryContentSectionWire | null {
+  if (!isRecord(value)) return null
+  const { id, title, body } = value
+  if (!isString(id) || id.length === 0) return null
+  if (!isString(title) || !isString(body)) return null
+  return { id, title, body }
+}
+
+function parseSummaryConclusionWire(value: unknown): SummaryConclusionWire | null {
+  if (!isRecord(value)) return null
+  const { id, text, statedState, state, amendedBy } = value
+  if (!isString(id) || id.length === 0) return null
+  if (!isString(text) || !isString(text)) return null
+  if (!isConclusionState(statedState) || !isConclusionState(state)) return null
+  if (amendedBy !== null && (!isString(amendedBy) || amendedBy.length === 0)) return null
+  return { id, text, statedState, state, amendedBy }
+}
+
+/** A save payload body: conclusions are optional. */
+function parseSummaryContentInput(value: unknown): SummaryContentWire | null {
+  if (!isRecord(value)) return null
+  if (!Array.isArray(value['sections'])) return null
+  const sections: SummaryContentSectionWire[] = []
+  for (const entry of value['sections']) {
+    const section = parseSummarySectionWire(entry)
+    if (section === null) return null
+    sections.push(section)
+  }
+  const rawConclusions = value['conclusions']
+  if (rawConclusions === undefined) return { sections }
+  if (!Array.isArray(rawConclusions)) return null
+  const conclusions: SummaryConclusionWire[] = []
+  for (const entry of rawConclusions) {
+    const conclusion = parseSummaryConclusionWire(entry)
+    if (conclusion === null) return null
+    conclusions.push(conclusion)
+  }
+  return { sections, conclusions }
+}
+
+/** A read-back body: the effective conclusions array is always present. */
+function parseSummaryContentValue(value: unknown): SummaryContentValue | null {
+  const content = parseSummaryContentInput(value)
+  if (content === null) return null
+  return { sections: content.sections, conclusions: content.conclusions ?? [] }
+}
+
+function parseSummaryBaselineValue(value: unknown): SummaryBaselineWire | null {
+  if (!isRecord(value)) return null
+  const { revision, applicabilityRevision, summaryVersionId } = value
+  if (!isNonNegativeInteger(revision) || !isNonNegativeInteger(applicabilityRevision)) return null
+  if (summaryVersionId !== null && (!isString(summaryVersionId) || summaryVersionId.length === 0)) return null
+  return { revision, applicabilityRevision, summaryVersionId }
+}
+
+function parseSummaryVersionValue(value: unknown): SummaryVersionValue | null {
+  if (!isRecord(value)) return null
+  const { versionId, seq, confirmedAt, origin, changeKind, previousVersionId, readToken } = value
+  if (!isString(versionId) || versionId.length === 0) return null
+  if (!isNonNegativeInteger(seq) || seq < 1) return null
+  if (!isString(confirmedAt) || confirmedAt.length === 0) return null
+  if (!isString(textOf(origin))) return null
+  if (!(ORIGINS as readonly string[]).includes(origin as string)) return null
+  if (!(CHANGE_KINDS as readonly string[]).includes(changeKind as string)) return null
+  if (previousVersionId !== null && (!isString(previousVersionId) || previousVersionId.length === 0)) return null
+  if (!isString(readToken) || readToken.length === 0) return null
+  const content = parseSummaryContentValue(value['content'])
+  if (content === null) return null
+  if (!Array.isArray(value['conclusions'])) return null
+  const conclusions: SummaryConclusionWire[] = []
+  for (const entry of value['conclusions']) {
+    const conclusion = parseSummaryConclusionWire(entry)
+    if (conclusion === null) return null
+    conclusions.push(conclusion)
+  }
+  return {
+    versionId,
+    seq,
+    confirmedAt,
+    origin: origin as SummaryVersionValue['origin'],
+    changeKind: changeKind as SummaryVersionValue['changeKind'],
+    previousVersionId,
+    content,
+    conclusions,
+    readToken,
+  }
+}
+
+function textOf(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function parseSummaryDraftValue(value: unknown): SummaryDraftValue | null {
+  if (!isRecord(value)) return null
+  const { draftId, state, updateId, updatedAt } = value
+  if (!isString(draftId) || draftId.length === 0) return null
+  if (!(DRAFT_STATES as readonly string[]).includes(state as string)) return null
+  if (updateId !== null && (!isString(updateId) || updateId.length === 0)) return null
+  if (!isString(updatedAt) || updatedAt.length === 0) return null
+  const base = value['base']
+  if (!isRecord(base)) return null
+  const scopeRevision = base['scopeRevision']
+  const applicabilityRevision = base['applicabilityRevision']
+  if (!isNonNegativeInteger(scopeRevision) || !isNonNegativeInteger(applicabilityRevision)) return null
+  const content = parseSummaryContentValue(value['content'])
+  if (content === null) return null
+  return {
+    draftId,
+    state: state as string,
+    updateId,
+    updatedAt,
+    base: { scopeRevision, applicabilityRevision },
+    content,
+  }
+}
+
+function parseSummaryRecheckValue(value: unknown): SummaryRecheckValue | null {
+  if (!isRecord(value)) return null
+  const pending = value['pending']
+  if (typeof pending !== 'boolean') return null
+  const markedAt = value['markedAt']
+  if (markedAt !== null && (!isString(markedAt) || markedAt.length === 0)) return null
+  if (!Array.isArray(value['reasons'])) return null
+  const reasons: SummaryRecheckReasonWire[] = []
+  for (const entry of value['reasons']) {
+    if (!isRecord(entry)) return null
+    const { code, detail, updateId, draftId, at } = entry
+    if (!isString(code) || code.length === 0) return null
+    if (!isString(detail)) return null
+    if (updateId !== null && (!isString(updateId) || updateId.length === 0)) return null
+    if (draftId !== null && (!isString(draftId) || draftId.length === 0)) return null
+    if (!isString(at) || at.length === 0) return null
+    reasons.push({ code, detail, updateId, draftId, at })
+  }
+  return { pending, reasons, markedAt }
+}
+
+/**
+ * Parse a `summary/read` success value.
+ *
+ * `summary: null` is legal (existing scope, no official body yet). A malformed
+ * value is a contract violation; the caller reports a failed read, never an
+ * empty editor (REC-05).
+ *
+ * @param value - untrusted value.
+ * @returns the value, or null when malformed.
+ */
+export function parseSummaryReadValue(value: unknown): SummaryReadValue | null {
+  if (!isRecord(value)) return null
+  const summary = value['summary']
+  if (summary === null) return { summary: null }
+  const parsed = parseSummaryViewValue(summary)
+  return parsed === null ? null : { summary: parsed }
+}
+
+function parseSummaryViewValue(value: unknown): SummaryViewValue | null {
+  if (!isRecord(value)) return null
+  const scopeKind = value['scopeKind']
+  if (scopeKind !== 'task' && scopeKind !== 'project') return null
+  const { scopeId, revision, applicabilityRevision, needsRecheck } = value
+  if (!isString(scopeId) || scopeId.length === 0) return null
+  if (!isNonNegativeInteger(revision) || !isNonNegativeInteger(applicabilityRevision)) return null
+  if (typeof needsRecheck !== 'boolean') return null
+  const baseline = parseSummaryBaselineValue(value['baseline'])
+  if (baseline === null) return null
+  const currentRaw = value['current']
+  let current: SummaryVersionValue | null = null
+  if (currentRaw !== null) {
+    current = parseSummaryVersionValue(currentRaw)
+    if (current === null) return null
+  }
+  if (!Array.isArray(value['history'])) return null
+  const history: SummaryVersionValue[] = []
+  for (const entry of value['history']) {
+    const version = parseSummaryVersionValue(entry)
+    if (version === null) return null
+    history.push(version)
+  }
+  const draftRaw = value['draft']
+  let draft: SummaryDraftValue | null = null
+  if (draftRaw !== null) {
+    draft = parseSummaryDraftValue(draftRaw)
+    if (draft === null) return null
+  }
+  const recheck = parseSummaryRecheckValue(value['recheck'])
+  if (recheck === null) return null
+  return {
+    scopeKind,
+    scopeId,
+    revision,
+    applicabilityRevision,
+    baseline,
+    current,
+    history,
+    draft,
+    needsRecheck,
+    recheck,
+  }
+}
+
+/**
+ * Parse a `summary/read` payload.
+ *
+ * @param value - untrusted payload.
+ * @returns the payload, or null when malformed.
+ */
+export function parseSummaryReadPayload(value: unknown): SummaryReadPayload | null {
+  if (!isRecord(value)) return null
+  const scopeKind = value['scopeKind']
+  if (scopeKind !== 'task' && scopeKind !== 'project') return null
+  const scopeId = value['scopeId']
+  if (!isString(scopeId) || scopeId.length === 0) return null
+  return { scopeKind, scopeId }
+}
+
+/**
+ * Parse a `summary/save` payload.
+ *
+ * Shape-level only for the semantic rules core owns: `content` and `cleared`
+ * may both be absent or both present here, and core refuses that as
+ * `invalid-input` with a message. What the parser guarantees is that every
+ * field it does accept has the right JSON shape (a malformed baseline is
+ * `invalid-payload` and nothing is written).
+ *
+ * @param value - untrusted payload.
+ * @returns the payload, or null when malformed.
+ */
+export function parseSummarySavePayload(value: unknown): SummarySavePayload | null {
+  if (!isRecord(value)) return null
+  const scopeKind = value['scopeKind']
+  if (scopeKind !== 'task' && scopeKind !== 'project') return null
+  const scopeId = value['scopeId']
+  const updateId = value['updateId']
+  if (!isString(scopeId) || scopeId.length === 0) return null
+  if (!isString(updateId) || updateId.length === 0) return null
+  if (!isNonNegativeInteger(value['expectedRevision'])) return null
+  if (!isNonNegativeInteger(value['expectedApplicabilityRevision'])) return null
+  const expectedVersionId = value['expectedSummaryVersionId']
+  if (expectedVersionId !== null && (!isString(expectedVersionId) || expectedVersionId.length === 0)) return null
+
+  const rawContent = value['content']
+  let content: SummaryContentWire | undefined
+  if (rawContent !== undefined) {
+    const parsed = parseSummaryContentInput(rawContent)
+    if (parsed === null) return null
+    content = parsed
+  }
+  const cleared = value['cleared']
+  if (cleared !== undefined && cleared !== true) return null
+  const rawConsume = value['consumeDraftIds']
+  let consumeDraftIds: readonly string[] | undefined
+  if (rawConsume !== undefined) {
+    if (!Array.isArray(rawConsume)) return null
+    const ids: string[] = []
+    for (const entry of rawConsume) {
+      if (!isString(entry) || entry.length === 0) return null
+      if (!ids.includes(entry)) ids.push(entry)
+    }
+    consumeDraftIds = ids
+  }
+  return {
+    scopeKind,
+    scopeId,
+    updateId,
+    expectedRevision: value['expectedRevision'],
+    expectedApplicabilityRevision: value['expectedApplicabilityRevision'],
+    expectedSummaryVersionId: expectedVersionId,
+    ...(content === undefined ? {} : { content }),
+    ...(cleared === undefined ? {} : { cleared: true }),
+    ...(consumeDraftIds === undefined ? {} : { consumeDraftIds }),
+  }
+}
+
+/**
+ * Parse a `summary/draft.save` payload (F03-R07).
+ *
+ * @param value - untrusted payload.
+ * @returns the payload, or null when malformed.
+ */
+export function parseSummaryDraftSavePayload(value: unknown): SummaryDraftSavePayload | null {
+  if (!isRecord(value)) return null
+  const scopeKind = value['scopeKind']
+  if (scopeKind !== 'task' && scopeKind !== 'project') return null
+  const scopeId = value['scopeId']
+  if (!isString(scopeId) || scopeId.length === 0) return null
+  const content = parseSummaryContentInput(value['content'])
+  if (content === null) return null
+  // A draft is a candidate body; "clear" is an official-save operation only.
+  if (value['cleared'] !== undefined) return null
+  const updateId = value['updateId']
+  if (updateId !== undefined && (!isString(updateId) || updateId.length === 0)) return null
+  return {
+    scopeKind,
+    scopeId,
+    content,
+    ...(updateId === undefined ? {} : { updateId }),
+  }
+}
+
+/**
+ * Parse a `summary/draft.save` success value.
+ *
+ * @param value - untrusted value.
+ * @returns the value, or null when malformed.
+ */
+export function parseSummaryDraftSaveValue(value: unknown): SummaryDraftSaveValue | null {
+  if (!isRecord(value)) return null
+  const draft = parseSummaryDraftValue(value['draft'])
+  return draft === null ? null : { draft }
+}
+
+/**
+ * Parse a `summary/save` success value.
+ *
+ * @param value - untrusted value.
+ * @returns the value, or null when malformed (reported as a failed save).
+ */
+export function parseSummarySaveValue(value: unknown): SummarySaveValue | null {
+  if (!isRecord(value)) return null
+  const outcome = value['outcome']
+  const viewRaw = value['view']
+  let view: SummaryViewValue | null = null
+  if (viewRaw !== null) {
+    view = parseSummaryViewValue(viewRaw)
+    if (view === null) return null
+  }
+  if (outcome === 'committed') {
+    const { revision, applicabilityRevision, versionId, changeKind, consumedDraftIds, draftUpdateFailures, needsRecheck } = value
+    if (!isNonNegativeInteger(revision) || !isNonNegativeInteger(applicabilityRevision)) return null
+    if (!isString(versionId) || versionId.length === 0) return null
+    if (!(CHANGE_KINDS as readonly string[]).includes(changeKind as string)) return null
+    if (!isStringArray(consumedDraftIds) || !isStringArray(draftUpdateFailures)) return null
+    if (typeof needsRecheck !== 'boolean') return null
+    return {
+      outcome: 'committed',
+      revision,
+      applicabilityRevision,
+      versionId,
+      changeKind: changeKind as 'created' | 'modified' | 'cleared',
+      consumedDraftIds,
+      draftUpdateFailures,
+      needsRecheck,
+      view,
+    }
+  }
+  if (outcome === 'already-applied') {
+    const { revision, applicabilityRevision, appliedRevision, appliedAt, versionId } = value
+    if (!isNonNegativeInteger(revision) || !isNonNegativeInteger(applicabilityRevision)) return null
+    if (!isNonNegativeInteger(appliedRevision)) return null
+    if (!isString(appliedAt) || appliedAt.length === 0) return null
+    if (!isString(versionId) || versionId.length === 0) return null
+    if (!isStringArray(value['consumedDraftIds'])) return null
+    return {
+      outcome: 'already-applied',
+      revision,
+      applicabilityRevision,
+      appliedRevision,
+      appliedAt,
+      versionId,
+      consumedDraftIds: value['consumedDraftIds'] as readonly string[],
+      view,
+    }
+  }
+  if (outcome === 'no-change') {
+    const revision = value['revision']
+    if (!isNonNegativeInteger(revision)) return null
+    const summaryVersionId = value['summaryVersionId']
+    if (summaryVersionId !== null && (!isString(summaryVersionId) || summaryVersionId.length === 0)) return null
+    return { outcome: 'no-change', revision, summaryVersionId, view }
+  }
+  return null
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string' && entry.length > 0)
+}
+
+/**
+ * Parse the `details` of a `summary/save` failure.
+ *
+ * @param value - untrusted value.
+ * @returns the details, or null when malformed.
+ */
+export function parseSummarySaveFailureDetails(value: unknown): SummarySaveFailureDetails | null {
+  if (!isRecord(value)) return null
+  const rawBaseline = value['baseline']
+  if (rawBaseline === undefined) return {}
+  if (!isRecord(rawBaseline)) return null
+  const expected = parseSummaryBaselineValue(rawBaseline['expected'])
+  const actual = parseSummaryBaselineValue(rawBaseline['actual'])
+  if (expected === null || actual === null) return null
+  return { baseline: { expected, actual } }
 }

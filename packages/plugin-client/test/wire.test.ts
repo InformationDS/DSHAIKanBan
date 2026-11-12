@@ -35,6 +35,13 @@ import {
   parseReorderPayload,
   parseSetStatusPayload,
   parseStatusVersion,
+  parseSummaryDraftSavePayload,
+  parseSummaryDraftSaveValue,
+  parseSummaryReadPayload,
+  parseSummaryReadValue,
+  parseSummarySaveFailureDetails,
+  parseSummarySavePayload,
+  parseSummarySaveValue,
   parseUndoStatusPayload,
   parseUpdateFieldsFailureDetails,
   parseUpdateFieldsPayload,
@@ -575,6 +582,344 @@ describe('slice-B failure details guards', () => {
     })
     expect(parseFieldsBaselineValue({ fieldsVersion: 'fver1:0' })).toBeNull()
     expect(parseFieldsBaselineValue('fver1:0')).toBeNull()
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * F03: manual summaries and project overviews
+ * ------------------------------------------------------------------ */
+
+const SUMMARY_SECTION = { id: 's-1', title: '进展', body: '完成了第一步' }
+const SUMMARY_CONCLUSION = {
+  id: 'c-1',
+  text: '可以继续',
+  statedState: 'current' as const,
+  state: 'current' as const,
+  amendedBy: null,
+}
+const SUMMARY_CONTENT_INPUT = {
+  sections: [SUMMARY_SECTION],
+  conclusions: [SUMMARY_CONCLUSION],
+}
+const SUMMARY_CONTENT = {
+  sections: [SUMMARY_SECTION],
+  conclusions: [SUMMARY_CONCLUSION],
+}
+const SUMMARY_VERSION = {
+  versionId: 'ver-1',
+  seq: 1,
+  confirmedAt: '2026-11-13T00:00:00.000Z',
+  origin: 'user' as const,
+  changeKind: 'created' as const,
+  previousVersionId: null,
+  content: SUMMARY_CONTENT,
+  conclusions: [SUMMARY_CONCLUSION],
+  readToken: 'read-1',
+}
+const SUMMARY_BASELINE = { revision: 1, applicabilityRevision: 0, summaryVersionId: 'ver-1' }
+const SUMMARY_VIEW = {
+  scopeKind: 'task' as const,
+  scopeId: 'task-1',
+  revision: 1,
+  applicabilityRevision: 0,
+  baseline: SUMMARY_BASELINE,
+  current: SUMMARY_VERSION,
+  history: [SUMMARY_VERSION],
+  draft: null,
+  needsRecheck: false,
+  recheck: { pending: false, reasons: [], markedAt: null },
+}
+const SUMMARY_DRAFT = {
+  draftId: 'draft-1',
+  state: 'ready',
+  updateId: null,
+  updatedAt: '2026-11-13T00:00:00.000Z',
+  base: { scopeRevision: 1, applicabilityRevision: 0 },
+  content: SUMMARY_CONTENT,
+}
+
+describe('F03 summary endpoints and payload guards', () => {
+  it('publishes summary/read and summary/save without touching the existing endpoints', () => {
+    expect(BOARD_ENDPOINTS.summaryRead).toBe('summary/read')
+    expect(BOARD_ENDPOINTS.summarySave).toBe('summary/save')
+    expect(BOARD_ENDPOINTS.summaryDraftSave).toBe('summary/draft.save')
+    for (const endpoint of Object.values(BOARD_ENDPOINTS)) {
+      expect(BOARD_ENDPOINT_LIST).toContain(endpoint)
+    }
+    // Eleven endpoint names; the failure-code table is unchanged at nine.
+    expect(BOARD_ENDPOINT_LIST).toHaveLength(11)
+    expect(BOARD_FAILURE_CODES).toHaveLength(9)
+  })
+
+  it('requires an explicit task/project scope on summary/read', () => {
+    expect(parseSummaryReadPayload({ scopeKind: 'task', scopeId: 'task-1' })).toEqual({
+      scopeKind: 'task',
+      scopeId: 'task-1',
+    })
+    expect(parseSummaryReadPayload({ scopeKind: 'project', scopeId: 'ws-1', ignored: true })).toEqual({
+      scopeKind: 'project',
+      scopeId: 'ws-1',
+    })
+    const malformed: unknown[] = [
+      null,
+      undefined,
+      [],
+      {},
+      { scopeKind: 'board', scopeId: 'x' },
+      { scopeId: 'x' },
+      { scopeKind: 'task', scopeId: '' },
+      { scopeKind: 'task', scopeId: 7 },
+      { scopeKind: 'TASK', scopeId: 'task-1' },
+    ]
+    for (const value of malformed) {
+      expect(parseSummaryReadPayload(value), `accepted ${JSON.stringify(value)}`).toBeNull()
+    }
+  })
+
+  it('parses the summary/save payload with its baseline and optional body/clear/draft ids', () => {
+    const base = {
+      scopeKind: 'task' as const,
+      scopeId: 'task-1',
+      updateId: 'sum-1',
+      expectedRevision: 1,
+      expectedApplicabilityRevision: 0,
+      expectedSummaryVersionId: 'ver-1',
+    }
+    expect(parseSummarySavePayload({ ...base, content: SUMMARY_CONTENT_INPUT })).toEqual({
+      ...base,
+      content: SUMMARY_CONTENT_INPUT,
+    })
+    // A body without conclusions is shape-valid; core normalises it.
+    expect(parseSummarySavePayload({ ...base, content: { sections: [SUMMARY_SECTION] } })).not.toBeNull()
+    expect(parseSummarySavePayload({ ...base, cleared: true })).toEqual({ ...base, cleared: true })
+    // The parser keeps content+cleared together: core owns the XOR rule.
+    expect(parseSummarySavePayload({ ...base, content: SUMMARY_CONTENT_INPUT, cleared: true })).not.toBeNull()
+    // A duplicate draft id is de-duplicated, not rejected.
+    expect(parseSummarySavePayload({ ...base, content: SUMMARY_CONTENT_INPUT, consumeDraftIds: ['d-1', 'd-1', 'd-2'] })).toMatchObject({
+      consumeDraftIds: ['d-1', 'd-2'],
+    })
+    // expectedSummaryVersionId null is the "no official body yet" baseline.
+    expect(parseSummarySavePayload({ ...base, expectedSummaryVersionId: null, content: SUMMARY_CONTENT_INPUT })).not.toBeNull()
+  })
+
+  it('refuses a malformed summary/save payload instead of defaulting a baseline', () => {
+    const base = {
+      scopeKind: 'task' as const,
+      scopeId: 'task-1',
+      updateId: 'sum-1',
+      expectedRevision: 1,
+      expectedApplicabilityRevision: 0,
+      expectedSummaryVersionId: 'ver-1' as string | null,
+      content: SUMMARY_CONTENT_INPUT,
+    }
+    const malformed: unknown[] = [
+      null,
+      {},
+      { ...base, scopeKind: 'board' },
+      { ...base, scopeId: '' },
+      { ...base, updateId: '' },
+      { ...base, expectedRevision: -1 },
+      { ...base, expectedRevision: 1.5 },
+      { ...base, expectedApplicabilityRevision: '0' },
+      { ...base, expectedSummaryVersionId: '' },
+      { ...base, expectedSummaryVersionId: 0 },
+      { ...base, cleared: false },
+      { ...base, cleared: 'yes' },
+      { ...base, content: { sections: 'none' } },
+      { ...base, content: { sections: [{ id: '', title: 't', body: 'b' }] } },
+      { ...base, content: { sections: [SUMMARY_SECTION], conclusions: [{ ...SUMMARY_CONCLUSION, state: 'board' }] } },
+      { ...base, consumeDraftIds: 'd-1' },
+      { ...base, consumeDraftIds: [''] },
+      { ...base, consumeDraftIds: ['d-1', 7] },
+    ]
+    for (const value of malformed) {
+      expect(parseSummarySavePayload(value), `accepted ${JSON.stringify(value)}`).toBeNull()
+    }
+  })
+
+  it('parses summary/read values, including the explicit "no body yet" null', () => {
+    expect(parseSummaryReadValue({ summary: null })).toEqual({ summary: null })
+    expect(parseSummaryReadValue({ summary: SUMMARY_VIEW })).toEqual({ summary: SUMMARY_VIEW })
+
+    // A draft and a pending recheck flag travel with the view.
+    const withDraft = {
+      ...SUMMARY_VIEW,
+      draft: SUMMARY_DRAFT,
+      needsRecheck: true,
+      recheck: {
+        pending: true,
+        reasons: [{ code: 'draft-stale', detail: '基线已变化', updateId: null, draftId: 'draft-1', at: '2026-11-13T00:00:00.000Z' }],
+        markedAt: '2026-11-13T00:00:00.000Z',
+      },
+    }
+    expect(parseSummaryReadValue({ summary: withDraft })).toEqual({ summary: withDraft })
+  })
+
+  it('refuses a malformed summary/read value rather than showing an empty editor', () => {
+    const malformed: unknown[] = [
+      null,
+      undefined,
+      {},
+      { summary: 'none' },
+      { summary: { ...SUMMARY_VIEW, scopeKind: 'board' } },
+      { summary: { ...SUMMARY_VIEW, scopeId: '' } },
+      { summary: { ...SUMMARY_VIEW, revision: -1 } },
+      { summary: { ...SUMMARY_VIEW, baseline: { revision: 1, applicabilityRevision: 0 } } },
+      { summary: { ...SUMMARY_VIEW, history: 'none' } },
+      { summary: { ...SUMMARY_VIEW, history: [null] } },
+      { summary: { ...SUMMARY_VIEW, current: { versionId: 'ver-1' } } },
+      { summary: { ...SUMMARY_VIEW, draft: { draftId: 'd', state: 'unknown' } } },
+      { summary: { ...SUMMARY_VIEW, recheck: null } },
+      { summary: { ...SUMMARY_VIEW, recheck: { pending: 'no', reasons: [], markedAt: null } } },
+    ]
+    for (const value of malformed) {
+      expect(parseSummaryReadValue(value), `accepted ${JSON.stringify(value)}`).toBeNull()
+    }
+  })
+
+  it('parses all three save outcomes and accepts view:null as "landed, re-read failed"', () => {
+    const committed = {
+      outcome: 'committed',
+      revision: 2,
+      applicabilityRevision: 0,
+      versionId: 'ver-2',
+      changeKind: 'modified',
+      consumedDraftIds: ['draft-1'],
+      draftUpdateFailures: [],
+      needsRecheck: false,
+      view: SUMMARY_VIEW,
+    }
+    expect(parseSummarySaveValue(committed)).toEqual(committed)
+    // The write landed but the re-read failed: an honest null, not a save error.
+    expect(parseSummarySaveValue({ ...committed, view: null })).toEqual({ ...committed, view: null })
+
+    const replayed = {
+      outcome: 'already-applied',
+      revision: 2,
+      applicabilityRevision: 0,
+      appliedRevision: 2,
+      appliedAt: '2026-11-13T00:00:00.000Z',
+      versionId: 'ver-2',
+      consumedDraftIds: [],
+      view: null,
+    }
+    expect(parseSummarySaveValue(replayed)).toEqual(replayed)
+
+    const unchanged = { outcome: 'no-change', revision: 2, summaryVersionId: 'ver-2', view: SUMMARY_VIEW }
+    expect(parseSummarySaveValue(unchanged)).toEqual(unchanged)
+    expect(parseSummarySaveValue({ ...unchanged, summaryVersionId: null })).toEqual({ ...unchanged, summaryVersionId: null })
+
+    const malformed: unknown[] = [
+      null,
+      {},
+      { ...committed, outcome: 'saved' },
+      { ...committed, outcome: undefined },
+      { ...committed, revision: -1 },
+      { ...committed, versionId: '' },
+      { ...committed, changeKind: 'unchanged' },
+      { ...committed, consumedDraftIds: 'draft-1' },
+      { ...committed, draftUpdateFailures: [7] },
+      { ...committed, needsRecheck: 'no' },
+      { ...committed, view: 'none' },
+      { ...replayed, appliedRevision: 1.5 },
+      { ...replayed, appliedAt: '' },
+      { ...unchanged, revision: -1 },
+      { ...unchanged, summaryVersionId: '' },
+      { ...unchanged, view: undefined },
+    ]
+    for (const value of malformed) {
+      expect(parseSummarySaveValue(value), `accepted ${JSON.stringify(value)}`).toBeNull()
+    }
+  })
+
+  it('parses both baseline halves from a stale-baseline failure without weakening the grammar', () => {
+    const details = {
+      baseline: {
+        expected: { revision: 1, applicabilityRevision: 0, summaryVersionId: 'ver-1' },
+        actual: { revision: 2, applicabilityRevision: 0, summaryVersionId: 'ver-2' },
+      },
+    }
+    expect(parseSummarySaveFailureDetails(details)).toEqual(details)
+    expect(parseSummarySaveFailureDetails({})).toEqual({})
+    expect(parseSummarySaveFailureDetails({
+      baseline: {
+        expected: { revision: -1, applicabilityRevision: 0, summaryVersionId: null },
+        actual: { revision: 2, applicabilityRevision: 0, summaryVersionId: 'ver-2' },
+      },
+    })).toBeNull()
+    expect(parseSummarySaveFailureDetails({
+      baseline: {
+        expected: { revision: 1, applicabilityRevision: 0, summaryVersionId: '' },
+        actual: { revision: 2, applicabilityRevision: 0, summaryVersionId: 'ver-2' },
+      },
+    })).toBeNull()
+    expect(parseSummarySaveFailureDetails({
+      baseline: {
+        expected: { revision: 1, applicabilityRevision: 0, summaryVersionId: null },
+      },
+    })).toBeNull()
+  })
+})
+
+describe('F03 manual draft save (summary/draft.save)', () => {
+  it('parses the draft body without any official baseline', () => {
+    expect(parseSummaryDraftSavePayload({ scopeKind: 'task', scopeId: 'task-1', content: SUMMARY_CONTENT_INPUT })).toEqual({
+      scopeKind: 'task',
+      scopeId: 'task-1',
+      content: SUMMARY_CONTENT_INPUT,
+    })
+    expect(
+      parseSummaryDraftSavePayload({
+        scopeKind: 'project',
+        scopeId: 'ws-1',
+        content: SUMMARY_CONTENT_INPUT,
+        updateId: 'draft-1',
+      }),
+    ).toEqual({ scopeKind: 'project', scopeId: 'ws-1', content: SUMMARY_CONTENT_INPUT, updateId: 'draft-1' })
+    // A body without conclusions is shape-valid; core normalises it.
+    expect(
+      parseSummaryDraftSavePayload({ scopeKind: 'task', scopeId: 'task-1', content: { sections: [SUMMARY_SECTION] } }),
+    ).not.toBeNull()
+  })
+
+  it('refuses a malformed draft payload instead of inventing a scope or a body', () => {
+    const base = { scopeKind: 'task' as const, scopeId: 'task-1', content: SUMMARY_CONTENT_INPUT }
+    const malformed: unknown[] = [
+      null,
+      undefined,
+      [],
+      {},
+      { ...base, scopeKind: 'board' },
+      { ...base, scopeId: '' },
+      { ...base, scopeId: 7 },
+      { ...base, content: null },
+      { ...base, content: {} },
+      { ...base, content: { sections: 'none' } },
+      { ...base, content: { sections: [{ id: '', title: 't', body: 'b' }] } },
+      { ...base, updateId: '' },
+      { ...base, updateId: 7 },
+      { ...base, cleared: true },
+    ]
+    for (const value of malformed) {
+      expect(parseSummaryDraftSavePayload(value), `accepted ${JSON.stringify(value)}`).toBeNull()
+    }
+  })
+
+  it('parses the stored draft as the success value and refuses a version-shaped body', () => {
+    expect(parseSummaryDraftSaveValue({ draft: SUMMARY_DRAFT })).toEqual({ draft: SUMMARY_DRAFT })
+    const malformed: unknown[] = [
+      null,
+      {},
+      { draft: null },
+      { draft: { draftId: '', state: 'editing' } },
+      { draft: { ...SUMMARY_DRAFT, draftId: '' } },
+      { draft: { ...SUMMARY_DRAFT, state: 'unknown' } },
+      { draft: { ...SUMMARY_DRAFT, content: null } },
+      { draft: SUMMARY_VERSION },
+    ]
+    for (const value of malformed) {
+      expect(parseSummaryDraftSaveValue(value), `accepted ${JSON.stringify(value)}`).toBeNull()
+    }
   })
 })
 

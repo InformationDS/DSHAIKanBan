@@ -221,6 +221,13 @@ export type ActivityCode =
   | 'task-undone'
   | 'task-undo-refused'
   | 'pair-confirmed'
+  /**
+   * F03-R02: a manual summary/overview was saved as a new official version.
+   * Distinct from `pair-confirmed` on purpose: a manual save has no paired
+   * record and no attributed conversation, so its history entry must not imply
+   * either.
+   */
+  | 'summary-saved'
   | 'project-registered'
   | 'project-updated'
   | 'work-scope-changed'
@@ -1000,6 +1007,113 @@ export interface RestoreInput {
 /** Outcome of `amendApplicability`. */
 export type AmendOutcome = ConfirmOutcome;
 
+/* ------------------------------------------------------------------------- *
+ * F03 manual summaries and project overviews
+ * ------------------------------------------------------------------------- */
+
+/**
+ * F03-R04 / SAVE-05: the summary baseline a manual review screen held before
+ * editing. `summaryVersionId` is the version the user was looking at; `null`
+ * means "there is no official summary yet", which is a meaningful baseline of
+ * its own (creating the first manual summary from it is legal, F03-R01).
+ */
+export interface SummaryBaseline {
+  readonly revision: number;
+  readonly applicabilityRevision: number;
+  readonly summaryVersionId: string | null;
+}
+
+/**
+ * One summary/overview version as read back for a manual editor.
+ *
+ * `ObjectView` deliberately omits the write's `changeKind`; the manual editor
+ * must show 修改结果 (created/modified/cleared, F03-R02), so the view adds it
+ * next to the unchanged read surface.
+ */
+export interface SummaryVersionView extends ObjectView {
+  readonly changeKind: ChangeKind;
+}
+
+/** One scope's manual summary state: official body, history and active draft. */
+export interface SummaryView {
+  readonly scopeKind: ScopeKind;
+  readonly scopeId: string;
+  readonly revision: number;
+  readonly applicabilityRevision: number;
+  /** The baseline a save from this view should carry (F03-R04). */
+  readonly baseline: SummaryBaseline;
+  readonly current: SummaryVersionView | null;
+  /** Version history, newest first (the manual editor lists recent saves). */
+  readonly history: readonly SummaryVersionView[];
+  /** The active manual draft for this scope, if the user has one in flight. */
+  readonly draft: DraftRecord | null;
+  /** 概况/总览待核对 derived from the head and drafts (F07 boundary, read-only here). */
+  readonly needsRecheck: boolean;
+  readonly recheck: RecheckView;
+}
+
+/**
+ * One manual summary save (F03-R02/R07).
+ *
+ * This is deliberately **not** `ConfirmInput`: a manual summary has no connected
+ * conversation/outcome, so the paired confirm's fixed-attribution check
+ * (F06-R01) must never run for it. The identity and baseline model is the same,
+ * and the write is still exactly one `put`.
+ */
+export interface ManualSummaryInput {
+  readonly scopeKind: ScopeKind;
+  readonly scopeId: string;
+  /** Identity of this save intent; a double click/retry reuses it (F03-R07). */
+  readonly updateId: string;
+  readonly expected: SummaryBaseline;
+  /** The new body. Mutually exclusive with `cleared`. */
+  readonly content?: ObjectContent;
+  /** F03-R05 boundary: clearing the body is an explicit delete change. */
+  readonly cleared?: boolean;
+  /** Manual drafts this save consumes; updated only after the commit lands. */
+  readonly consumeDraftIds?: readonly string[];
+  readonly confirmedAt?: string;
+}
+
+/** Outcome of `saveManualSummary` (F03-R02/R04/R07). */
+export type ManualSummaryOutcome =
+  | {
+      readonly status: 'committed';
+      readonly revision: number;
+      readonly applicabilityRevision: number;
+      readonly versionId: string;
+      readonly changeKind: ChangeKind;
+      readonly consumedDraftIds: readonly string[];
+      readonly draftUpdateFailures: readonly string[];
+      readonly needsRecheck: boolean;
+    }
+  | {
+      readonly status: 'already-applied';
+      readonly revision: number;
+      readonly applicabilityRevision: number;
+      readonly appliedRevision: number;
+      readonly appliedAt: string;
+      readonly versionId: string;
+      readonly consumedDraftIds: readonly string[];
+    }
+  | {
+      readonly status: 'no-change';
+      readonly revision: number;
+      readonly summaryVersionId: string | null;
+    }
+  | {
+      readonly status: 'blocked';
+      readonly code: 'baseline-changed';
+      readonly revision: number;
+      readonly expected: SummaryBaseline;
+      readonly actual: SummaryBaseline;
+    }
+  | {
+      readonly status: 'rejected';
+      readonly code: 'unknown-scope' | 'invalid-input';
+      readonly message: string;
+    };
+
 /** The core model's public surface. */
 export interface KanbanCore {
   readonly portName: string;
@@ -1103,6 +1217,25 @@ export interface KanbanCore {
     readonly scopeId: string;
     readonly limit?: number;
   }): readonly ActivityEntry[];
+
+  /**
+   * F03: read one scope's manual summary/overview state (official body, history,
+   * active manual draft, baseline). Read-only: never registers a project, never
+   * writes. A scope that does not exist returns `null` — not an empty summary.
+   */
+  readSummary(input: { readonly scopeKind: ScopeKind; readonly scopeId: string }): SummaryView | null;
+
+  /**
+   * F03-R01/R02/R07: save a manual summary/overview as a new official version.
+   *
+   * Deliberately independent of `confirmPaired`: there is no attributed
+   * conversation/outcome and no record member, so the paired path's link check
+   * (F06-R01) must not apply. Idempotent by `updateId`, baseline-checked by
+   * SAVE-05/F03-R04, and committed as ONE scope-head `put`. It never touches
+   * task title/goal/status (F03-R03); a substantive save appends the summary
+   * version and one `summary-saved` activity entry in that same write.
+   */
+  saveManualSummary(input: ManualSummaryInput): Promise<ManualSummaryOutcome>;
 
   // --- F02 status, column order and undo ------------------------------------
 

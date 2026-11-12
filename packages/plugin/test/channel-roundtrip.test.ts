@@ -1,5 +1,5 @@
 /**
- * F02 protocol round trip — the evidence ADR-005 asks for.
+ * F02/F03 protocol round trip — the evidence ADR-005 asks for.
  *
  * ## What this proves, and what it does not
  *
@@ -109,6 +109,61 @@ const ACTIVITY = [
 /** A snapshot as the host half sends it. */
 function snapshot(tasks: readonly unknown[] = [TODO_TASK, DOING_TASK]) {
   return { project: PROJECT, tasks, columns: COLUMNS, boardToken: 'tok-1', capabilities: CAPABILITIES }
+}
+
+/* ------------------------------------------------------------------ *
+ * F03 manual summary fixtures
+ * ------------------------------------------------------------------ */
+
+const SUMMARY_CONTENT = {
+  sections: [{ id: 'progress', title: '进展', body: '已接通数据通道' }],
+  conclusions: [],
+}
+
+const SUMMARY_VERSION = {
+  versionId: 'sumv-1',
+  seq: 1,
+  confirmedAt: '2026-11-12T00:00:00.000Z',
+  origin: 'user',
+  changeKind: 'created',
+  previousVersionId: null,
+  content: SUMMARY_CONTENT,
+  conclusions: [],
+  readToken: 'read-token-1',
+}
+
+const SUMMARY_VIEW = {
+  scopeKind: 'task',
+  scopeId: 'task-1',
+  revision: 2,
+  applicabilityRevision: 0,
+  baseline: { revision: 2, applicabilityRevision: 0, summaryVersionId: 'sumv-1' },
+  current: SUMMARY_VERSION,
+  history: [SUMMARY_VERSION],
+  draft: null,
+  needsRecheck: false,
+  recheck: { pending: false, reasons: [], markedAt: null },
+}
+
+const SUMMARY_COMMITTED = {
+  outcome: 'committed',
+  revision: 3,
+  applicabilityRevision: 0,
+  versionId: 'sumv-2',
+  changeKind: 'modified',
+  consumedDraftIds: [],
+  draftUpdateFailures: [],
+  needsRecheck: false,
+  view: SUMMARY_VIEW,
+}
+
+const SUMMARY_DRAFT = {
+  draftId: 'draft-1',
+  state: 'editing',
+  updateId: 'draft-update-1',
+  updatedAt: '2026-11-12T00:00:00.000Z',
+  base: { scopeRevision: 2, applicabilityRevision: 0 },
+  content: SUMMARY_CONTENT,
 }
 
 /* ------------------------------------------------------------------ *
@@ -261,6 +316,18 @@ describe('F02 channel: protocol round trip (built client bundle ↔ built host h
       readActivity: async (input: unknown) => {
         calls.push({ port: 'readActivity', input })
         return { ok: true as const, entries: ACTIVITY }
+      },
+      readSummary: async (input: unknown) => {
+        calls.push({ port: 'readSummary', input })
+        return { ok: true as const, summary: SUMMARY_VIEW }
+      },
+      saveSummary: async (input: unknown) => {
+        calls.push({ port: 'saveSummary', input })
+        return { ok: true as const, value: SUMMARY_COMMITTED }
+      },
+      saveSummaryDraft: async (input: unknown) => {
+        calls.push({ port: 'saveSummaryDraft', input })
+        return { ok: true as const, draft: SUMMARY_DRAFT }
       },
       ...portOverrides,
     }
@@ -744,5 +811,230 @@ describe('F02 channel: protocol round trip (built client bundle ↔ built host h
     expect(attempts).toBe(1)
     expect(result.message).not.toContain('后重试')
     expect(result.message).toContain('不要重复提交')
+  })
+
+  it('reads a manual summary through the endpoint with the scope only', async () => {
+    const { source, transport, calls } = await wire()
+
+    const result = await source.readSummary({ scopeKind: 'task', scopeId: 'task-1' })
+
+    expect(transport.sent[0]?.endpoint).toBe('summary/read')
+    expect(transport.sent[0]?.envelope.payload).toEqual({ scopeKind: 'task', scopeId: 'task-1' })
+    expect(calls).toEqual([{ port: 'readSummary', input: { scopeKind: 'task', scopeId: 'task-1' } }])
+    expect(result.ok, result.ok ? '' : `summary read failed: ${result.code} ${result.message}`).toBe(true)
+    if (!result.ok) throw new Error(result.message)
+    expect(result.summary).toEqual(SUMMARY_VIEW)
+  })
+
+  it('carries summary:null as a legal "no summary yet" answer', async () => {
+    const { source } = await wire({ readSummary: async () => ({ ok: true, summary: null }) })
+
+    const result = await source.readSummary({ scopeKind: 'project', scopeId: 'ws-1' })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.message)
+    expect(result.summary).toBeNull()
+  })
+
+  it('saves a manual summary, encoding the baseline as plain revisions at the carrier', async () => {
+    const { source, transport, calls } = await wire()
+
+    const result = await source.saveSummary({
+      scopeKind: 'task',
+      scopeId: 'task-1',
+      updateId: 'summary-1',
+      expected: { revision: 2, applicabilityRevision: 0, summaryVersionId: 'sumv-1' },
+      content: SUMMARY_CONTENT,
+    })
+
+    expect(transport.sent[0]?.endpoint).toBe('summary/save')
+    expect(transport.sent[0]?.envelope.payload).toEqual({
+      scopeKind: 'task',
+      scopeId: 'task-1',
+      updateId: 'summary-1',
+      expectedRevision: 2,
+      expectedApplicabilityRevision: 0,
+      expectedSummaryVersionId: 'sumv-1',
+      content: SUMMARY_CONTENT,
+    })
+    expect(calls).toEqual([
+      {
+        port: 'saveSummary',
+        input: {
+          scopeKind: 'task',
+          scopeId: 'task-1',
+          updateId: 'summary-1',
+          expected: { revision: 2, applicabilityRevision: 0, summaryVersionId: 'sumv-1' },
+          content: SUMMARY_CONTENT,
+        },
+      },
+    ])
+    expect(result.ok, result.ok ? '' : `summary save failed: ${result.code} ${result.message}`).toBe(true)
+    if (!result.ok) throw new Error(result.message)
+    expect(result.outcome).toBe('committed')
+    expect(result.versionId).toBe('sumv-2')
+    expect(result.view).toEqual(SUMMARY_VIEW)
+  })
+
+  it('keeps the committed save authoritative when the refreshed view is null', async () => {
+    const { source } = await wire({
+      saveSummary: async () => ({ ok: true as const, value: { ...SUMMARY_COMMITTED, view: null } }),
+    })
+
+    const result = await source.saveSummary({
+      scopeKind: 'task',
+      scopeId: 'task-1',
+      updateId: 'summary-1',
+      expected: { revision: 2, applicabilityRevision: 0, summaryVersionId: 'sumv-1' },
+      content: SUMMARY_CONTENT,
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.message)
+    expect(result.outcome).toBe('committed')
+    expect(result.versionId).toBe('sumv-2')
+    expect(result.view).toBeNull()
+  })
+
+  it('carries both baselines on a stale summary save', async () => {
+    const expected = { revision: 2, applicabilityRevision: 0, summaryVersionId: 'sumv-1' }
+    const actual = { revision: 3, applicabilityRevision: 0, summaryVersionId: 'sumv-2' }
+    const { source } = await wire({
+      saveSummary: async () => ({
+        ok: false as const,
+        code: 'stale-baseline',
+        message: 'the summary moved',
+        baseline: { expected, actual },
+      }),
+    })
+
+    const result = await source.saveSummary({
+      scopeKind: 'task',
+      scopeId: 'task-1',
+      updateId: 'summary-1',
+      expected,
+      content: SUMMARY_CONTENT,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('a stale baseline was reported as success')
+    expect(result.code).toBe('stale-baseline')
+    expect(result.baseline).toEqual({ expected, actual })
+  })
+
+  it('refuses a non-canonical summary baseline before the data layer', async () => {
+    const { handler, calls } = await wire()
+
+    const result = (await handler(
+      'summary/save',
+      {
+        scopeKind: 'task',
+        scopeId: 'task-1',
+        updateId: 'summary-1',
+        expectedRevision: -1,
+        expectedApplicabilityRevision: 0,
+        expectedSummaryVersionId: null,
+        content: SUMMARY_CONTENT,
+      },
+      new AbortController().signal,
+    )) as RpcFailure
+
+    expect(result.ok).toBe(false)
+    expect(result.error.code).toBe('invalid-payload')
+    expect(calls).toEqual([])
+  })
+
+  it('reports an unconfirmed summary save exactly once as unknown-result', async () => {
+    const client = loadClientHalf()
+    let attempts = 0
+    const source = client.createChannelBoardSource({
+      rpc: {
+        call: async () => {
+          attempts += 1
+          throw new Error('socket dropped')
+        },
+      },
+    })
+
+    const result = await source.saveSummary({
+      scopeKind: 'task',
+      scopeId: 'task-1',
+      updateId: 'summary-1',
+      expected: { revision: 2, applicabilityRevision: 0, summaryVersionId: 'sumv-1' },
+      content: SUMMARY_CONTENT,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('an unknown save was reported as success')
+    expect(result.code).toBe('unknown-result')
+    expect(attempts).toBe(1)
+    expect(result.message).not.toContain('后重试')
+    expect(result.message).toContain('不要重复提交')
+  })
+
+  describe('F03 channel: manual draft save round trip', () => {
+    it('carries the draft body to the port and returns the stored draft', async () => {
+      const { source, transport, calls } = await wire()
+
+      const result = await source.saveSummaryDraft({
+        scopeKind: 'task',
+        scopeId: 'task-1',
+        content: SUMMARY_CONTENT,
+        updateId: 'draft-update-1',
+      })
+
+      expect(transport.sent[0]?.endpoint).toBe('summary/draft.save')
+      expect(transport.sent[0]?.envelope.payload).toEqual({
+        scopeKind: 'task',
+        scopeId: 'task-1',
+        content: SUMMARY_CONTENT,
+        updateId: 'draft-update-1',
+      })
+      expect(calls).toEqual([
+        {
+          port: 'saveSummaryDraft',
+          input: { scopeKind: 'task', scopeId: 'task-1', content: SUMMARY_CONTENT, updateId: 'draft-update-1' },
+        },
+      ])
+      expect(result.ok, result.ok ? '' : `${result.code} ${result.message}`).toBe(true)
+      if (!result.ok) throw new Error(result.message)
+      expect(result.draft).toEqual(SUMMARY_DRAFT)
+    })
+
+    it('refuses a draft payload without a body before the data layer', async () => {
+      const { handler, calls } = await wire()
+
+      const result = (await handler(
+        'summary/draft.save',
+        { scopeKind: 'task', scopeId: 'task-1' },
+        new AbortController().signal,
+      )) as RpcFailure
+
+      expect(result.ok).toBe(false)
+      expect(result.error.code).toBe('invalid-payload')
+      expect(calls).toEqual([])
+    })
+
+    it('reports an unconfirmed draft save exactly once as unknown-result', async () => {
+      const client = loadClientHalf()
+      let attempts = 0
+      const source = client.createChannelBoardSource({
+        rpc: {
+          call: async () => {
+            attempts += 1
+            throw new Error('socket dropped')
+          },
+        },
+      })
+
+      const result = await source.saveSummaryDraft({ scopeKind: 'task', scopeId: 'task-1', content: SUMMARY_CONTENT })
+
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('an unknown draft save was reported as success')
+      expect(result.code).toBe('unknown-result')
+      expect(attempts).toBe(1)
+      expect(result.message).not.toContain('后重试')
+      expect(result.message).toContain('不要重复提交')
+    })
   })
 })

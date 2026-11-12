@@ -58,6 +58,8 @@ import type {
   FieldsBaseline,
   KanbanCore,
   LinkOutcome,
+  ManualSummaryInput,
+  ManualSummaryOutcome,
   MemberInput,
   MemberKey,
   ObjectContent,
@@ -71,6 +73,9 @@ import type {
   ScopeKind,
   ScopeStateRecord,
   SourceRef,
+  SummaryBaseline,
+  SummaryVersionView,
+  SummaryView,
   VersionEntry,
 } from './types.ts';
 
@@ -692,6 +697,262 @@ export function createKanbanCore(options: CoreOptions): KanbanCore {
     };
   };
 
+  /* ---------------- F03 manual summaries / project overviews ---------------- */
+
+  /**
+   * A manual summary is stored in the same `taskSummary`/`projectOverview` chain
+   * as an AI-written summary: one official body per scope, one history. Only the
+   * draft slot is manual (F03-R07), and that is core's existing `saveDraft`.
+   */
+  const manualDraftKindOf = (scopeKind: ScopeKind): DraftKind => (scopeKind === 'task' ? 'summaryDraft' : 'overviewDraft');
+
+  const summaryBaselineOf = (scope: ScopeStateRecord): SummaryBaseline => {
+    const shape = pairShapeOf(scope.scope.kind);
+    return {
+      revision: scope.revision,
+      applicabilityRevision: scope.applicabilityRevision,
+      summaryVersionId: currentVersionIdOf(scope, shape.summary, scope.scope.id),
+    };
+  };
+
+  const summaryVersionOf = (scope: ScopeStateRecord, entry: VersionEntry): SummaryVersionView => ({
+    ...toObjectView(scope, entry),
+    changeKind: entry.changeKind,
+  });
+
+  /** The one active manual draft for a scope (candidate states only), newest first by `updatedAt`. */
+  const activeManualDraftOf = (scopeKind: ScopeKind, scopeId: string, drafts: readonly DraftRecord[]): DraftRecord | null => {
+    const kind = manualDraftKindOf(scopeKind);
+    const candidates = drafts.filter(
+      (draft) =>
+        draft.kind === kind &&
+        draft.scopeKind === scopeKind &&
+        draft.scopeId === scopeId &&
+        draft.objectId === scopeId &&
+        CANDIDATE_STATES.has(draft.state),
+    );
+    candidates.sort((left, right) => {
+      if (left.updatedAt !== right.updatedAt) return left.updatedAt < right.updatedAt ? 1 : -1;
+      return left.draftId < right.draftId ? -1 : left.draftId > right.draftId ? 1 : 0;
+    });
+    return candidates[0] ?? null;
+  };
+
+  const summaryViewOf = (scope: ScopeStateRecord, at: string): SummaryView => {
+    const shape = pairShapeOf(scope.scope.kind);
+    const objectKind = shape.summary;
+    const objectId = scope.scope.id;
+    const drafts = readDrafts();
+    const recheck = computeRecheck(scope.scope.kind, scope.scope.id, scope, drafts, at);
+    const currentEntry = currentEntryOf(scope, objectKind, objectId);
+    const history = [...chainOf(scope, objectKind, objectId)].reverse().map((entry) => summaryVersionOf(scope, entry));
+    return {
+      scopeKind: scope.scope.kind,
+      scopeId: scope.scope.id,
+      revision: scope.revision,
+      applicabilityRevision: scope.applicabilityRevision,
+      baseline: summaryBaselineOf(scope),
+      current: currentEntry === null ? null : summaryVersionOf(scope, currentEntry),
+      history,
+      draft: activeManualDraftOf(scope.scope.kind, scope.scope.id, drafts),
+      needsRecheck: recheck[shape.recheckTarget].pending,
+      recheck,
+    };
+  };
+
+  /**
+   * Save one manual summary/overview (F03-R01/R02/R07).
+   *
+   * Same concurrency model as a paired confirmation: the entire decision runs
+   * inside ONE scope-head `port.update`, so idempotency and the baseline are
+   * decided at the write slot, and a commit is exactly one `put`. The paired
+   * path's fixed-attribution check is deliberately absent: a manual summary is
+   * not attached to a conversation or an outcome task.
+   */
+  const saveManualSummary = async (input: ManualSummaryInput): Promise<ManualSummaryOutcome> => {
+    const scope = readScope(input.scopeKind, input.scopeId);
+    if (scope === undefined) {
+      return { status: 'rejected', code: 'unknown-scope', message: `no ${input.scopeKind} scope '${input.scopeId}'` };
+    }
+    if (typeof input.updateId !== 'string' || input.updateId.length === 0) {
+      return { status: 'rejected', code: 'invalid-input', message: 'a manual summary save requires a non-empty updateId' };
+    }
+    const hasContent = input.content !== undefined;
+    if (hasContent === (input.cleared === true)) {
+      return {
+        status: 'rejected',
+        code: 'invalid-input',
+        message: "a manual summary save requires exactly one of 'content' or 'cleared'",
+      };
+    }
+    if (hasContent) {
+      const content = input.content;
+      if (content === undefined || !Array.isArray(content.sections)) {
+        return { status: 'rejected', code: 'invalid-input', message: 'a manual summary body must carry a sections array' };
+      }
+      if (content.conclusions !== undefined && !Array.isArray(content.conclusions)) {
+        return { status: 'rejected', code: 'invalid-input', message: 'a manual summary body conclusions field must be an array' };
+      }
+    }
+
+    const shape = pairShapeOf(input.scopeKind);
+    const objectKind = shape.summary;
+    const objectId = input.scopeId;
+    const at = input.confirmedAt ?? now();
+    const memberInput: MemberInput = input.cleared === true ? { cleared: true } : { content: input.content as ObjectContent };
+
+    let decision: ManualSummaryOutcome | undefined;
+    await port.update<ScopeStateRecord>(SCOPE_TABLE, scopeKey(input.scopeKind, input.scopeId), (raw) => {
+      const current = normalizeScope(raw);
+      if (current === undefined) {
+        decision = { status: 'rejected', code: 'unknown-scope', message: `no ${input.scopeKind} scope '${input.scopeId}'` };
+        return raw;
+      }
+
+      // Idempotency first (SAVE-06/F03-R07): the same updateId can never produce
+      // a second version, even if the content differs from the one that landed.
+      const prior = chainOf(current, objectKind, objectId).find((entry) => entry.updateId === input.updateId);
+      if (prior !== undefined) {
+        const consumedDraftIds = readDrafts()
+          .filter(
+            (draft) =>
+              draft.scopeKind === input.scopeKind &&
+              draft.scopeId === input.scopeId &&
+              draft.kind === manualDraftKindOf(input.scopeKind) &&
+              draft.consumedBy?.updateId === input.updateId,
+          )
+          .map((draft) => draft.draftId);
+        decision = {
+          status: 'already-applied',
+          revision: current.revision,
+          applicabilityRevision: current.applicabilityRevision,
+          appliedRevision: prior.revision,
+          appliedAt: prior.confirmedAt,
+          versionId: prior.versionId,
+          consumedDraftIds,
+        };
+        return current;
+      }
+
+      const actual = summaryBaselineOf(current);
+      if (
+        actual.revision !== input.expected.revision ||
+        actual.applicabilityRevision !== input.expected.applicabilityRevision ||
+        actual.summaryVersionId !== input.expected.summaryVersionId
+      ) {
+        decision = { status: 'blocked', code: 'baseline-changed', revision: current.revision, expected: input.expected, actual };
+        return current;
+      }
+
+      let plan: MemberPlan;
+      try {
+        plan = planMember('summary', objectKind, objectId, memberInput, currentEntryOf(current, objectKind, objectId));
+      } catch (error) {
+        if (error instanceof CoreError) {
+          decision = { status: 'rejected', code: 'invalid-input', message: error.message };
+          return current;
+        }
+        throw error;
+      }
+      if (!plan.versioned || plan.change === 'none' || plan.change === 'cosmetic') {
+        decision = { status: 'no-change', revision: current.revision, summaryVersionId: actual.summaryVersionId };
+        return current;
+      }
+      if (isEmptyContent(plan.nextContent) && currentEntryOf(current, objectKind, objectId) === null) {
+        decision = { status: 'no-change', revision: current.revision, summaryVersionId: actual.summaryVersionId };
+        return current;
+      }
+
+      const chain = chainOf(current, objectKind, objectId);
+      const versionId = versionIdOf({ updateId: input.updateId, objectKind, objectId });
+      const revision = current.revision + 1;
+      const entry: VersionEntry = {
+        versionId,
+        objectKind,
+        objectId,
+        scopeKind: input.scopeKind,
+        scopeId: input.scopeId,
+        seq: chain.length + 1,
+        updateId: input.updateId,
+        confirmedAt: at,
+        previousVersionId: chain[chain.length - 1]?.versionId ?? null,
+        origin: 'user',
+        source:
+          input.scopeKind === 'task'
+            ? { generator: 'manual', taskId: input.scopeId }
+            : { generator: 'manual', projectId: input.scopeId },
+        readSourceVersionIds: [],
+        coveredStage: null,
+        aiDraft: null,
+        userResult: null,
+        changeKind: plan.changeKind,
+        content: plan.nextContent,
+        revision,
+        applicabilityRevision: current.applicabilityRevision,
+        restoredFrom: null,
+      };
+      const next: ScopeStateRecord = {
+        ...current,
+        revision,
+        lastCommittedUpdateId: input.updateId,
+        lastConfirmedAt: at,
+        current: { ...current.current, [objectKind]: { ...current.current[objectKind], [objectId]: versionId } },
+        chains: { ...current.chains, [objectKind]: { ...current.chains[objectKind], [objectId]: [...chain, entry] } },
+        updatedAt: at,
+      };
+      const withActivity = appendActivity(next, {
+        code: 'summary-saved',
+        summary: `已保存手动${input.scopeKind === 'task' ? '任务概况' : '项目总览'}（第 ${revision} 次提交）`,
+        details: {
+          updateId: input.updateId,
+          versionId,
+          revision: String(revision),
+          changeKind: plan.changeKind,
+          generator: 'manual',
+        },
+        at,
+      });
+      decision = {
+        status: 'committed',
+        revision,
+        applicabilityRevision: current.applicabilityRevision,
+        versionId,
+        changeKind: plan.changeKind,
+        consumedDraftIds: [],
+        draftUpdateFailures: [],
+        needsRecheck: computeRecheck(input.scopeKind, input.scopeId, withActivity, readDrafts(), at)[shape.recheckTarget].pending,
+      };
+      return withActivity;
+    });
+
+    const outcome = decision;
+    if (outcome === undefined) {
+      return { status: 'rejected', code: 'unknown-scope', message: `no ${input.scopeKind} scope '${input.scopeId}'` };
+    }
+    if (outcome.status !== 'committed') return outcome;
+
+    // F03-R07: consume only after the commit is durable; a no-change/blocked/
+    // rejected/already-applied save never consumes anything.
+    const drafts = readDrafts();
+    const requested = new Set(input.consumeDraftIds ?? []);
+    const candidates = drafts.filter(
+      (draft) =>
+        draft.kind === manualDraftKindOf(input.scopeKind) &&
+        draft.scopeKind === input.scopeKind &&
+        draft.scopeId === input.scopeId &&
+        CANDIDATE_STATES.has(draft.state) &&
+        (draft.updateId === input.updateId || requested.has(draft.draftId)),
+    );
+    if (candidates.length === 0) return outcome;
+    const consumed = await consumeDrafts(
+      candidates.map((draft) => draft.draftId),
+      input.updateId,
+      outcome.revision,
+      at,
+    );
+    return { ...outcome, consumedDraftIds: consumed.consumed, draftUpdateFailures: consumed.failures };
+  };
+
   const confirmPaired = async (input: ConfirmInput): Promise<ConfirmOutcome> => runConfirm(input, null);
 
   const runConfirm = async (
@@ -1256,6 +1517,13 @@ export function createKanbanCore(options: CoreOptions): KanbanCore {
     readScopeState(input) {
       return readScope(input.scopeKind, input.scopeId) ?? null;
     },
+
+    readSummary(input) {
+      const scope = readScope(input.scopeKind, input.scopeId);
+      return scope === undefined ? null : summaryViewOf(scope, now());
+    },
+
+    saveManualSummary,
   };
 
   // F01 project/task fields live in the very same scope heads (one management

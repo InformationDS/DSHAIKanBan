@@ -36,6 +36,12 @@ import type {
   KeptFieldInputWire,
   KeptTaskInputWire,
   ProjectListItem,
+  SummaryBaselineWire,
+  SummaryContentWire,
+  SummaryDraftSaveValue,
+  SummarySaveFailureDetails,
+  SummarySaveValue,
+  SummaryViewValue,
   UpdateFieldsFailureDetails,
 } from './wire.js'
 import type { BoardCapabilities, BoardReadData, BoardTask, StatusId } from './model.js'
@@ -336,6 +342,106 @@ export interface ActivityFailure {
 export type ActivityResult = ActivitySuccess | ActivityFailure
 
 /* ------------------------------------------------------------------ *
+ * Manual summaries / project overviews (F03)
+ * ------------------------------------------------------------------ */
+
+/** Which summary scope to read or save. */
+export interface SummaryScopeInput {
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+}
+
+/** A read of one task's manual summary or one project's manual overview. */
+export type ReadSummaryInput = SummaryScopeInput
+
+/**
+ * One manual summary save (F03-R02/R07).
+ *
+ * `expected` is the SAVE-05 baseline; the data layer refuses a stale baseline
+ * instead of merging. `updateId` is the user intent id: a retry after an
+ * unknown result reuses it and must not create a second version.
+ */
+export interface ManualSummarySaveInput extends SummaryScopeInput {
+  readonly updateId: string
+  readonly expected: SummaryBaselineWire
+  readonly content?: SummaryContentWire
+  /** `true` clears the official body (an explicit, user-confirmed clear). */
+  readonly cleared?: true
+  /** Draft ids this save claims as consumed after it commits (F03-R07). */
+  readonly consumeDraftIds?: readonly string[]
+}
+
+/**
+ * A summary read that succeeded.
+ *
+ * `summary: null` means the scope exists but has no official summary yet: an
+ * explicit "not written yet" empty state, not a failed read (F03-R01).
+ */
+export interface SummaryReadSuccess {
+  readonly ok: true
+  readonly summary: SummaryViewValue | null
+}
+
+/** A summary read that failed. Never silently an empty summary. */
+export interface SummaryReadFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+}
+
+/** Result of reading a manual summary. */
+export type SummaryReadResult = SummaryReadSuccess | SummaryReadFailure
+
+/**
+ * A summary save whose result is known (committed / already-applied /
+ * no-change).
+ *
+ * `view === null` means the save landed but the authoritative re-read failed;
+ * the UI says "已保存、视图未刷新" and retries the READ, never the write.
+ */
+export type SummarySaveSuccess = SummarySaveValue & { readonly ok: true }
+
+/**
+ * A summary save that was refused or failed. Nothing was written except, for
+ * `stale-baseline`, the two baselines carried in `details`.
+ */
+export interface SummarySaveFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+  readonly baseline?: SummarySaveFailureDetails['baseline']
+}
+
+/** Result of saving a manual summary. */
+export type SummarySaveResult = SummarySaveSuccess | SummarySaveFailure
+
+/**
+ * Save the in-flight manual draft of one scope (F03-R07).
+ *
+ * A draft is not an official version: it carries no baseline and confirms
+ * nothing. Saving the same scope again updates the same draft slot. The draft
+ * is consumed only when a later official save commits.
+ */
+export interface ManualSummaryDraftSaveInput extends SummaryScopeInput {
+  readonly content: SummaryContentWire
+  /** Optional identity of the save intent this draft belongs to. */
+  readonly updateId?: string
+}
+
+/** A draft save that succeeded: the stored draft, never a version. */
+export type SummaryDraftSaveSuccess = SummaryDraftSaveValue & { readonly ok: true }
+
+/** A draft save that failed; official content is never reported as saved. */
+export interface SummaryDraftSaveFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+}
+
+/** Result of saving a manual draft. */
+export type SummaryDraftSaveResult = SummaryDraftSaveSuccess | SummaryDraftSaveFailure
+
+/* ------------------------------------------------------------------ *
  * Project listing (Q1=B: candidate set, explicit selection)
  * ------------------------------------------------------------------ */
 
@@ -441,6 +547,30 @@ export interface BoardSource {
    * history; a failed read is a failure and never an empty history.
    */
   loadActivity(input: ActivityInput): Promise<ActivityResult>
+
+  /**
+   * Read one task's manual summary or one project's manual overview (F03).
+   *
+   * `summary: null` is a legal answer for an existing scope with no official
+   * body yet; a failed read is a failure and never an empty summary.
+   */
+  readSummary(input: ReadSummaryInput): Promise<SummaryReadResult>
+
+  /**
+   * Save (or clear) one manual summary under its SAVE-05 baseline (F03-R02).
+   *
+   * A retry after an unknown result reuses `updateId` so the data layer can
+   * answer `already-applied`; drafts are consumed only after a commit (R07).
+   */
+  saveSummary(input: ManualSummarySaveInput): Promise<SummarySaveResult>
+
+  /**
+   * Save the in-flight manual draft for one scope (F03-R07).
+   *
+   * Draft saving never creates an official version and never confirms; the
+   * editor restores it later. A failure must not be shown as "saved".
+   */
+  saveSummaryDraft(input: ManualSummaryDraftSaveInput): Promise<SummaryDraftSaveResult>
 }
 
 /* ------------------------------------------------------------------ *
@@ -461,6 +591,15 @@ export const NO_CHANNEL_FIELDS_MESSAGE = '看板数据通道未接通：无法�
 
 /** Text shown when the activity history cannot be read because no channel exists. */
 export const NO_CHANNEL_ACTIVITY_MESSAGE = '看板数据通道未接通：无法读取活动历史。这不等于「没有活动」。'
+
+/** Text shown when a manual summary cannot be read because no channel exists. */
+export const NO_CHANNEL_SUMMARY_READ_MESSAGE = '看板数据通道未接通：无法读取概况。这不等于「还没有概况」。'
+
+/** Text shown when a manual summary save cannot be sent because no channel exists. */
+export const NO_CHANNEL_SUMMARY_SAVE_MESSAGE = '看板数据通道未接通：无法保存概况，正式内容未改变。'
+
+/** Text shown when a manual draft save cannot be sent because no channel exists. */
+export const NO_CHANNEL_SUMMARY_DRAFT_MESSAGE = '看板数据通道未接通：无法保存概况草稿，正式内容未改变。'
 
 /**
  * A port with no transport behind it.
@@ -484,6 +623,10 @@ export function createUnavailableBoardSource(detail: string): BoardSource {
     createTask: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_CREATE_MESSAGE }),
     updateTaskFields: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_FIELDS_MESSAGE }),
     loadActivity: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_ACTIVITY_MESSAGE }),
+    readSummary: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_SUMMARY_READ_MESSAGE }),
+    saveSummary: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_SUMMARY_SAVE_MESSAGE }),
+    saveSummaryDraft: () =>
+      Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_SUMMARY_DRAFT_MESSAGE }),
   }
 }
 

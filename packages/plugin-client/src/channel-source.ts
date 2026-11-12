@@ -36,9 +36,15 @@ import type {
   CreateTaskInput,
   CreateTaskResult,
   FormalStatusValue,
+  ManualSummaryDraftSaveInput,
+  ManualSummarySaveInput,
   ProjectListResult,
+  ReadSummaryInput,
   ReorderInput,
   StatusChangeInput,
+  SummaryDraftSaveResult,
+  SummaryReadResult,
+  SummarySaveResult,
   UndoInput,
   UpdateFieldsInput,
   UpdateFieldsResult,
@@ -55,6 +61,10 @@ import {
   parseCreateTaskValue,
   parseFormalStatusValue,
   parseProjectListValue,
+  parseSummaryDraftSaveValue,
+  parseSummaryReadValue,
+  parseSummarySaveFailureDetails,
+  parseSummarySaveValue,
   parseUpdateFieldsFailureDetails,
   parseUpdateFieldsValue,
   type ActivityPayload,
@@ -63,6 +73,9 @@ import {
   type ReadBoardPayload,
   type ReorderPayload,
   type SetStatusPayload,
+  type SummaryDraftSavePayload,
+  type SummaryReadPayload,
+  type SummarySavePayload,
   type UndoStatusPayload,
   type UpdateFieldsPayload,
 } from './wire.js'
@@ -394,6 +407,162 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
     return { ok: true, entries: value.entries }
   }
 
+  /**
+   * Read one manual summary / project overview (F03).
+   *
+   * Read failures are narrowed like every other read. `summary: null` is passed
+   * through unchanged: an existing scope with no official body yet is a legal
+   * empty state, not a failed read (F03-R01).
+   */
+  const readSummary = async (input: ReadSummaryInput): Promise<SummaryReadResult> => {
+    if (input.scopeKind !== 'task' && input.scopeKind !== 'project') {
+      return { ok: false, code: 'invalid-input', message: '概况读取被拒绝：scopeKind 只允许 task 或 project。' }
+    }
+    if (typeof input.scopeId !== 'string' || input.scopeId.length === 0) {
+      return { ok: false, code: 'invalid-input', message: '概况读取被拒绝：缺少范围 id。' }
+    }
+    const payload: SummaryReadPayload = { scopeKind: input.scopeKind, scopeId: input.scopeId }
+    let result: ConnectionRpcResultLike
+    try {
+      result = await call(BOARD_ENDPOINTS.summaryRead, payload)
+    } catch (error) {
+      return { ok: false, code: 'read-failed', message: `${MALFORMED_RESPONSE_MESSAGE}（${messageOf(error)}）` }
+    }
+    if (!result.ok) {
+      return { ok: false, code: readFailureCode(result.error.code), message: result.error.message }
+    }
+    const value = parseSummaryReadValue(result.value)
+    if (value === null) return { ok: false, code: 'read-failed', message: MALFORMED_RESPONSE_MESSAGE }
+    return { ok: true, summary: value.summary }
+  }
+
+  /**
+   * Save (or clear) one manual summary under its SAVE-05 baseline (F03-R02).
+   *
+   * An unconfirmed transport is `unknown-result`; a known result with
+   * `view: null` means the save landed but the authoritative re-read failed
+   * (retry the READ, never the write). A `stale-baseline` failure carries both
+   * baselines so the editor can reconcile without guessing.
+   */
+  const saveSummary = async (input: ManualSummarySaveInput): Promise<SummarySaveResult> => {
+    if (input.scopeKind !== 'task' && input.scopeKind !== 'project') {
+      return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：scopeKind 只允许 task 或 project。' }
+    }
+    if (typeof input.scopeId !== 'string' || input.scopeId.length === 0) {
+      return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：缺少范围 id。' }
+    }
+    if (typeof input.updateId !== 'string' || input.updateId.length === 0) {
+      return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：缺少 updateId；未保存任何内容。' }
+    }
+    const expected = input.expected
+    if (!Number.isInteger(expected.revision) || expected.revision < 0) {
+      return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：expected.revision 必须是非负整数。' }
+    }
+    if (!Number.isInteger(expected.applicabilityRevision) || expected.applicabilityRevision < 0) {
+      return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：expected.applicabilityRevision 必须是非负整数。' }
+    }
+    if (expected.summaryVersionId !== null && (typeof expected.summaryVersionId !== 'string' || expected.summaryVersionId.length === 0)) {
+      return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：expected.summaryVersionId 必须是版本 id 或 null。' }
+    }
+    if (input.content === undefined && input.cleared !== true) {
+      return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：没有要保存的内容。' }
+    }
+    if (input.content !== undefined && input.cleared === true) {
+      return { ok: false, code: 'invalid-input', message: '概况保存被拒绝：content 与 cleared 不能同时出现。' }
+    }
+    const payload: SummarySavePayload = {
+      scopeKind: input.scopeKind,
+      scopeId: input.scopeId,
+      updateId: input.updateId,
+      expectedRevision: expected.revision,
+      expectedApplicabilityRevision: expected.applicabilityRevision,
+      expectedSummaryVersionId: expected.summaryVersionId,
+      ...(input.content === undefined ? {} : { content: input.content }),
+      ...(input.cleared === undefined ? {} : { cleared: true as const }),
+      ...(input.consumeDraftIds === undefined ? {} : { consumeDraftIds: input.consumeDraftIds }),
+    }
+    let result: ConnectionRpcResultLike
+    try {
+      result = await call(BOARD_ENDPOINTS.summarySave, payload)
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'unknown-result',
+        message: `概况保存结果未知，请先核对当前概况，不要重复提交。（${messageOf(error)}）`,
+      }
+    }
+    if (!result.ok) {
+      const details = parseSummarySaveFailureDetails(result.error.details)
+      const baseline = details?.baseline
+      return {
+        ok: false,
+        code: isBoardFailureCode(result.error.code) ? result.error.code : 'save-failed',
+        message: result.error.message,
+        ...(baseline === undefined ? {} : { baseline }),
+      }
+    }
+    const value = parseSummarySaveValue(result.value)
+    if (value === null) {
+      return {
+        ok: false,
+        code: 'unknown-result',
+        message: `${MALFORMED_RESPONSE_MESSAGE}请先核对当前概况，不要重复提交。`,
+      }
+    }
+    return { ok: true, ...value }
+  }
+
+  /**
+   * Save the in-flight manual draft (F03-R07). A draft never creates a version.
+   *
+   * An unconfirmed transport is `unknown-result`: the editor re-reads the
+   * summary/draft before any retry, because claiming success would present
+   * unsaved content as saved (REC-01/F03-R07).
+   */
+  const saveSummaryDraft = async (input: ManualSummaryDraftSaveInput): Promise<SummaryDraftSaveResult> => {
+    if (input.scopeKind !== 'task' && input.scopeKind !== 'project') {
+      return { ok: false, code: 'invalid-input', message: '概况草稿保存被拒绝：scopeKind 只允许 task 或 project。' }
+    }
+    if (typeof input.scopeId !== 'string' || input.scopeId.length === 0) {
+      return { ok: false, code: 'invalid-input', message: '概况草稿保存被拒绝：缺少范围 id。' }
+    }
+    if (input.updateId !== undefined && (typeof input.updateId !== 'string' || input.updateId.length === 0)) {
+      return { ok: false, code: 'invalid-input', message: '概况草稿保存被拒绝：updateId 必须是非空字符串。' }
+    }
+    const payload: SummaryDraftSavePayload = {
+      scopeKind: input.scopeKind,
+      scopeId: input.scopeId,
+      content: input.content,
+      ...(input.updateId === undefined ? {} : { updateId: input.updateId }),
+    }
+    let result: ConnectionRpcResultLike
+    try {
+      result = await call(BOARD_ENDPOINTS.summaryDraftSave, payload)
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'unknown-result',
+        message: `概况草稿保存结果未知，请先核对当前草稿，不要重复提交。（${messageOf(error)}）`,
+      }
+    }
+    if (!result.ok) {
+      return {
+        ok: false,
+        code: isBoardFailureCode(result.error.code) ? result.error.code : 'save-failed',
+        message: result.error.message,
+      }
+    }
+    const value = parseSummaryDraftSaveValue(result.value)
+    if (value === null) {
+      return {
+        ok: false,
+        code: 'unknown-result',
+        message: `${MALFORMED_RESPONSE_MESSAGE}请先核对当前草稿，不要重复提交。`,
+      }
+    }
+    return { ok: true, draft: value.draft }
+  }
+
   return {
     transport: { kind: 'host', detail: `connection rpc ${channel}` },
     readBoard,
@@ -431,6 +600,9 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
     createTask,
     updateTaskFields,
     loadActivity,
+    readSummary,
+    saveSummary,
+    saveSummaryDraft,
   }
 }
 

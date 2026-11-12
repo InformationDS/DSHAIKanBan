@@ -37,7 +37,16 @@ import {
   type KanbanCore,
   type StoragePort,
 } from '@aikanban/core'
-import { parseBoardSnapshotValue } from '@aikanban/plugin-client/wire'
+import {
+  parseBoardSnapshotValue,
+  parseSummaryDraftSaveValue,
+  parseSummaryReadValue,
+  parseSummarySaveFailureDetails,
+  parseSummarySaveValue,
+  type SummaryDraftSaveValue,
+  type SummarySaveValue,
+  type SummaryViewValue,
+} from '@aikanban/plugin-client/wire'
 
 import {
   createBoardChannelHandler,
@@ -1795,5 +1804,671 @@ describe('the delayed-ready wrapper', () => {
     const created = createValueOf(await handler('task/create', createPayload('ws-1', 'create-delayed', 'Delayed'), SIGNAL))
     expect(created.outcome).toBe('created')
     expect(activityOf(await handler('activity/read', { scopeKind: 'task', scopeId: seededTaskId }, SIGNAL)).length).toBeGreaterThan(0)
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * F03 manual summaries and project overviews
+ *
+ * The same harness as above: the REAL core, the REAL adapter and the REAL
+ * handler. The wire parser judges every success payload, so these tests also
+ * prove the browser-facing contract is well-formed.
+ * ------------------------------------------------------------------ */
+
+function summaryContent(body: string): { sections: readonly { id: string; title: string; body: string }[] } {
+  return { sections: [{ id: 'progress', title: '进展', body }] }
+}
+
+function summaryReadOf(result: BoardRpcResult): SummaryViewValue | null {
+  const parsed = parseSummaryReadValue(successOf(result))
+  if (parsed === null) throw new Error('the host returned a summary/read value the wire parser rejects')
+  return parsed.summary
+}
+
+function summarySaveOf(result: BoardRpcResult): SummarySaveValue {
+  const parsed = parseSummarySaveValue(successOf(result))
+  if (parsed === null) throw new Error('the host returned a summary/save value the wire parser rejects')
+  return parsed
+}
+
+/** A `summary/save` payload carrying the view's SAVE-05 baseline. */
+function summarySavePayload(
+  view: SummaryViewValue,
+  updateId: string,
+  body: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    scopeKind: view.scopeKind,
+    scopeId: view.scopeId,
+    updateId,
+    expectedRevision: view.revision,
+    expectedApplicabilityRevision: view.applicabilityRevision,
+    expectedSummaryVersionId: view.baseline.summaryVersionId,
+    ...body,
+  }
+}
+
+async function readSummaryVia(
+  handler: BoardRpcHandler,
+  scopeKind: 'task' | 'project',
+  scopeId: string,
+): Promise<SummaryViewValue | null> {
+  return summaryReadOf(await handler('summary/read', { scopeKind, scopeId }, SIGNAL))
+}
+
+function summaryDraftSaveOf(result: BoardRpcResult): SummaryDraftSaveValue {
+  const parsed = parseSummaryDraftSaveValue(successOf(result))
+  if (parsed === null) throw new Error('the host returned a summary/draft.save value the wire parser rejects')
+  return parsed
+}
+
+describe('summary/read: independent initialisation and explicit unknowns (F03-R01)', () => {
+  it('shows a legal empty task summary without needing any conversation or completed task', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+
+    const view = await readSummaryVia(harness.handler, 'task', taskId)
+
+    expect(view).not.toBeNull()
+    expect(view).toMatchObject({
+      scopeKind: 'task',
+      scopeId: taskId,
+      current: null,
+      history: [],
+      draft: null,
+      needsRecheck: false,
+    })
+    expect(view?.baseline).toEqual({
+      revision: view?.revision,
+      applicabilityRevision: view?.applicabilityRevision,
+      summaryVersionId: null,
+    })
+    expect(view?.recheck).toEqual({ pending: false, reasons: [], markedAt: null })
+  })
+
+  it('answers a registry-only project with an empty overview and registers nothing else', async () => {
+    const harness = createHarness()
+
+    const view = await readSummaryVia(harness.handler, 'project', 'ws-1')
+
+    expect(view).toMatchObject({
+      scopeKind: 'project',
+      scopeId: 'ws-1',
+      current: null,
+      history: [],
+      draft: null,
+    })
+    expect(view?.baseline.summaryVersionId).toBeNull()
+    // Reading established the project scope, but no summary version and no task.
+    expect(harness.core.listProjects().map((project) => project.projectId)).toEqual(['ws-1'])
+    expect(harness.core.readBoard({ projectId: 'ws-1', workScope: { availability: 'ok' } })).toMatchObject({
+      status: 'ok',
+      tasks: [],
+    })
+  })
+
+  it('distinguishes an unknown task (not-found) from an unregistered project (unknown-project)', async () => {
+    const harness = createHarness()
+
+    const missingTask = await harness.handler('summary/read', { scopeKind: 'task', scopeId: 'task-missing' }, SIGNAL)
+    expect(failureOf(missingTask).code).toBe('not-found')
+
+    const withoutRegistry = createHarness({ registry: false })
+    const missingProject = await withoutRegistry.handler(
+      'summary/read',
+      { scopeKind: 'project', scopeId: 'ws-1' },
+      SIGNAL,
+    )
+    expect(failureOf(missingProject).code).toBe('unknown-project')
+  })
+
+  it('refuses an invalid scope at the handler (invalid-payload) and at the port (invalid-input)', async () => {
+    const harness = createHarness()
+
+    const malformed: unknown[] = [{}, null, { scopeKind: 'board', scopeId: 'x' }, { scopeKind: 'task', scopeId: '' }]
+    for (const payload of malformed) {
+      const result = await harness.handler('summary/read', payload, SIGNAL)
+      expect(failureOf(result).code, `payload ${JSON.stringify(payload)}`).toBe('invalid-payload')
+    }
+
+    const direct = await harness.adapter.readSummary({ scopeKind: 'board' as never, scopeId: 'x' })
+    expect(direct).toMatchObject({ ok: false, code: 'invalid-input' })
+  })
+})
+
+describe('summary/save: versions, baselines and idempotency (F03-R02/R03/R07)', () => {
+  it('writes the first manual version, leaves the task untouched and records summary-saved', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const taskBefore = harness.core.readTask({ taskId: taskId })
+    const empty = await readSummaryVia(harness.handler, 'task', taskId)
+    if (empty === null) throw new Error('the task scope must be readable')
+
+    const result = await harness.handler(
+      'summary/save',
+      summarySavePayload(empty, 'sum-1', { content: summaryContent('第一步完成') }),
+      SIGNAL,
+    )
+    const saved = summarySaveOf(result)
+    if (saved.outcome !== 'committed') throw new Error(`expected committed, got ${saved.outcome}`)
+
+    expect(saved.changeKind).toBe('created')
+    expect(saved.revision).toBe(empty.revision + 1)
+    expect(saved.view).not.toBeNull()
+    const view = saved.view as SummaryViewValue
+    expect(view.current).not.toBeNull()
+    expect(view.current?.content.sections).toEqual([{ id: 'progress', title: '进展', body: '第一步完成' }])
+    expect(view.current?.origin).toBe('user')
+    expect(view.current?.changeKind).toBe('created')
+    expect(view.history).toHaveLength(1)
+    expect(view.baseline.summaryVersionId).toBe(saved.versionId)
+
+    // F03-R03: the task's own fields and statuses did not move, and no record
+    // version appeared — only the summary chain changed.
+    const taskAfter = harness.core.readTask({ taskId: taskId })
+    expect(taskAfter).toMatchObject({
+      title: taskBefore?.title,
+      goal: taskBefore?.goal,
+      status: taskBefore?.status,
+      fieldsRevision: taskBefore?.fieldsRevision,
+      statusRevision: taskBefore?.statusRevision,
+    })
+    const state = harness.core.readScopeState({ scopeKind: 'task', scopeId: taskId })
+    expect(Object.keys(state?.chains.taskRecord ?? {})).toHaveLength(0)
+
+    // The activity code is the browser-readable one the client will map.
+    const entries = activityOf(
+      await harness.handler('activity/read', { scopeKind: 'task', scopeId: taskId }, SIGNAL),
+    )
+    const savedEntry = entries.find((entry) => entry.code === 'summary-saved')
+    if (savedEntry === undefined) throw new Error('the save must append one summary-saved activity entry')
+    expect(savedEntry.details).toMatchObject({
+      updateId: 'sum-1',
+      versionId: saved.versionId,
+      changeKind: 'created',
+      generator: 'manual',
+    })
+  })
+
+  it('treats a replayed updateId as already applied (one version), and does not consume drafts', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const empty = await readSummaryVia(harness.handler, 'task', taskId)
+    if (empty === null) throw new Error('the task scope must be readable')
+    const first = summarySaveOf(
+      await harness.handler(
+        'summary/save',
+        summarySavePayload(empty, 'sum-replay', { content: summaryContent('一次性内容') }),
+        SIGNAL,
+      ),
+    )
+    if (first.outcome !== 'committed') throw new Error('expected the first save to commit')
+
+    const draft = await harness.core.saveDraft({
+      kind: 'summaryDraft',
+      scopeKind: 'task',
+      scopeId: taskId,
+      objectId: taskId,
+      content: summaryContent('草稿内容'),
+    })
+    // The replay carries a consumeDraftIds it must NOT honour: no commit happens.
+    const replay = summarySaveOf(
+      await harness.handler(
+        'summary/save',
+        summarySavePayload(empty, 'sum-replay', {
+          content: summaryContent('一次性内容'),
+          consumeDraftIds: [draft.draftId],
+        }),
+        SIGNAL,
+      ),
+    )
+    expect(replay.outcome).toBe('already-applied')
+    if (replay.outcome !== 'already-applied') throw new Error('narrowing')
+    expect(replay.versionId).toBe(first.versionId)
+    expect(replay.consumedDraftIds).toEqual([])
+    expect(replay.view?.history).toHaveLength(1)
+    expect(harness.core.getDraft(draft.draftId)?.state).toBe('editing')
+  })
+
+  it('writes a modified version on a second substantive save (newest first history)', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const empty = await readSummaryVia(harness.handler, 'task', taskId)
+    if (empty === null) throw new Error('the task scope must be readable')
+    const first = summarySaveOf(
+      await harness.handler('summary/save', summarySavePayload(empty, 'sum-1', { content: summaryContent('一') }), SIGNAL),
+    )
+    if (first.outcome !== 'committed' || first.view === null) throw new Error('expected a committed first save')
+
+    const second = summarySaveOf(
+      await harness.handler(
+        'summary/save',
+        summarySavePayload(first.view, 'sum-2', { content: summaryContent('二') }),
+        SIGNAL,
+      ),
+    )
+    if (second.outcome !== 'committed' || second.view === null) throw new Error('expected a committed second save')
+    expect(second.changeKind).toBe('modified')
+    expect(second.revision).toBe(first.revision + 1)
+    expect(second.view.history).toHaveLength(2)
+    expect(second.view.history[0].versionId).toBe(second.versionId)
+    expect(second.view.history[1].versionId).toBe(first.versionId)
+    expect(second.view.current?.content.sections[0].body).toBe('二')
+  })
+
+  it('answers no-change for an identical body under a fresh baseline, without a new version', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const empty = await readSummaryVia(harness.handler, 'task', taskId)
+    if (empty === null) throw new Error('the task scope must be readable')
+    const first = summarySaveOf(
+      await harness.handler('summary/save', summarySavePayload(empty, 'sum-1', { content: summaryContent('同一内容') }), SIGNAL),
+    )
+    if (first.outcome !== 'committed' || first.view === null) throw new Error('expected a committed first save')
+
+    const unchanged = summarySaveOf(
+      await harness.handler(
+        'summary/save',
+        summarySavePayload(first.view, 'sum-2', { content: summaryContent('同一内容') }),
+        SIGNAL,
+      ),
+    )
+    expect(unchanged.outcome).toBe('no-change')
+    if (unchanged.outcome !== 'no-change') throw new Error('narrowing')
+    expect(unchanged.summaryVersionId).toBe(first.versionId)
+    expect(unchanged.revision).toBe(first.revision)
+    expect(unchanged.view?.history).toHaveLength(1)
+  })
+
+  it('refuses a stale baseline with both baselines and does not write a version', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const empty = await readSummaryVia(harness.handler, 'task', taskId)
+    if (empty === null) throw new Error('the task scope must be readable')
+    const first = summarySaveOf(
+      await harness.handler('summary/save', summarySavePayload(empty, 'sum-1', { content: summaryContent('一') }), SIGNAL),
+    )
+    if (first.outcome !== 'committed' || first.view === null) throw new Error('expected a committed first save')
+
+    const stale = await harness.handler(
+      'summary/save',
+      summarySavePayload(empty, 'sum-stale', { content: summaryContent('二') }),
+      SIGNAL,
+    )
+    const failure = failureOf(stale)
+    expect(failure.code).toBe('stale-baseline')
+    const details = parseSummarySaveFailureDetails(failure.details)
+    expect(details).not.toBeNull()
+    expect(details?.baseline?.expected.revision).toBe(empty.revision)
+    expect(details?.baseline?.actual.revision).toBe(first.view.revision)
+    expect(details?.baseline?.actual.summaryVersionId).toBe(first.versionId)
+    // Nothing was written: the official body is still the first version.
+    expect(harness.core.readSummary({ scopeKind: 'task', scopeId: taskId })?.current?.versionId).toBe(first.versionId)
+  })
+
+  it('clears the official body as a cleared version (the summary chain keeps history)', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const empty = await readSummaryVia(harness.handler, 'task', taskId)
+    if (empty === null) throw new Error('the task scope must be readable')
+    const first = summarySaveOf(
+      await harness.handler('summary/save', summarySavePayload(empty, 'sum-1', { content: summaryContent('一') }), SIGNAL),
+    )
+    if (first.outcome !== 'committed' || first.view === null) throw new Error('expected a committed first save')
+
+    const cleared = summarySaveOf(
+      await harness.handler(
+        'summary/save',
+        summarySavePayload(first.view, 'sum-clear', { cleared: true }),
+        SIGNAL,
+      ),
+    )
+    if (cleared.outcome !== 'committed' || cleared.view === null) throw new Error('expected a committed clear')
+    expect(cleared.changeKind).toBe('cleared')
+    expect(cleared.view.current?.content.sections).toEqual([])
+    expect(cleared.view.history).toHaveLength(2)
+  })
+
+  it('consumes an active manual draft only after a commit, and surfaces it while active', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const draft = await harness.core.saveDraft({
+      kind: 'summaryDraft',
+      scopeKind: 'task',
+      scopeId: taskId,
+      objectId: taskId,
+      content: summaryContent('草稿内容'),
+    })
+    const view = await readSummaryVia(harness.handler, 'task', taskId)
+    if (view === null) throw new Error('the task scope must be readable')
+    expect(view.draft?.draftId).toBe(draft.draftId)
+    expect(view.draft?.state).toBe('editing')
+
+    const saved = summarySaveOf(
+      await harness.handler(
+        'summary/save',
+        summarySavePayload(view, 'sum-draft', {
+          content: summaryContent('正式内容'),
+          consumeDraftIds: [draft.draftId],
+        }),
+        SIGNAL,
+      ),
+    )
+    if (saved.outcome !== 'committed') throw new Error('expected the draft-backed save to commit')
+    expect(saved.consumedDraftIds).toContain(draft.draftId)
+    expect(saved.view?.draft).toBeNull()
+    expect(harness.core.getDraft(draft.draftId)?.state).toBe('saved')
+  })
+
+  it('saves a project overview through the same path, without requiring tasks', async () => {
+    const harness = createHarness()
+    const empty = await readSummaryVia(harness.handler, 'project', 'ws-1')
+    if (empty === null) throw new Error('the project scope must be readable')
+
+    const saved = summarySaveOf(
+      await harness.handler(
+        'summary/save',
+        summarySavePayload(empty, 'overview-1', { content: summaryContent('项目总体进展') }),
+        SIGNAL,
+      ),
+    )
+    if (saved.outcome !== 'committed' || saved.view === null) throw new Error('expected a committed overview')
+    expect(saved.changeKind).toBe('created')
+    expect(saved.view.current?.content.sections[0].body).toBe('项目总体进展')
+
+    const reread = await readSummaryVia(harness.handler, 'project', 'ws-1')
+    expect(reread?.current?.versionId).toBe(saved.versionId)
+    expect(reread?.history).toHaveLength(1)
+  })
+
+  it('maps unknown scopes and content+cleared to explicit failures (never a save)', async () => {
+    const harness = createHarness()
+
+    const valid = {
+      scopeKind: 'task',
+      scopeId: 'task-missing',
+      updateId: 'sum-x',
+      expectedRevision: 0,
+      expectedApplicabilityRevision: 0,
+      expectedSummaryVersionId: null,
+      content: summaryContent('x'),
+    }
+    expect(failureOf(await harness.handler('summary/save', valid, SIGNAL)).code).toBe('not-found')
+
+    const withoutRegistry = createHarness({ registry: false })
+    const unknownProject = await withoutRegistry.handler(
+      'summary/save',
+      { ...valid, scopeKind: 'project', scopeId: 'ws-1' },
+      SIGNAL,
+    )
+    expect(failureOf(unknownProject).code).toBe('unknown-project')
+
+    const taskId = await seedProjectAndTask(harness)
+    const view = await readSummaryVia(harness.handler, 'task', taskId)
+    if (view === null) throw new Error('the task scope must be readable')
+    const both = await harness.handler(
+      'summary/save',
+      summarySavePayload(view, 'sum-both', { content: summaryContent('x'), cleared: true }),
+      SIGNAL,
+    )
+    expect(failureOf(both).code).toBe('invalid-input')
+
+    const malformedPayloads: unknown[] = [
+      {},
+      { ...summarySavePayload(view, 'sum-ok', { content: summaryContent('x') }), expectedRevision: -1 },
+      { ...summarySavePayload(view, '', { content: summaryContent('x') }) },
+    ]
+    for (const payload of malformedPayloads) {
+      const result = await harness.handler('summary/save', payload, SIGNAL)
+      expect(failureOf(result).code, `payload ${JSON.stringify(payload)}`).toBe('invalid-payload')
+    }
+  })
+
+  it('answers committed with view:null when the post-write re-read fails, never a save error', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const baseline = harness.core.readSummary({ scopeKind: 'task', scopeId: taskId })
+    if (baseline === null) throw new Error('the task summary must be readable')
+    const payload = summarySavePayload(
+      {
+        scopeKind: 'task',
+        scopeId: taskId,
+        revision: baseline.revision,
+        applicabilityRevision: baseline.applicabilityRevision,
+        baseline: {
+          revision: baseline.baseline.revision,
+          applicabilityRevision: baseline.baseline.applicabilityRevision,
+          summaryVersionId: baseline.baseline.summaryVersionId,
+        },
+      } as SummaryViewValue,
+      'sum-reread',
+      { content: summaryContent('已落地') },
+    )
+
+    const flaky = new Proxy(harness.core, {
+      get(target, property, receiver) {
+        if (property === 'readSummary') {
+          return (): never => {
+            throw new Error('injected summary re-read failure')
+          }
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const adapter = createHostBoardPort({
+      core: () => flaky,
+      workspaceRegistry: () => harness.registry.registry,
+    })
+    const handler = createBoardChannelHandler(adapter)
+
+    const result = await handler('summary/save', payload, SIGNAL)
+    const saved = summarySaveOf(result)
+    expect(saved.outcome).toBe('committed')
+    if (saved.outcome !== 'committed') throw new Error('narrowing')
+    expect(saved.view).toBeNull()
+    // The write is durable even though the view could not be refreshed.
+    expect(harness.core.readSummary({ scopeKind: 'task', scopeId: taskId })?.current?.content.sections[0].body).toBe(
+      '已落地',
+    )
+  })
+
+  it('answers unavailable before the data layer is ready', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const offline = createHostBoardPort({ core: () => null, workspaceRegistry: () => harness.registry.registry })
+    const handler = createBoardChannelHandler(offline)
+
+    const read = await handler('summary/read', { scopeKind: 'task', scopeId: taskId }, SIGNAL)
+    expect(failureOf(read).code).toBe('unavailable')
+    const save = await handler(
+      'summary/save',
+      {
+        scopeKind: 'task',
+        scopeId: taskId,
+        updateId: 'sum-offline',
+        expectedRevision: 0,
+        expectedApplicabilityRevision: 0,
+        expectedSummaryVersionId: null,
+        content: summaryContent('x'),
+      },
+      SIGNAL,
+    )
+    expect(failureOf(save).code).toBe('unavailable')
+  })
+})
+
+describe('the delayed-ready wrapper for manual summaries', () => {
+  it('answers unavailable before ready and forwards both endpoints afterwards', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const state = { ready: false, reason: null as string | null }
+    const delayed = createDelayedBoardPort(
+      { coreReady: () => state.ready, failureReason: () => state.reason },
+      harness.adapter,
+    )
+    const handler = createBoardChannelHandler(delayed)
+
+    const readBefore = await handler('summary/read', { scopeKind: 'task', scopeId: taskId }, SIGNAL)
+    expect(failureOf(readBefore).code).toBe('unavailable')
+    const saveBefore = await handler(
+      'summary/save',
+      {
+        scopeKind: 'task',
+        scopeId: taskId,
+        updateId: 'sum-delayed',
+        expectedRevision: 0,
+        expectedApplicabilityRevision: 0,
+        expectedSummaryVersionId: null,
+        content: summaryContent('x'),
+      },
+      SIGNAL,
+    )
+    expect(failureOf(saveBefore).code).toBe('unavailable')
+
+    state.ready = true
+    const view = await readSummaryVia(handler, 'task', taskId)
+    expect(view).not.toBeNull()
+    if (view === null) throw new Error('narrowing')
+    const saved = summarySaveOf(
+      await handler('summary/save', summarySavePayload(view, 'sum-delayed', { content: summaryContent('就绪') }), SIGNAL),
+    )
+    expect(saved.outcome).toBe('committed')
+  })
+})
+
+describe('summary/draft.save: the manual candidate never becomes a version (F03-R07)', () => {
+  it('stores a task draft with its own slot and leaves official content untouched', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const before = await readSummaryVia(harness.handler, 'task', taskId)
+    if (before === null) throw new Error('the task summary must be readable')
+    const taskBefore = harness.core.readTask({ taskId })
+
+    const saved = summaryDraftSaveOf(
+      await harness.handler(
+        'summary/draft.save',
+        { scopeKind: 'task', scopeId: taskId, content: summaryContent('草稿一'), updateId: 'draft-update-1' },
+        SIGNAL,
+      ),
+    )
+
+    expect(saved.draft.state).toBe('editing')
+    expect(saved.draft.updateId).toBe('draft-update-1')
+    expect(saved.draft.content.sections[0]?.body).toBe('草稿一')
+    expect(saved.draft.base).toEqual({
+      scopeRevision: before.revision,
+      applicabilityRevision: before.applicabilityRevision,
+    })
+
+    const after = await readSummaryVia(harness.handler, 'task', taskId)
+    expect(after).not.toBeNull()
+    // A draft save neither appends a version nor bumps the scope revision.
+    expect(after?.revision).toBe(before.revision)
+    expect(after?.current).toBeNull()
+    expect(after?.history).toEqual([])
+    expect(after?.draft?.draftId).toBe(saved.draft.draftId)
+    expect(after?.draft?.content.sections[0]?.body).toBe('草稿一')
+    // The task fields and status are untouched as well.
+    expect(harness.core.readTask({ taskId })).toEqual(taskBefore)
+  })
+
+  it('re-saving the same scope upserts one draft id and keeps the newest body', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+
+    const first = summaryDraftSaveOf(
+      await harness.handler('summary/draft.save', { scopeKind: 'task', scopeId: taskId, content: summaryContent('一') }, SIGNAL),
+    )
+    const second = summaryDraftSaveOf(
+      await harness.handler('summary/draft.save', { scopeKind: 'task', scopeId: taskId, content: summaryContent('二') }, SIGNAL),
+    )
+
+    expect(second.draft.draftId).toBe(first.draft.draftId)
+    expect(second.draft.content.sections[0]?.body).toBe('二')
+    const view = await readSummaryVia(harness.handler, 'task', taskId)
+    expect(view?.draft?.content.sections[0]?.body).toBe('二')
+  })
+
+  it('saves a project overview draft on a registry-only project', async () => {
+    const harness = createHarness()
+
+    const saved = summaryDraftSaveOf(
+      await harness.handler(
+        'summary/draft.save',
+        { scopeKind: 'project', scopeId: harness.projectId, content: summaryContent('总览草稿') },
+        SIGNAL,
+      ),
+    )
+
+    expect(saved.draft.content.sections[0]?.body).toBe('总览草稿')
+    const view = await readSummaryVia(harness.handler, 'project', harness.projectId)
+    expect(view?.current).toBeNull()
+    expect(view?.draft?.draftId).toBe(saved.draft.draftId)
+  })
+
+  it('keeps a draft active until the matching committed save consumes it', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const draft = summaryDraftSaveOf(
+      await harness.handler('summary/draft.save', { scopeKind: 'task', scopeId: taskId, content: summaryContent('候选正文') }, SIGNAL),
+    ).draft
+
+    const view = await readSummaryVia(harness.handler, 'task', taskId)
+    if (view === null) throw new Error('the task summary must be readable')
+    const committed = summarySaveOf(
+      await harness.handler(
+        'summary/save',
+        summarySavePayload(view, 'sum-consume', { content: summaryContent('候选正文'), consumeDraftIds: [draft.draftId] }),
+        SIGNAL,
+      ),
+    )
+
+    expect(committed.outcome).toBe('committed')
+    if (committed.outcome !== 'committed') throw new Error('narrowing')
+    expect(committed.consumedDraftIds).toEqual([draft.draftId])
+    expect(harness.core.getDraft(draft.draftId)?.state).toBe('saved')
+    const after = await readSummaryVia(harness.handler, 'task', taskId)
+    expect(after?.current?.content.sections[0]?.body).toBe('候选正文')
+    expect(after?.draft).toBeNull()
+  })
+
+  it('refuses unknown scopes and malformed payloads without writing a draft', async () => {
+    const harness = createHarness()
+    await seedProjectAndTask(harness)
+
+    const missingTask = await harness.handler(
+      'summary/draft.save',
+      { scopeKind: 'task', scopeId: 'task-missing', content: summaryContent('x') },
+      SIGNAL,
+    )
+    expect(failureOf(missingTask).code).toBe('not-found')
+
+    const unknownProject = await harness.handler(
+      'summary/draft.save',
+      { scopeKind: 'project', scopeId: 'ws-missing', content: summaryContent('x') },
+      SIGNAL,
+    )
+    expect(failureOf(unknownProject).code).toBe('unknown-project')
+
+    const malformed = await harness.handler(
+      'summary/draft.save',
+      { scopeKind: 'task', scopeId: 'task-1' },
+      SIGNAL,
+    )
+    expect(failureOf(malformed).code).toBe('invalid-payload')
+  })
+
+  it('answers unavailable before the data layer is ready', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const offline = createHostBoardPort({ core: () => null, workspaceRegistry: () => harness.registry.registry })
+    const handler = createBoardChannelHandler(offline)
+
+    const result = await handler(
+      'summary/draft.save',
+      { scopeKind: 'task', scopeId: taskId, content: summaryContent('x') },
+      SIGNAL,
+    )
+    expect(failureOf(result).code).toBe('unavailable')
   })
 })

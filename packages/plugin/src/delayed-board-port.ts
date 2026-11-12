@@ -29,6 +29,9 @@ import type {
   HostCreateTaskOutcome,
   HostProjectListOutcome,
   HostReadOutcome,
+  HostSummaryDraftSaveOutcome,
+  HostSummaryReadOutcome,
+  HostSummarySaveOutcome,
   HostUpdateFieldsOutcome,
   HostWriteOutcome,
 } from './board-channel.js'
@@ -101,6 +104,26 @@ export function createDelayedBoardPort(state: DelayedPortState, readyPort: HostB
     message: `数据层尚未就绪，活动历史暂不可用${reasonSuffix()}；不显示空历史。`,
   })
 
+  /** A manual summary read is a read: no data layer means "unavailable", not "not written". */
+  const unavailableSummaryRead = (): HostSummaryReadOutcome => ({
+    ok: false,
+    code: 'unavailable',
+    message: `数据层尚未就绪，概况暂不可用${reasonSuffix()}；不显示空概况。`,
+  })
+
+  const unavailableSummarySave = (): HostSummarySaveOutcome => ({
+    ok: false,
+    code: 'unavailable',
+    message: `数据层尚未就绪，概况未保存${reasonSuffix()}；正式内容未改变。`,
+  })
+
+  /** A draft save is also a write: no data layer means "not saved", not "saved locally". */
+  const unavailableSummaryDraftSave = (): HostSummaryDraftSaveOutcome => ({
+    ok: false,
+    code: 'unavailable',
+    message: `数据层尚未就绪，概况草稿未保存${reasonSuffix()}；正式内容未改变。`,
+  })
+
   return {
     async readBoard(input, signal) {
       return state.coreReady() ? readyPort.readBoard(input, signal) : unavailableRead()
@@ -125,6 +148,15 @@ export function createDelayedBoardPort(state: DelayedPortState, readyPort: HostB
     },
     async readActivity(input, signal) {
       return state.coreReady() ? readyPort.readActivity(input, signal) : unavailableActivity()
+    },
+    async readSummary(input, signal) {
+      return state.coreReady() ? readyPort.readSummary(input, signal) : unavailableSummaryRead()
+    },
+    async saveSummary(input, signal) {
+      return state.coreReady() ? readyPort.saveSummary(input, signal) : unavailableSummarySave()
+    },
+    async saveSummaryDraft(input, signal) {
+      return state.coreReady() ? readyPort.saveSummaryDraft(input, signal) : unavailableSummaryDraftSave()
     },
   }
 }

@@ -19,9 +19,10 @@
  *    `blocked` without a reason is refused here as well as in core — the wire
  *    boundary does not get to skip a product rule.
  * 3. **Own no business logic.** Reads, status changes, reorders, undo, task
- *    creation, field saves and activity history are decided by `@aikanban/core`
- *    behind {@link HostBoardPort}; this file only names endpoints, validates
- *    input (including the `ver1:`/`fver1:` baseline grammars) and maps results.
+ *    creation, field saves, activity history and manual summaries/overviews are
+ *    decided by `@aikanban/core` behind {@link HostBoardPort}; this file only
+ *    names endpoints, validates input (including the `ver1:`/`fver1:` baseline
+ *    grammars) and maps results.
  *
  * ## Error codes (documented in F02 implementation.md)
  *
@@ -54,6 +55,9 @@ import {
   parseReorderPayload,
   parseSetStatusPayload,
   parseStatusVersion,
+  parseSummaryDraftSavePayload,
+  parseSummaryReadPayload,
+  parseSummarySavePayload,
   parseUndoStatusPayload,
   parseUpdateFieldsPayload,
   type ActivityEntryValue,
@@ -65,6 +69,12 @@ import {
   type KeptTaskInputWire,
   type ProjectListItem,
   type ReadBoardPayload,
+  type SummaryBaselineWire,
+  type SummaryContentWire,
+  type SummaryDraftValue,
+  type SummarySaveFailureDetails,
+  type SummarySaveValue,
+  type SummaryViewValue,
 } from '@aikanban/plugin-client/wire'
 
 /** One task as it travels on the wire (the pipeline member type is owned by `wire.ts`). */
@@ -274,6 +284,92 @@ export interface HostActivityFailure {
 /** Result of a host-side activity read. */
 export type HostActivityOutcome = HostActivitySuccess | HostActivityFailure
 
+/** A `summary/read` input after the handler validated the scope. */
+export interface HostSummaryReadInput {
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+}
+
+/**
+ * A `summary/save` input after the handler decoded the SAVE-05 baseline.
+ *
+ * `expected` is the baseline the editor was built against; the data layer
+ * refuses a stale one instead of merging (F03-R04). The handler does not decide
+ * `content`/`cleared` semantics — core owns that refusal.
+ */
+export interface HostSummarySaveInput {
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  readonly updateId: string
+  readonly expected: SummaryBaselineWire
+  readonly content?: SummaryContentWire
+  readonly cleared?: true
+  readonly consumeDraftIds?: readonly string[]
+}
+
+/** A summary read that succeeded. `summary: null` is a legal "not written yet". */
+export interface HostSummaryReadSuccess {
+  readonly ok: true
+  readonly summary: SummaryViewValue | null
+}
+
+/** A summary read that failed. Never an empty summary standing in for a failure. */
+export interface HostSummaryReadFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+}
+
+/** Result of a host-side summary read. */
+export type HostSummaryReadOutcome = HostSummaryReadSuccess | HostSummaryReadFailure
+
+/**
+ * A summary save whose result is known.
+ *
+ * `value.view === null` means the save landed but the authoritative re-read
+ * failed; the browser must retry the READ, never the write.
+ */
+export interface HostSummarySaveSuccess {
+  readonly ok: true
+  readonly value: SummarySaveValue
+}
+
+/** A summary save that was refused or failed. Nothing was written. */
+export interface HostSummarySaveFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+  /** Expected vs actual baseline (`stale-baseline` only). */
+  readonly baseline?: SummarySaveFailureDetails['baseline']
+}
+
+/** Result of a host-side summary save. */
+export type HostSummarySaveOutcome = HostSummarySaveSuccess | HostSummarySaveFailure
+
+/** A `summary/draft.save` input after the handler validated the scope and body. */
+export interface HostSummaryDraftSaveInput {
+  readonly scopeKind: 'task' | 'project'
+  readonly scopeId: string
+  readonly content: SummaryContentWire
+  readonly updateId?: string
+}
+
+/** A draft save that succeeded: the stored draft, never an official version. */
+export interface HostSummaryDraftSaveSuccess {
+  readonly ok: true
+  readonly draft: SummaryDraftValue
+}
+
+/** A draft save that failed; official content is never reported as saved. */
+export interface HostSummaryDraftSaveFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+}
+
+/** Result of a host-side manual draft save. */
+export type HostSummaryDraftSaveOutcome = HostSummaryDraftSaveSuccess | HostSummaryDraftSaveFailure
+
 /**
  * What the host half needs from the data layer. The core adapter implements it;
  * the payloads arrive already validated **and with the `ver1:` baseline decoded**
@@ -309,6 +405,27 @@ export interface HostBoardPort {
   updateTaskFields(input: HostUpdateFieldsInput, signal?: AbortSignal): Promise<HostUpdateFieldsOutcome>
   /** Read the important-change history of one task or project (F01-R07). */
   readActivity(input: HostActivityInput, signal?: AbortSignal): Promise<HostActivityOutcome>
+  /**
+   * Read one task's manual summary or one project's manual overview (F03).
+   *
+   * An existing scope with no official body answers `summary: null` — an
+   * explicit "not written yet" state, never a fabricated empty view.
+   */
+  readSummary(input: HostSummaryReadInput, signal?: AbortSignal): Promise<HostSummaryReadOutcome>
+  /**
+   * Save (or clear) one manual summary under its SAVE-05 baseline (F03-R02).
+   *
+   * A retry after an unknown result reuses `updateId` (the data layer answers
+   * `already-applied`); drafts are consumed only after a commit (F03-R07).
+   */
+  saveSummary(input: HostSummarySaveInput, signal?: AbortSignal): Promise<HostSummarySaveOutcome>
+  /**
+   * Save the in-flight manual draft of one scope (F03-R07).
+   *
+   * A draft save never creates an official version and never confirms; the
+   * draft is consumed only by a later committed save.
+   */
+  saveSummaryDraft(input: HostSummaryDraftSaveInput, signal?: AbortSignal): Promise<HostSummaryDraftSaveOutcome>
 }
 
 /* ------------------------------------------------------------------ *
@@ -489,6 +606,83 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
         return outcome.ok ? success({ entries: outcome.entries }) : failure(outcome.code, outcome.message)
       } catch (error) {
         return failure('read-failed', `读取活动历史失败：${messageOf(error)}`)
+      }
+    }
+
+    if (endpoint === BOARD_ENDPOINTS.summaryRead) {
+      const input = parseSummaryReadPayload(payload)
+      if (input === null) {
+        return failure('invalid-payload', 'summary/read payload must carry scopeKind "task" or "project" and a non-empty scopeId.')
+      }
+      try {
+        const outcome = await port.readSummary({ scopeKind: input.scopeKind, scopeId: input.scopeId }, signal)
+        // `summary: null` is a legal "not written yet" answer; a failed read is
+        // an explicit failure and is never turned into that empty state.
+        return outcome.ok ? success({ summary: outcome.summary }) : failure(outcome.code, outcome.message)
+      } catch (error) {
+        return failure('read-failed', `读取概况失败：${messageOf(error)}`)
+      }
+    }
+
+    if (endpoint === BOARD_ENDPOINTS.summarySave) {
+      const input = parseSummarySavePayload(payload)
+      if (input === null) {
+        return failure(
+          'invalid-payload',
+          'summary/save payload must carry a valid scope, a non-empty updateId, non-negative expected revisions, an optional version id, and a structurally valid content/cleared/consumeDraftIds.',
+        )
+      }
+      // Shape is protocol; "content XOR cleared" is core's product rule and is
+      // deliberately left to core so its refusal message stays authoritative.
+      try {
+        const outcome = await port.saveSummary(
+          {
+            scopeKind: input.scopeKind,
+            scopeId: input.scopeId,
+            updateId: input.updateId,
+            expected: {
+              revision: input.expectedRevision,
+              applicabilityRevision: input.expectedApplicabilityRevision,
+              summaryVersionId: input.expectedSummaryVersionId,
+            },
+            ...(input.content === undefined ? {} : { content: input.content }),
+            ...(input.cleared === undefined ? {} : { cleared: true as const }),
+            ...(input.consumeDraftIds === undefined ? {} : { consumeDraftIds: input.consumeDraftIds }),
+          },
+          signal,
+        )
+        if (!outcome.ok) {
+          return failure(outcome.code, outcome.message, {
+            ...(outcome.baseline === undefined ? {} : { baseline: outcome.baseline }),
+          })
+        }
+        return success(outcome.value)
+      } catch (error) {
+        return failure('unknown-result', `概况保存结果未知：${messageOf(error)}；请先核对当前概况，不要重复提交。`)
+      }
+    }
+
+    if (endpoint === BOARD_ENDPOINTS.summaryDraftSave) {
+      const input = parseSummaryDraftSavePayload(payload)
+      if (input === null) {
+        return failure(
+          'invalid-payload',
+          'summary/draft.save payload must carry scopeKind "task" or "project", a non-empty scopeId, a structurally valid content body and an optional non-empty updateId.',
+        )
+      }
+      try {
+        const outcome = await port.saveSummaryDraft(
+          {
+            scopeKind: input.scopeKind,
+            scopeId: input.scopeId,
+            content: input.content,
+            ...(input.updateId === undefined ? {} : { updateId: input.updateId }),
+          },
+          signal,
+        )
+        return outcome.ok ? success({ draft: outcome.draft }) : failure(outcome.code, outcome.message)
+      } catch (error) {
+        return failure('unknown-result', `概况草稿保存结果未知：${messageOf(error)}；请先核对当前草稿，不要重复提交。`)
       }
     }
 

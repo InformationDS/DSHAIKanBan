@@ -4179,5 +4179,12 @@ node tools/install-to-profile.mjs --restore-latest
 - 当前正在运行的是**修复前**的 B 构建；`1502a15` 需要重新安装并重启后才生效。
 - AT 106 + 27 条仍全部待执行；本节不构成验收。
 
+### 20.5 手工负载会被 pnpm 剪除（2026-11-12 22:02 事故）
+
+- 真实 profile 的 `node_modules/@aikanban/dsh-aikanban` 是**不在 `package.json`/`pnpm-lock.yaml` 里的手工负载**。2026-11-12 22:02 通过 dshmarket 安装 `dsh-whale-widget` 时，插件管理器执行了 profile 的 `pnpm install`；`pnpm` 把该目录当作 extraneous 清掉（`@aikanban` 目录 22:02:28 被清空，同一分钟 package.json/lock 被重写）。
+- 后果：`cordis.patch.yml` 的 aikanban insert 仍在，`plugin_manager` 仍显示 `include:aikanban enabled=true`，但 `fiberPhase=null`，host/client 均未加载——GUI 里 AIKanBan 直接消失；没有 web-boot crash。
+- 当时恢复：用 `tools/install-to-profile.mjs` 重新复制负载（备份 `aikanban-profile-backup-20261112-2`），重启后恢复。
+- **复发风险**：只要再通过 dshmarket/pnpm 安装或更新插件，手工负载都可能再次被剪。当前缓解是“安装插件后重跑 install-to-profile”；根治方案是把插件作为 profile 的 `file:` 依赖交给 pnpm 管理（`@aikanban/dsh-aikanban: file:<stable payload>`），使 `pnpm install` 保留它——尚未实施，需单独验证/安装。
+
 
 

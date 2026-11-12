@@ -1,0 +1,22 @@
+AIKanBan pre-restart state — 2026-11-13T00:48:44+11:00
+project pluginInstall = bee90684-17b6-42f1-95c1-bdf7b6f36b24
+
+taskId=t82ce5472e6c70a3982d22609b99a4f8e
+title=AT-01 收口-2026-11-12
+goal=验收：空项目创建、连点、无 AI 副作用
+status=cancelled
+fieldsRevision=0
+statusRevision=6
+activityCount=7
+updatedAt=2026-11-12T12:13:33.8730000Z
+activityCodes=task-created,task-status-changed,task-blocked,task-undone,task-status-changed,task-reopened,task-status-changed
+
+taskId=t11e8f75da2b33f6c11e6b8c6dd77ef13
+title=AT-01 收口-2026-11-12
+goal=AT-01 补充任务（同标题）
+status=todo
+fieldsRevision=1
+statusRevision=0
+activityCount=2
+updatedAt=2026-11-12T12:19:23.3940000Z
+activityCodes=task-created,task-goal-changed

@@ -4040,7 +4040,7 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 1. **真实 GUI 写路径**：状态变更、排序、撤销没有在真实页面触发（板上 0 任务，没有可写的任务）；写端点仍只有进程内/契约证据。
 2. **`tasks` 非空时的看板内容**：卡片字段、列内排序、撤销凭据在真实快照中的形状未观察（列表为空）。
 3. **切片 B 未开始**：`task/create`、`task/fields.update`、`activity/read` 与新建/编辑/活动历史 UI 均未实现，因此 F01 的管理闭环不可用。
-4. **产品验收未执行**：106 条原始 AT 全部待执行，27 条补充 AT 无执行记录，各功能无 `verification.md`；任何单测、探针、门禁或 GUI 读路径都不能当作 AT 结论。
+4. **产品验收已开始**：F01/F02 已建立 `verification.md` 并完成部分 AT（均为 `部分执行`）；其余原始/补充 AT 仍无执行记录；任何单测、探针、门禁或 GUI 读路径都不能当作 AT 结论。
 5. **键盘交互 / DOM 级行为**：真实键盘与焦点行为未测（F19 属后续），面板交互仅组件/控制器级测试。
 6. **写端点经真实 HTTP 的取证**：`verify-rpc-roundtrip` 只覆盖 `project/list`、`board/read` 的 carrier 往返；`task/status.set`、`task/reorder`、`task/status.undo` 仍未在真实 carrier 上取证。
 
@@ -4100,7 +4100,7 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 1. **活动区关闭后迟到响应重新打开**：`applyActivityResult` 现在要求当前状态仍为 `loading` 且 `scopeId` 相同才落地；task 与 project 两个 scope 一致。
 2. **看板读取中 resetSelection/切项目后迟到响应仍可能 applySnapshot**（Q1=B 泄漏）：`load()` 在 await 后增加单调 `readSeq` 与 `state.selectedProjectId === requested` 双重守卫；陈旧响应不再把面板置 `ready`。
 3. **测试**：新增 3 个 controller 用例（关闭后 task/project 活动不重开、resetSelection 后迟到 board read 丢弃）；plugin-client **146 → 149**，总数 **357 → 360**（core 66 / plugin-client 149 / plugin 145）。修复后 build/typecheck/全量测试/`verify-host-import` 11/11/`probe-host` 5/5/`verify-rpc-roundtrip` 17/17 全绿。
-4. **未变项**：§18.5 的安装/真实 GUI/roundtrip 工具/草稿持久化/AT 未执行等限制继续成立。
+4. **未变项**：§18.5 的安装/真实 GUI/roundtrip 工具/草稿持久化等限制继续成立；AT 已开始执行（F01/F02 部分执行，其余待执行）。
 
 ## 19. 安装安全网：preflight + 自包含备份 + 一键回退（2026-11-11，提交 `3acf124`）
 

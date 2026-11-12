@@ -124,7 +124,7 @@ F01/F02 的数据层（`packages/core`）与浏览器看板 UI（`packages/plugi
 - **并发排序的已知缺口（D6）**：reorder 有 requestId 与 statusRevision 校验、但**无 order 级基线**（`planning.ts:1355-1357`、`:1376-1383`）——并发排序若都不改 statusRevision 则检测不到。切片 A 以“`unknown-result` 不自动重试、只重新读取”缓解；根治（`orderRevision` 作为写前基线）列为切片 B/后续契约扩展候选，完成前**不得声称并发排序安全**。
 - **实现约束**：不得改 `packages/core` 的产品语义（A/B 只调用现有 API）；不得改 PRD/AT 状态；不得引入未被登记的第 9 个失败码；`packages/` 的实现改动另立任务与评审（本 ADR 只定设计，不改代码）。
 - **记录分工（S5）**：切片 A 不实现任何功能规则，其实施记录**不写进 `docs/prd/features/**`**，而是写入 `docs/engineering/s1-wiring-implementation.md`（按 M6：首次创建、后续追加并注明日期+提交号）；功能自身的实现仍按 M6 写各自 `implementation.md`（同 [验收执行规则](../acceptance-execution.md) 第 6 节与 [s1-wiring.md](../s1-wiring.md) §7.4）。
-- **阶段边界**：切片 A 完成≠S1 可用（无项目选择 UI）；B 完成≠F01/F02 验收通过（AT 未执行）。
+- **阶段边界**：切片 A 完成≠S1 可用（无项目选择 UI）；B 完成≠F01/F02 验收通过（AT 尚未全部执行；F01/F02 已部分执行）。
 
 ## 11. 验证证据
 

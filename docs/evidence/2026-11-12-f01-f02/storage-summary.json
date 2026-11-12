@@ -1,0 +1,163 @@
+{
+  "source": "%USERPROFILE%/.dsh/storages/aikanban_core.json",
+  "tasks": {
+    "t82ce5472e6c70a3982d22609b99a4f8e": {
+      "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+      "projectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+      "title": "AT-01 收口-2026-11-12",
+      "goal": "验收：空项目创建、连点、无 AI 副作用",
+      "status": "cancelled",
+      "blockedReason": null,
+      "order": 0,
+      "fieldsRevision": 0,
+      "statusRevision": 6,
+      "requestId": "op-mwdi4r2s-1",
+      "createdAt": "2026-11-12T12:07:12.105Z",
+      "updatedAt": "2026-11-12T12:13:33.873Z",
+      "pendingFieldDraft": null,
+      "links": {
+        "conversations": {},
+        "outcomeTasks": {}
+      },
+      "lastStatusChange": {
+        "updateId": "op-mwdiehbi-8",
+        "at": "2026-11-12T12:13:33.873Z",
+        "kind": "transition",
+        "from": {
+          "status": "todo",
+          "blockedReason": null
+        },
+        "to": {
+          "status": "cancelled",
+          "blockedReason": null
+        }
+      },
+      "activity": [
+        {
+          "at": "2026-11-12T12:07:12.105Z",
+          "code": "task-created",
+          "summary": "任务已创建：AT-01 收口-2026-11-12",
+          "details": {
+            "projectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+            "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+            "status": "todo",
+            "goal": "验收：空项目创建、连点、无 AI 副作用"
+          }
+        },
+        {
+          "at": "2026-11-12T12:10:55.081Z",
+          "code": "task-status-changed",
+          "summary": "状态已更新：未开始 → 进行中",
+          "details": {
+            "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+            "from": "todo",
+            "to": "doing",
+            "requestId": "op-mwdib2sl-3"
+          }
+        },
+        {
+          "at": "2026-11-12T12:12:02.212Z",
+          "code": "task-blocked",
+          "summary": "已阻塞：AT-03 验收阻塞原因",
+          "details": {
+            "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+            "from": "doing",
+            "to": "blocked",
+            "reason": "AT-03 验收阻塞原因",
+            "reopened": "false",
+            "requestId": "op-mwdicild-4"
+          }
+        },
+        {
+          "at": "2026-11-12T12:12:32.891Z",
+          "code": "task-undone",
+          "summary": "已撤销状态流转：回到 进行中",
+          "details": {
+            "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+            "undoneUpdateId": "op-mwdicild-4",
+            "from": "blocked",
+            "to": "doing",
+            "requestId": "op-mwdid69k-5"
+          }
+        },
+        {
+          "at": "2026-11-12T12:12:53.424Z",
+          "code": "task-status-changed",
+          "summary": "状态已更新：进行中 → 已完成",
+          "details": {
+            "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+            "from": "doing",
+            "to": "done",
+            "requestId": "op-mwdidm3x-6"
+          }
+        },
+        {
+          "at": "2026-11-12T12:13:13.959Z",
+          "code": "task-reopened",
+          "summary": "任务已重新打开：未开始",
+          "details": {
+            "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+            "from": "done",
+            "to": "todo",
+            "requestId": "op-mwdie1yd-7"
+          }
+        },
+        {
+          "at": "2026-11-12T12:13:33.873Z",
+          "code": "task-status-changed",
+          "summary": "状态已更新：未开始 → 已取消",
+          "details": {
+            "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+            "from": "todo",
+            "to": "cancelled",
+            "requestId": "op-mwdiehbi-8"
+          }
+        }
+      ]
+    },
+    "t11e8f75da2b33f6c11e6b8c6dd77ef13": {
+      "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+      "projectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+      "title": "AT-01 收口-2026-11-12",
+      "goal": "AT-01 补充任务（同标题）",
+      "status": "todo",
+      "blockedReason": null,
+      "order": 1,
+      "fieldsRevision": 1,
+      "statusRevision": 0,
+      "requestId": "op-mwdia9qt-2",
+      "createdAt": "2026-11-12T12:10:22.310Z",
+      "updatedAt": "2026-11-12T12:19:23.394Z",
+      "pendingFieldDraft": null,
+      "links": {
+        "conversations": {},
+        "outcomeTasks": {}
+      },
+      "lastStatusChange": null,
+      "activity": [
+        {
+          "at": "2026-11-12T12:10:22.310Z",
+          "code": "task-created",
+          "summary": "任务已创建：AT-01 收口-2026-11-12",
+          "details": {
+            "projectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+            "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+            "status": "todo",
+            "goal": ""
+          }
+        },
+        {
+          "at": "2026-11-12T12:19:23.394Z",
+          "code": "task-goal-changed",
+          "summary": "目标已更新：AT-01 补充任务（同标题）",
+          "details": {
+            "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+            "from": "",
+            "to": "AT-01 补充任务（同标题）",
+            "requestId": "op-mwdilkc3-9"
+          }
+        }
+      ]
+    }
+  }
+}

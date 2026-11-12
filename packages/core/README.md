@@ -265,13 +265,13 @@ readActivity({ scopeKind, scopeId, limit? }): readonly ActivityEntry[]   // 最�
 
 ### 活动历史（F01-R07 / SAVE-08）
 
-`readActivity({scopeKind, scopeId, limit?})` 返回**最新在前**的 `ActivityEntry`：`{activityId, at, scopeKind, scopeId, code, summary, details}`。`code` 是机器可读的（界面可用自己的文案本地化，`summary` 只是当时的中文快照）：`task-created`、`task-title-changed`、`task-goal-changed`、`task-status-changed`、`task-blocked`、`task-unblocked`、`task-reopened`、`task-order-changed`、`task-undone`、`pair-confirmed`、`project-registered`、`project-updated`、`work-scope-changed`、`board-position-changed`（`task-undo-refused` 为保留码）。**每次键入、打开页面、读取都不产生条目**。确认（`confirmPaired`）本身也是重要变化，其历史条目与版本在同一次写里发布。
+`readActivity({scopeKind, scopeId, limit?})` 返回**最新在前**的 `ActivityEntry`：`{activityId, at, scopeKind, scopeId, code, summary, details}`。`code` 是机器可读的（界面可用自己的文案本地化，`summary` 只是当时的中文快照）：`task-created`、`task-title-changed`、`task-goal-changed`、`task-status-changed`、`task-blocked`、`task-unblocked`、`task-reopened`、`task-order-changed`、`task-undone`、`pair-confirmed`、`project-registered`、`project-updated`、`work-scope-changed`、`board-position-changed`、`summary-saved`（F03 手动概况/总览保存；`task-undo-refused` 为保留码）。**每次键入、打开页面、读取都不产生条目**。确认（`confirmPaired`）本身也是重要变化，其历史条目与版本在同一次写里发布。
 
 ### 与成对确认的关系（F01-R06）
 
 - 确认路径**从不写**任务字段：`confirmPaired` 只动 scope head 里的版本链/指针/修正/待核对标记，任务字段与 `fieldsRevision` 不受影响，因此「记录审核期间改目标/状态」不会被回滚（AT-29）；
 - 想在确认时同时核对任务字段基线，可传 `fieldBaseline: {fieldsRevision, statusRevision}`：移动过则提交仍生效，但结果里 `fieldsChangedSinceBaseline === true`（同时给出 `fieldsBaseline` 当前值），界面据此显示「相关范围需核对」；
-- 直接修正概况/总览不回写聊天、不改任务字段（F03/S3 使用同一 `confirmPaired` 路径）。
+- 直接修正概况/总览（F03）走独立的 `saveManualSummary`：单成员写入、不要求 conversation/outcome 链接、**不复用 `confirmPaired`**；手动概况没有 `recordObjectId`，也不产生记录。`confirmPaired` 仍只用于 F06/S3 的记录确认。两者都不回写聊天、不改任务字段。
 
 ## F02 契约：状态、列内顺序与撤销（`board` 接线用）
 

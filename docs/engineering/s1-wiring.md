@@ -1,6 +1,6 @@
 # S1 接线设计与实施规格（切片 A / 切片 B）
 
-> **本文是实施前置规格，不是实现记录，也不是验收记录。** 切片 A **已于 2026-10-22 实施**（含安装到真实 `desktop` profile；2026-11-11 在桌面 DSH 0.2.2-rc.1 真实 GUI 中复核读路径，见[实施记录](s1-wiring-implementation.md) §17）；本页仍只把「已有代码 → 可运行的 S1 接线」的接口、映射、改动面、测试与证据判据写到可直接实施的程度。**2026-11-11 状态**：切片 A 已实现/已安装，真实 GUI 看板读路径成立；**切片 B 已实现**（2026-11-11，提交 `d26dd34`、`e2483f2`、`e93ab9f`、`1502a15`；代码与门禁层，363 用例全绿；2026-11-12 已安装并重启，真实 GUI 已跑通创建/状态/活动；字段编辑/撤销/列内重排/阻塞已有真实 GUI 记录；完成/取消/重开已通过菜单路径在真实 GUI 观察；失败草稿/重启失败草稿、故障注入未验证；拖拽/键盘已补测）；**AT 已开始执行（F01/F02 部分执行，其余待执行）**——A/B 的完成判据、门禁与 GUI 读路径都不等于 F01/F02 验收。决策依据是 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（**已定**：设计经用户确认、工程证据待取证）；用户已拍板 **Q1＝B（当前项目每次显式选择、不持久化）**、**Q2＝A（扩展 wire/BoardController 契约，不在适配层弱化 F02-R04/SAVE-05）**。本文回应独立评审指出的接线类前置条件（B1/B2/H1/H2）；评审原文不在仓库，本文只按任务书转述的范围落规格，不替评审定义编号含义。
+> **本文是实施前置规格，不是实现记录，也不是验收记录。** 切片 A **已于 2026-10-22 实施**（含安装到真实 `desktop` profile；2026-11-11 在桌面 DSH 0.2.2-rc.1 真实 GUI 中复核读路径，见[实施记录](s1-wiring-implementation.md) §17）；本页仍只把「已有代码 → 可运行的 S1 接线」的接口、映射、改动面、测试与证据判据写到可直接实施的程度。**2026-11-11 状态**：切片 A 已实现/已安装，真实 GUI 看板读路径成立；**切片 B 已实现**（2026-11-11，提交 `d26dd34`、`e2483f2`、`e93ab9f`、`1502a15`；代码与门禁层，363 用例全绿；2026-11-12 已安装并重启，真实 GUI 已跑通创建/状态/活动；字段编辑/撤销/列内重排/阻塞已有真实 GUI 记录；完成/取消/重开已通过菜单路径在真实 GUI 观察；失败草稿/重启失败草稿、故障注入未验证；拖拽/键盘已补测）；**AT 已开始执行（F01/F02 部分执行，其余待执行）**——A/B 的完成判据、门禁与 GUI 读路径都不等于 F01/F02 验收。决策依据是 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（**已定**：设计经用户确认、工程证据待取证）；用户已拍板 **Q1＝B（当前项目每次显式选择、不持久化）**、**Q2＝A（扩展 wire/BoardController 契约，不在适配层弱化 F02-R04/SAVE-05）**。本文回应独立评审指出的接线类前置条件（B1/B2/H1/H2）；评审原文不在仓库，本文只按任务书转述的范围落规格，不替评审定义编号含义。**2026-11-13 状态**：F03 手动概况/项目总览的代码与门禁层已实现（提交 `79e0fa2`、`973ee67`；461 用例；通道 11 端点），未安装到真实 profile、未因 F03 重启、未真实 GUI；F03 的 AT 全部待执行。新增 §10 记录该接线扩展（原 §10 参考顺延为 §11），工程侧提交与门禁见[实施记录](s1-wiring-implementation.md) §21。
 >
 > **证据边界**：所有代码引用均来自当前工作区（`main`，HEAD `dce8385` 起点）的真实文件，行号已逐条核对；未能用仓库内材料证实的点标「**未确认**」。**AT 尚未全部执行：F01/F02 已部分执行，其余待执行**：本文与未来切片 A/B 的单元/集成测试都不能当作 F01/F02 的验收证据；验收按[验收执行规则](acceptance-execution.md)与各功能 `verification.md` 执行。
 
@@ -8,14 +8,14 @@
 
 | 信息 | 内容 |
 | --- | --- |
-| 日期 | 2026-10-20（2026-11-11 状态更新） |
-| 状态 | 实施规格（切片 A 已实施/已安装；切片 B 已实现并已安装（代码/门禁 363 用例；2026-11-12 真实 GUI 复核创建/状态/活动）；本文仍是规格） |
+| 日期 | 2026-10-20（2026-11-11、2026-11-13 状态更新） |
+| 状态 | 实施规格（切片 A 已实施/已安装；切片 B 已实现并已安装（代码/门禁 363 用例；2026-11-12 真实 GUI 复核创建/状态/活动）；F03 代码/门禁已实现（2026-11-13，461 用例、11 端点；未安装/未真实 GUI）；本文仍是规格） |
 | 决策依据 | [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（已定）；Q1=B、Q2=A、Q3=允许 test-only 故障注入（[验收执行规则](acceptance-execution.md)第 3 节） |
 | 影响功能 | F01（主）、F02（主）；边界：F03、F04 |
-| 当前缺口 | 切片 A 已接通（2026-10-22）：core 由 host 半打开、`/aikanban` 已注册、浏览器半经真实通道读写；切片 B（`task/create`、`task/fields.update`、`activity/read` 与新建/编辑/活动 UI）代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`+`e93ab9f`+`1502a15`，363 用例）；2026-11-12 已安装并重启，真实 GUI 已跑通创建/两次状态流转/活动记录；当前缺口＝失败草稿/重启失败草稿、故障注入未验证；拖拽/键盘已补测；字段编辑/撤销/列内重排/阻塞、完成/取消/重开已有真实 GUI 观察；AT 已开始执行（F01/F02 部分执行，其余待执行） |
+| 当前缺口 | 切片 A 已接通（2026-10-22）：core 由 host 半打开、`/aikanban` 已注册、浏览器半经真实通道读写；切片 B（`task/create`、`task/fields.update`、`activity/read` 与新建/编辑/活动 UI）代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`+`e93ab9f`+`1502a15`，363 用例）；2026-11-12 已安装并重启，真实 GUI 已跑通创建/两次状态流转/活动记录；当前缺口＝失败草稿/重启失败草稿、故障注入未验证；拖拽/键盘已补测；字段编辑/撤销/列内重排/阻塞、完成/取消/重开已有真实 GUI 观察；AT 已开始执行（F01/F02 部分执行，其余待执行）；F03 的三端点（`summary/read`、`summary/save`、`summary/draft.save`）代码/门禁已实现（2026-11-13，`79e0fa2`+`973ee67`，461 用例），未安装/未真实 GUI、AT 未执行 |
 | 切片 A 完成判据 | 见 §7；集成测试/探针（2026-10-22）+ 真实 GUI 读路径复核（2026-11-11）；**不等于 F01/F02 验收通过** |
 
-**2026-11-11 状态说明**：切片 A 的实施记录与安装/回滚剧本见[实施记录](s1-wiring-implementation.md)（§14—§17）；插件已装进真实 `desktop` profile（2026-10-22），桌面 DSH 0.2.2-rc.1 的真实 GUI 中看板主面板已渲染、数据通道为 `connection rpc /aikanban`、项目与 5 列快照来自成功的读路径。§8 第 1、2、9 条中「真实 profile/真实 GUI 渲染/页面内读取」部分已复核（页面内读路径成功；原始 HTTP 状态与信封未在页面抓包），**状态写路径已复核（创建/两次状态流转/活动）；字段编辑/撤销/列内重排/阻塞、完成/取消/重开已观察；失败草稿/重启失败草稿、故障注入、非空排序形状仍未验证；拖拽/键盘已补测**；§8 其余条目不受影响。切片 B 的代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`+`e93ab9f`+`1502a15`，363 用例），2026-11-12 已安装并重启，真实 GUI 已跑通创建/状态/活动；AT 已开始执行（F01/F02 部分执行，其余待执行）。详见实施记录 §17—§20。
+**2026-11-11 状态说明**：切片 A 的实施记录与安装/回滚剧本见[实施记录](s1-wiring-implementation.md)（§14—§17）；插件已装进真实 `desktop` profile（2026-10-22），桌面 DSH 0.2.2-rc.1 的真实 GUI 中看板主面板已渲染、数据通道为 `connection rpc /aikanban`、项目与 5 列快照来自成功的读路径。§8 第 1、2、9 条中「真实 profile/真实 GUI 渲染/页面内读取」部分已复核（页面内读路径成功；原始 HTTP 状态与信封未在页面抓包），**状态写路径已复核（创建/两次状态流转/活动）；字段编辑/撤销/列内重排/阻塞、完成/取消/重开已观察；失败草稿/重启失败草稿、故障注入、非空排序形状仍未验证；拖拽/键盘已补测**；§8 其余条目不受影响。切片 B 的代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`+`e93ab9f`+`1502a15`，363 用例），2026-11-12 已安装并重启，真实 GUI 已跑通创建/状态/活动；AT 已开始执行（F01/F02 部分执行，其余待执行）。详见实施记录 §17—§20；F03 见 §10 与实施记录 §21（2026-11-13：代码/门禁已实现，未安装/未真实 GUI/AT 待执行）。
 
 ## 1. 目标与切片
 
@@ -518,7 +518,52 @@ core 映射：
 
 **2026-11-11 状态**：B 的三个端点（`task/create`、`task/fields.update`、`activity/read`）与新建/编辑/活动 UI 已实现（提交 `d26dd34`、`e2483f2`、`e93ab9f`、`1502a15`），集成/协议测试与门禁全绿（363 用例；build/typecheck `EXIT 0`）；2026-11-12 已安装并重启，真实 GUI 已跑通创建/状态/活动；字段编辑（目标）/撤销/完成/取消/重开已观察，失败草稿/排序/重启失败草稿/故障注入仍待验证；拖拽/键盘已补测；AT 已开始执行（F01/F02 部分执行）。因此只记「B 的代码/门禁已实现」，不记「B 完成」，更不等于 F01 验收通过。
 
-## 10. 参考
+## 10. F03 手动概况与项目总览（2026-11-13 代码/门禁实现）
+
+> 本节记录 S1 的 F03 接线扩展，不是 F03 规格正文，也不是验收记录。功能实现记录见 [F03 implementation](../prd/features/F03-manual-summaries/implementation.md)，工程侧提交、测试与未安装证据见[实施记录](s1-wiring-implementation.md) §21。
+
+### 10.1 端点与失败码
+
+| 端点 | 语义 | 方向 | 归属 |
+| --- | --- | --- | --- |
+| `summary/read` | 读取任务概况/项目总览：正式当前版本、历史元数据、手动草稿、基线、待核对 | 读 | F03 |
+| `summary/save` | 手动保存正式概况/总览（`updateId` 幂等、expected 基线校验、不可覆盖版本） | 写 | F03 |
+| `summary/draft.save` | 保存手动草稿（不检查正式基线、不产生正式版本） | 写 | F03 |
+
+- `BOARD_ENDPOINTS` 由 8 个增至 **11 个**（原 8 个不动）；`BOARD_FAILURE_CODES` 仍为 **9 个**，未新增失败码。
+- host-only 协议码 `invalid-payload`/`unknown-endpoint` 的边界不变：payload 解析/scope 校验失败不发给浏览器。
+- 三个端点沿用四段式（parse → 校验 → port → 映射失败，handler 永不全抛），不另起数据源。
+
+### 10.2 core 契约
+
+- `readSummary({scopeKind, scopeId})`：只读；scope 不存在返回 `null`；scope 存在但没有正式概况时返回**非 null 视图**，`current: null` 且 `baseline.summaryVersionId: null` 是合法基线；不注册项目、不创建空概况。
+- `saveManualSummary(input)`：独立于 `confirmPaired`——手动汇总没有 `recordObjectId`，**不走 conversation/outcome 链接校验**（F06 的固定归属校验不适用），也不写记录成员；一次 scope-head `put`，不碰任务标题/目标/状态/排序/记录正文。
+- 五态结果：`committed`（新版本）、`already-applied`（`updateId` 幂等命中，不写）、`no-change`（无实质变化，不造版本）、`blocked`/`baseline-changed`（expected 三元组不一致，不写）、`rejected`（`unknown-scope`/`invalid-input`）。
+- 实质保存追加一个不可覆盖的版本条目（`origin: 'user'`、`source.generator: 'manual'`、`previousVersionId`、`changeKind`），并在同一次写入中追加 `summary-saved` 活动；durable 之后才消费草稿，消费失败只回 `draftUpdateFailures`。
+- 草稿复用 core 既有 `saveDraft`/`listDrafts`/`setDraftState`/`abandonDraft`/`draftIdFor`，**未新增草稿方法**；任务概况用 `summaryDraft`、项目总览用 `overviewDraft`，`objectId` 为 scope id。
+
+### 10.3 wire 与 host
+
+- `summary/save` 的成功值统一带 `outcome`（`committed`/`already-applied`/`no-change`）和 `view: SummaryViewValue | null`；`view: null` **只表示写已落地但保存后的权威重读失败**，client 只提供重读，不把写入判为失败。
+- `blocked` 映射 `stale-baseline`，失败详情带 `{ expected, actual }` 基线；`rejected/unknown-scope` 按 scope 映射 `not-found`/`unknown-project`；`invalid-input` 原样；异常映射 `unknown-result`/`save-failed`；数据层未就绪 `unavailable`。
+- `HostBoardPort` 增 `readSummary`/`saveSummary`/`saveSummaryDraft`；适配器先做 scope 存在性检查（任务 `preReadTask`、项目 `resolveProject`），再调用 core；保存后重读失败返回 `view: null`；`summary/draft.save` 只写草稿。延迟端口在数据层未就绪时对三个方法返回 `unavailable`，读失败不伪装成空概况。
+- 已知 scope 返回非 null 视图；`summary: null` 只用于 scope 不存在（host 会先报 `not-found`/`unknown-project`）；client 把 `summary: null` 当作读取结果不一致并按失败处理。`wire.ts:130-134` 等处的旧注释仍写“无概况答 null”，是**文档债务**，实际契约以本节与 F03 implementation §4.4 为准。
+
+### 10.4 浏览器侧
+
+- `BoardSource` 增 `readSummary`/`saveSummary`/`saveSummaryDraft`；`channel-source` 经 `connection.rpc.call` 调三个端点，无通道时返回 `unavailable` 并明确“这不等于还没有概况”。
+- controller 增 `taskSummary`/`projectSummary` 编辑器状态与 `loadTaskSummary`/`loadProjectSummary`/`openSummaryEditor`/`closeSummaryEditor`/`setSummaryText`/`saveSummaryDraft`/`previewSummary`/`cancelSummaryPreview`/`saveSummary`；`summary: null` 按读失败处理；显式重读保留未保存输入并移动基线；保存失败保留输入，仅可重放码（`save-failed`/`unavailable`）给写重试，其它只给重读。
+- UI 落点：任务详情「任务概况」区、项目区「项目总览」入口；实际使用**单 section**（`id: 'manual'`，标题「任务概况」/「项目总览」，body 为 textarea 文本），不是多段表单；预览为行级 diff；版本历史只展示元数据，不默认展开正文、不投递 AI；数据属性见 F03 implementation §6.3。
+- 残余：草稿只有显式「保存草稿」按钮（无自动 debounce）；关闭编辑器丢弃未写入草稿的内存输入；无 `summary/draft.discard` 端点或「放弃草稿」按钮；UI 未暴露 `cleared` 分支；活动区直接显示 core 生成的中文 `summary`。
+
+### 10.5 门禁与未完成项（2026-11-13 @ `973ee67`）
+
+- 全量测试 **461 passed**（core **80** / plugin-client **204** / plugin **177**）；`build`/`typecheck` `EXIT 0`；`verify-host-import` **12/12**；`probe-host` **5/5**。
+- `verify-rpc-roundtrip` 为 28/28，但**仍只覆盖 8 端点/9 码，不覆盖 F03 三端点**；不能作为 F03 协议往返证据。
+- **未安装到真实 profile、未因 F03 重启、未真实 GUI**；F03 的 AT 全部**待执行**，没有 `verification.md`；本节的门禁数字不能写成验收通过。
+- F06 记录、F09 结论修正、F10 历史恢复、F13 成果、F18 故障注入不在本切片；联合 AT（AT-27/29/45/49/67）需另行验收。
+
+## 11. 参考
 
 - 产品规则：[F01 PRD](../prd/features/F01-project-and-tasks/prd.md)、[F02 PRD](../prd/features/F02-task-status-and-cards/prd.md)；现状盘点：[F01 implementation](../prd/features/F01-project-and-tasks/implementation.md)、[F02 implementation](../prd/features/F02-task-status-and-cards/implementation.md)
 - core 契约：[packages/core/README.md](../../packages/core/README.md)（F01 契约 `:177`、F02 契约 `:276`、PRD 对照 `:338-353`）

@@ -224,7 +224,7 @@ git -C $BOX checkout --detach <commit-or-branch>
 & $NODE $PNPM install --frozen-lockfile
 & $NODE $PNPM run typecheck              # 期望 EXIT 0
 & $NODE $PNPM run build                  # 期望 EXIT 0；产出 packages/plugin/lib/index.js 与 lib/client.js
-& $NODE $PNPM -r --if-present run test   # 期望 363 通过（core 66 / plugin-client 152 / plugin 145）
+& $NODE $PNPM -r --if-present run test   # 期望 461 通过（core 80 / plugin-client 204 / plugin 177）
 & $NODE tools\verify-host-import.mjs     # 期望 11/11 PASS
 & $NODE tools\probe-host.mjs             # 期望 PROBE OK 5/5（约 40–120 秒）
 ```
@@ -238,6 +238,8 @@ git -C $BOX checkout --detach <commit-or-branch>
 **更新（2026-11-12 @ `379b160`，同一盘外沙盒）**：`verify-rpc-roundtrip` 已从 A 期 5 端点/8 码扩到 **8 端点 / 9 个浏览器失败码**（另有 2 个 host-only 协议码），覆盖 `task/create`、`task/fields.update`、`activity/read` 与 `invalid-input`、`unknown-project` 等；p6c 实测 **28/28**。该工具仍不证明 browser half、真实 profile/GUI 或公开注册入口，不构成 AT。
 
 **更新（2026-11-12 GUI 反馈修复 @ `1502a15`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **363 passed**（`packages/core` **66** / `packages/plugin-client` **152** / `packages/plugin` **145**）；client bundle 58.23 kB。修复活动历史按钮重复（同级 key 冲突）与空列/拖放（drop 目标移到整列、空 body minHeight、drag ref + dataTransfer）。**该修复版已于 2026-11-12 安装并重启到真实 profile**；profile `client.js`（58231B，SHA256 `5B108FE9…`）与 p6c 构建一致。真实 GUI 已验证创建/两次状态流转/活动/字段编辑/撤销/列内重排/阻塞/完成/取消/重开；失败草稿/重启、拖拽、键盘、故障注入仍未验证。
+
+**更新（2026-11-13 F03 手动概况/项目总览 @ `79e0fa2` + `973ee67`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **461 passed**（`packages/core` **80** / `packages/plugin-client` **204** / `packages/plugin` **177**）；`verify-host-import` **12/12**、`probe-host` **5/5**，`verify-rpc-roundtrip` 仍为 **28/28** 且只覆盖 **8 端点/9 码**，未覆盖新增的 `summary/read`、`summary/save`、`summary/draft.save`。F03 只完成代码/门禁，**未安装到真实 profile、未因 F03 重启、未真实 GUI、AT 未执行**；不要把它写成已验收。
 
 ### 10.4 仍然禁止 / 仍然需要人
 

@@ -4187,5 +4187,63 @@ node tools/install-to-profile.mjs --restore-latest
 - **复发风险**：只要再通过 dshmarket/pnpm 安装或更新插件，手工负载都可能再次被剪。当前缓解是“安装插件后重跑 install-to-profile”；根治方案是把插件作为 profile 的 `file:` 依赖交给 pnpm 管理（`@aikanban/dsh-aikanban: file:<stable payload>`），使 `pnpm install` 保留它。
 - **根治已实施（2026-11-12 22:25）**：稳定负载放在 `C:\Users\InformationDS\.dsh\aikanban-payload`；profile `package.json` 增加 `"@aikanban/dsh-aikanban": "file:C:/Users/InformationDS/.dsh/aikanban-payload"`，并执行 `pnpm install`。pnpm 输出 `+1 -1`（新增 AIKanBan，移除已失败的 dsh-whale-widget），第二次 `pnpm install` 保留负载（`Already up to date`），`lib/client.js` 仍为修复版 `5B108FE9…`。变更前清单备份在 `C:\Users\InformationDS\aikanban-managed-backup-20261112-2225`。`install-to-profile.mjs` 现在检测 `file:` 依赖并同时刷新稳定负载，后续升级不会让 pnpm 回退到旧 payload。待重启确认真实加载；`dsh-whale-widget` 已被 pnpm 移除（其安装此前即失败）。
 
+## 21. F03 手动概况与项目总览（2026-11-13，提交 79e0fa2 / 973ee67）
 
+### 21.1 提交、工作区与边界
 
+- HEAD `973ee67 feat(f03): add task summary and project overview UI`；前一提交 `79e0fa2 feat(f03): add manual summary core, wire and host API`；再前 `53a7732 docs(acceptance): record post-restart F01/F02 AT evidence`。工作区代码干净，仅有一份未跟踪的 F03 文档初稿（本次已改写为功能实现记录）。
+- `79e0fa2` 覆盖 core（类型、`readSummary`/`saveManualSummary`）、wire（三端点）与 host（适配器、channel、延迟端口）；`973ee67` 覆盖 client（source/channel-source/controller/model/board UI）与对应测试。
+- **边界**：F03 只在代码与门禁层实现。**未安装到真实 `desktop` profile、应用未因 F03 重启、未在真实 GUI 操作 F03 行为**；F03 的 AT 全部**待执行**，没有 `verification.md`；F01/F02 仍是部分执行，本文不改其口径。
+
+### 21.2 core 契约与实现
+
+- `packages/core/src/types.ts`：`ActivityCode` 增 `'summary-saved'`（:230）；新增 `SummaryBaseline`（:1020-1024）、`SummaryVersionView`（:1033-1035）、`SummaryView`（:1038-1053）、`ManualSummaryInput`（:1063-1076）、`ManualSummaryOutcome`（:1079-1115）；`KanbanCore.readSummary`（:1221-1226）与 `saveManualSummary`（:1228-1238）为 F03 单成员路径。
+- `readSummary`：scope 不存在返回 `null`；存在但没有正式概况返回非 null 视图，`current: null`，`baseline.summaryVersionId: null` 合法；不注册项目、不创建空概况、不写数据。
+- `saveManualSummary`（`packages/core/src/core.ts:772-954`）：一次 `port.update` 内先按 `updateId` 查链（幂等优先，命中返回 `already-applied`，`:812-835`），再核对 expected 三元组（不一致返回 `blocked`/`baseline-changed`，`:837-845`），`planMember('summary', …)`（`:847-856`），无实质变化或空内容对空正式内容返回 `no-change`（`:857-864`）；实质保存追加版本条目（`origin:'user'`、`source:{generator:'manual',taskId|projectId}`、`changeKind`、`previousVersionId`、`revision+1`，`:866-893`），一次写 next scope head（`:894-902`），同次追加 `summary-saved` 活动（`:903-914`），最后返回 `committed`（`:915-925`）。
+- 草稿消费在提交 durable 之后（`:934-953`）：匹配 kind/scope/候选状态且 `updateId` 相同（或显式 `consumeDraftIds`）；消费失败不回滚版本，只回 `draftUpdateFailures`。`blocked`/`rejected`/`no-change`/`already-applied` 不消费草稿。
+- **不复用 `confirmPaired`**：手动概况没有 `recordObjectId`，F06 的 `conversation/outcome` 固定归属校验（`core.ts:956` 起 `confirmPaired`/`runConfirm`，校验在 `:967` 之后）不适用；走独立方法避免伪造链接。草稿复用既有 `saveDraft`/`listDrafts`，未新增 core 草稿方法；`summaryDraft`/`overviewDraft` 的 `objectId` 为 scope id。
+
+### 21.3 wire 契约
+
+- `packages/plugin-client/src/wire.ts`：`BOARD_ENDPOINTS` 增 `summaryRead:'summary/read'`（:136）、`summarySave:'summary/save'`（:143）、`summaryDraftSave:'summary/draft.save'`（:149），共 **11 端点**；`BOARD_FAILURE_CODES`（:61）仍 **9 码**，未新增。
+- payload：`SummaryReadPayload`（:303）、`SummarySavePayload`（:349-360，含 `expectedRevision`/`expectedApplicabilityRevision`/`expectedSummaryVersionId`、`content?`/`cleared?`、`confirmedAt?`、`consumeDraftIds?`）、`SummaryDraftSavePayload`（:370-373）。
+- value：`SummaryViewValue`（:686-696）、`SummaryVersionValue`（:634-647）、`SummaryDraftValue`（:649-657）、`SummaryReadValue { summary: SummaryViewValue | null }`（:700-702）、`SummarySaveValue`（:711-738）。
+- `summary/save` 成功值统一带 `outcome`（`committed`/`already-applied`/`no-change`）和 `view: SummaryViewValue | null`；`view: null` 只表示**写已落地但保存后的权威重读失败**，client 只重读、不重发写、不判为保存失败。
+- `blocked` → `stale-baseline` + `{expected, actual}`（`SummarySaveFailureDetails` :741-744）；`rejected/unknown-scope` 按 scope 映射 `not-found`/`unknown-project`；`invalid-input` 原样；异常 → `unknown-result`/`save-failed`；数据层未就绪 → `unavailable`。`summary/draft.save` 不检查正式基线、不产生版本。
+- **契约不一致的旧注释**：`wire.ts:130-134` 仍写“无概况答 `summary: null`”；实际已知 scope 返回非 null 视图（`current: null`），host 对不存在 scope 先报 `not-found`/`unknown-project`，client 把 `summary: null` 当读取结果不一致并按失败处理。本次只改文档、未改代码注释。
+
+### 21.4 host 实现
+
+- `packages/plugin/src/board-channel.ts`：`HostBoardPort` 增 `readSummary`/`saveSummary`/`saveSummaryDraft`（:409-428）；host 类型 :287-371；handler 分支 `summaryRead`（:612）、`summarySave`（:627）、`summaryDraftSave`（:665），沿用 parse → scope 校验 → port → 映射失败，host-only `invalid-payload` 不发给浏览器。
+- `packages/plugin/src/board-adapter.ts`：`readSummary`（:948-990）先做 scope 存在性检查（任务 `preReadTask`、项目 `resolveProject`），已知 scope 返回 `summaryViewValueOf(view)`；`saveSummary`（:1005-1140）校验 `updateId`/expected 三元组/`content`/`cleared`，映射五态，成功带 `view: summaryViewAfterSave(core, input)`（:343-347，重读失败为 `null`）；`saveSummaryDraft`（:1154-1196）调用 `saveDraft`（kind `summaryDraft`/`overviewDraft`，`objectId=scopeId`），成功 `{ok:true,draft}`。
+- `packages/plugin/src/delayed-board-port.ts`（:107-121、:152-159）：数据层未就绪时三个方法返回 `unavailable`；读失败不伪装成空概况。
+
+### 21.5 浏览器侧实现
+
+- `packages/plugin-client/src/source.ts`：`BoardSource` 增 `readSummary`/`saveSummary`/`saveSummaryDraft`（:552-573）；无通道时返回 `unavailable`，文案明确“无法读取概况。这不等于『还没有概况』”（:595-602）。`channel-source.ts` 经 `ctx.connection.rpc.call` 调三端点（:417-436、:447-504、:522-555）。
+- `controller.ts`：`BoardState` 增 `taskSummary`/`projectSummary`（:312-315）；API 于 :535-563、实现 :1997-2045；`loadSummaryFor`（:1203-1255）把 `summary === null` 视为读取不一致并失败；重读保留未保存输入并移动基线（:1245-1254）；保存失败保留输入，仅 `save-failed`/`unavailable` 给写重试，其它只重读；`view: null` 提示“概况已保存，但视图未刷新。请重新读取。”。
+- `model.ts`：单 section `SUMMARY_SECTION_ID='manual'`（:759），标题「任务概况」/「项目总览」（:760-761）；`summaryContentForSave`（:898-907）只生成该 section，正文原样，保留当前结论字段；版本/历史/预览文案见 :780-828、:1097-1222。
+- `board.tsx`：任务详情 `renderSummaryArea('task')`（:955-957），项目区入口（:1341-1353）；数据属性 `data-aikanban-summary='task'|'project'`、`summary-open`、`summary-edit`、`summary-text`、`summary-save-draft`、`summary-preview`、`summary-save`、`summary-back`、`summary-cancel`、`summary-close`、`summary-official`、`summary-version`、`summary-history`、`summary-diff`、`summary-error`、`summary-notice`、`summary-draft-badge` 等；活动条目仍显示 core `summary` 文本与原始 `code`。
+- 残余（未实现/未验证）：草稿仅显式「保存草稿」按钮，无自动 debounce；关闭编辑器丢弃未写入草稿的内存输入；无 `summary/draft.discard` 端点或「放弃草稿」按钮；UI 未暴露 `cleared` 分支；活动区直接显示 core 生成的中文 `summary`；未安装/未真实 GUI。
+
+### 21.6 门禁（2026-11-13 @ `973ee67`）
+
+| 项 | 结果 | 备注 |
+| --- | --- | --- |
+| 全量测试 | **461 passed**（core **80** / plugin-client **204** / plugin **177**） | 含 F03 core/wire/adapter/client 用例；不等于 AT |
+| `typecheck` / `build` | `EXIT 0` | |
+| `verify-host-import` | **12/12** | 新导入未破坏 host bundle 加载链 |
+| `probe-host` | **5/5** | 第 5 项 `channel=/aikanban registered=true path=compat dataLayerReady=true` |
+| `verify-rpc-roundtrip` | 28/28 | **仍只覆盖 8 端点/9 码，不覆盖 F03 三端点**；不能作为 F03 协议往返证据 |
+| `check_docs` | PASS | 文档检查不等于实现/验收 |
+
+F03 相关测试：`packages/core/test/f03-manual-summary.test.ts`、`packages/plugin-client/test/wire.test.ts`、`packages/plugin-client/test/board.test.ts`、`packages/plugin/test/board-adapter.test.ts` 及 controller 相关用例。
+
+### 21.7 未安装、未验证与风险
+
+- **未安装/未重启/未真实 GUI**：真实 `desktop` profile 仍是切片 B 的安装物（2026-11-12），F03 构建没有安装；应用未因 F03 重启；真实 GUI 未出现概况/总览入口。
+- **AT 全部待执行**：AT-26/44/45/49/27/29/67 无执行记录；没有 `verification.md`；不得把 §21.6 写成验收通过。
+- **联合场景未实现**：F06 记录、F09 结论修正、F10 历史恢复、F13 成果、F18 故障注入不在本切片；联合 AT 需另行验收。
+- **草稿生命周期缺口**：无自动保存、关闭丢内存输入、无放弃草稿入口，与 F03-R07 的“离开/重启恢复可用草稿”仍有距离，需真实 GUI 与后续实现核实。
+- **工具覆盖缺口**：`verify-rpc-roundtrip` 未覆盖 F03 三端点；需扩展端点/失败码清单后才能作为协议层证据。
+- **F01/F02 的「部分执行」口径不变**：F03 入口依赖其现有 UI，F03 不能借用 F01/F02 未执行的 AT 结论。

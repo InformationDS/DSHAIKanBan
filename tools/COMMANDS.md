@@ -235,9 +235,9 @@ git -C $BOX checkout --detach <commit-or-branch>
 
 **更新（2026-11-11，桌面 DSH 0.2.2-rc.1，盘外沙盒 `C:\Users\InformationDS\aikanban-p6c` @ `4a66d28`）**：用例分布为 `packages/core` **66**（11 个测试文件）、`packages/plugin` **107**、`packages/plugin-client` **84**，合计 **257**；`probe-host` 为 **5/5**（第 5 项 `channel=/aikanban registered=true path=compat dataLayerReady=true`）；`verify-host-import` 11/11、`verify-rpc-roundtrip` 17/17、`check_docs` PASS（59 md），`typecheck`/`build` EXIT 0。主仓库在同步盘上仍不装依赖，以上全部在盘外沙盒复跑。
 
-**更新（2026-11-11 切片 B 复核修复后 @ `e93ab9f`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **360 passed**（`packages/core` **66** / `packages/plugin-client` **149** / `packages/plugin` **145**）；`verify-host-import` 11/11、`probe-host` 5/5（`path=compat dataLayerReady=true`）、`verify-rpc-roundtrip` 17/17。**注意**：该 roundtrip 工具仍是 A 期硬编码（5 端点 / 8 码），切片 B 的 `task/create`、`task/fields.update`、`activity/read` 三端点与 `invalid-input` 尚未纳入真实 HTTP 工具覆盖；真实安装/GUI 点击也未做。
+**更新（2026-11-12 @ `379b160`，同一盘外沙盒）**：`verify-rpc-roundtrip` 已从 A 期 5 端点/8 码扩到 **8 端点 / 9 个浏览器失败码**（另有 2 个 host-only 协议码），覆盖 `task/create`、`task/fields.update`、`activity/read` 与 `invalid-input`、`unknown-project` 等；p6c 实测 **28/28**。该工具仍不证明 browser half、真实 profile/GUI 或公开注册入口，不构成 AT。
 
-**更新（2026-11-12 GUI 反馈修复 @ `1502a15`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **363 passed**（`packages/core` **66** / `packages/plugin-client` **152** / `packages/plugin` **145**）；client bundle 58.23 kB。修复活动历史按钮重复（同级 key 冲突）与空列/拖放（drop 目标移到整列、空 body minHeight、drag ref + dataTransfer）。真实 GUI 已在 2026-11-11/12 安装验证创建/两次状态流转/活动；字段编辑/排序/撤销/重启仍待验证。**该修复版尚未安装到真实 profile**；当前运行的是修复前构建。
+**更新（2026-11-12 GUI 反馈修复 @ `1502a15`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **363 passed**（`packages/core` **66** / `packages/plugin-client` **152** / `packages/plugin` **145**）；client bundle 58.23 kB。修复活动历史按钮重复（同级 key 冲突）与空列/拖放（drop 目标移到整列、空 body minHeight、drag ref + dataTransfer）。**该修复版已于 2026-11-12 安装并重启到真实 profile**；profile `client.js`（58231B，SHA256 `5B108FE9…`）与 p6c 构建一致。真实 GUI 已验证创建/两次状态流转/活动/字段编辑/撤销/列内重排/阻塞/完成/取消/重开；失败草稿/重启、拖拽、键盘、故障注入仍未验证。
 
 ### 10.4 仍然禁止 / 仍然需要人
 

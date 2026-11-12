@@ -3979,7 +3979,7 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 
 ## 17. P7：桌面 DSH 0.2.2-rc.1 上的 live 兼容性与真实 GUI 读路径（2026-11-11，HEAD `4a66d28`）
 
-> 本档登记安装事实、live 检查、真实 GUI 截图与门禁复跑数字；**AT 全部仍是「待执行」**，真实 GUI 的写路径未触发。本档不重启应用、不写 profile、不改产品代码。
+> 本档登记安装事实、live 检查、真实 GUI 截图与门禁复跑数字；**AT 全部仍是「待执行」**，真实 GUI 的写路径未触发（历史记录，截至 2026-11-11；后续见 §20）。本档不重启应用、不写 profile、不改产品代码。
 
 ### 17.1 环境与已安装物
 
@@ -4042,11 +4042,11 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 3. **切片 B 未开始**：`task/create`、`task/fields.update`、`activity/read` 与新建/编辑/活动历史 UI 均未实现，因此 F01 的管理闭环不可用。
 4. **产品验收已开始**：F01/F02 已建立 `verification.md` 并完成部分 AT（均为 `部分执行`）；其余原始/补充 AT 仍无执行记录；任何单测、探针、门禁或 GUI 读路径都不能当作 AT 结论。
 5. **键盘交互 / DOM 级行为**：真实键盘与焦点行为未测（F19 属后续），面板交互仅组件/控制器级测试。
-6. **写端点经真实 HTTP 的取证**：`verify-rpc-roundtrip` 只覆盖 `project/list`、`board/read` 的 carrier 往返；`task/status.set`、`task/reorder`、`task/status.undo` 仍未在真实 carrier 上取证。
+6. **写端点经真实 HTTP 的取证**：`verify-rpc-roundtrip` 只覆盖 `project/list`、`board/read` 的 carrier 往返；`task/status.set`、`task/reorder`、`task/status.undo` 仍未在真实 carrier 上取证（2026-11-11 状态；2026-11-12 已扩到 8 端点/9 码，`verify-rpc-roundtrip` 28/28，见 §20.4）。
 
 ## 18. P8：切片 B（契约 + UI）代码与门禁（2026-11-11，提交 `d26dd34`、`e2483f2`、`e93ab9f`）
 
-> 本档只登记**代码与门禁**事实：B 的三端点与 UI 已实现并通过门禁，但**未安装到真实 `desktop` profile、未重启 GUI、未在真实页面点击新流程**；AT 全部仍是「待执行」。§17.6 第 3 条「切片 B 未开始」已被本档取代。
+> 本档只登记**代码与门禁**事实：B 的三端点与 UI 已实现并通过门禁，但**未安装到真实 `desktop` profile、未重启 GUI、未在真实页面点击新流程**；AT 全部仍是「待执行」（历史记录，后续见 §20；2026-11-12 已安装/重启并部分执行 AT）。§17.6 第 3 条「切片 B 未开始」已被本档取代。
 
 ### 18.1 提交与工作区
 
@@ -4082,7 +4082,7 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 | 2 | 全量测试 | **360 passed**（core 66 / plugin-client 149 / plugin 145；`e2483f2` 时点为 357） |
 | 3 | `tools/verify-host-import.mjs` | **11/11 PASS** |
 | 4 | `tools/probe-host.mjs` | **5/5**；`channel=/aikanban registered=true path=compat dataLayerReady=true` |
-| 5 | `tools/verify-rpc-roundtrip.mjs` | **17/17 passed**（仍是 A 期工具：硬编码 5 端点/8 码；三新端点没有真实 HTTP 工具覆盖） |
+| 5 | `tools/verify-rpc-roundtrip.mjs` | **17/17 passed**（2026-11-11 当时仍是 A 期工具；2026-11-12 已扩展到 8 端点/9 码，p6c 28/28，见 §20.4） |
 | 6 | `python docs/tools/check_docs.py` | 本次文档同步后复跑 **PASS**（59 md；文档门禁，非产品验收） |
 
 ### 18.5 仍未做 / 不得写成已验收
@@ -4091,7 +4091,7 @@ Set-Location C:\Users\InformationDS\aikanban-p6c     # 已构建的 checkout；�
 2. **真实写路径未验证**：状态/排序/撤销与 B 的创建/编辑/活动都仍只有单测/集成/协议证据，没有真实页面操作证据。
 3. **roundtrip 工具未扩展**：`task/create`、`task/fields.update`、`activity/read` 未纳入真实 HTTP 工具，`invalid-input` 也未在 carrier 上断言。
 4. **草稿持久化限制**：字段编辑失败时的草稿保留是页面内 `BoardState`（未接 core 草稿槽），F01-R05 的「重启后草稿恢复」仍无法声称成立。
-5. **产品验收未执行**：106 条原始 AT 仍全部待执行、27 条补充 AT 无执行记录、无 `verification.md`；B 完成判据/360 用例都不等于 F01/F02 验收通过。
+5. **产品验收已开始（仅为部分执行）**：F01/F02 已建立 `verification.md` 并部分执行；其余原始/补充 AT 仍待执行；B 完成判据/360 用例都不等于 F01/F02 验收通过。
 
 ### 18.6 复核后修复（2026-11-11，提交 `e93ab9f`）
 
@@ -4175,9 +4175,9 @@ node tools/install-to-profile.mjs --restore-latest
 
 ### 20.4 仍未验证
 
-- 2026-11-12 的真实 GUI storage 活动已观察：字段编辑（标题/目标，`fieldsRevision=1`）、撤销、列内重排、阻塞原因（`task-blocked`）；仍缺：完成/取消/重新打开、保存失败与草稿跨重启、重启后编辑持久化、键盘交互，以及真实拖拽的浏览器行为（拖拽结果已由 `task-order-changed` 间接观察）。
+- 2026-11-12 的真实 GUI storage 活动已观察：字段编辑（标题/目标，`fieldsRevision=1`）、撤销、列内重排、阻塞原因（`task-blocked`）；完成/取消/重开已通过菜单路径观察；仍缺失败草稿跨重启、重启后编辑持久化、拖拽/键盘交互、故障注入，以及真实拖拽的浏览器行为（拖拽结果已由 `task-order-changed` 间接观察）。
 - 当前运行的 B 构建已包含 `1502a15` 的修复（client bundle 58231B）；若后续重新安装，仍需重启 DSH 使 client 半重新加载。
-- AT 106 + 27 条仍全部待执行；本节不构成验收。
+- F01/F02 已部分执行（见 `verification.md`）；其余原始/补充 AT 仍待执行；本节不构成验收。
 
 ### 20.5 手工负载会被 pnpm 剪除（2026-11-12 22:02 事故）
 

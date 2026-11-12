@@ -44,11 +44,42 @@ import {
   restoreCreateDraft,
   sortByOrder,
   statusLabelOf,
+  summaryCanEdit,
+  summaryCanSave,
+  summaryChangeKindText,
+  summaryContentForSave,
+  summaryDiffHasChanges,
+  summaryDiffRows,
+  summaryDirty,
+  summaryDraftText,
+  summaryEditorFailed,
+  summaryEditorLoading,
+  summaryEditorReady,
+  summaryEditorText,
+  summaryEmptyText,
+  summaryHistoryEntries,
+  summaryOfficialText,
+  summaryOriginText,
+  summaryPatchText,
+  summaryPreviewRows,
+  summarySectionBody,
+  summarySectionTitle,
+  summaryVersionEntry,
+  summaryVersionLabel,
+  summaryVersionMeta,
   toSingleLine,
   validateCreateDraft,
   validateFieldDraft,
   type BoardTask,
 } from '../src/model.js'
+import type {
+  SummaryBaselineWire,
+  SummaryConclusionWire,
+  SummaryContentValue,
+  SummaryDraftValue,
+  SummaryVersionValue,
+  SummaryViewValue,
+} from '../src/wire.js'
 
 const COLUMNS = [
   { status: 'todo', label: '未开始', collapsedByDefault: false },
@@ -403,5 +434,216 @@ describe('activity view mapping (F01-R07: data-layer content only)', () => {
     expect(deriveActivityEntries([])).toEqual([])
     expect(ACTIVITY_EMPTY_TEXT).toBe('暂无重要活动')
     expect(ACTIVITY_TASK_TITLE).toBe('活动历史')
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * F03: manual summary / project overview view model
+ * ------------------------------------------------------------------ */
+
+/** A summary content payload with the single manual section S1 edits. */
+function summaryContent(body: string, scopeKind: 'task' | 'project' = 'task'): SummaryContentValue {
+  return {
+    sections: [{ id: 'manual', title: scopeKind === 'task' ? '任务概况' : '项目总览', body }],
+    conclusions: [],
+  }
+}
+
+/** One official summary version as the host reports it. */
+function summaryVersion(overrides: Record<string, unknown> = {}): SummaryVersionValue {
+  return {
+    versionId: 'v1',
+    seq: 1,
+    confirmedAt: '2026-11-11T06:00:00.000Z',
+    origin: 'user',
+    changeKind: 'created',
+    previousVersionId: null,
+    content: summaryContent('旧正文'),
+    conclusions: [],
+    readToken: 'rt-1',
+    ...overrides,
+  } as SummaryVersionValue
+}
+
+/** One unsaved manual draft as the host reports it. */
+function summaryDraft(body: string, overrides: Record<string, unknown> = {}): SummaryDraftValue {
+  return {
+    draftId: 'd-1',
+    state: 'draft',
+    updateId: 'op-draft',
+    updatedAt: '2026-11-11T06:30:00.000Z',
+    base: { scopeRevision: 3, applicabilityRevision: 1 },
+    content: summaryContent(body),
+    ...overrides,
+  } as SummaryDraftValue
+}
+
+/** A summary view as the host reports it; `current` may be null (empty scope). */
+function summaryView(overrides: Record<string, unknown> = {}): SummaryViewValue {
+  const current = summaryVersion()
+  return {
+    scopeKind: 'task',
+    scopeId: 't1',
+    revision: 3,
+    applicabilityRevision: 1,
+    baseline: { revision: 3, applicabilityRevision: 1, summaryVersionId: 'v1' } as SummaryBaselineWire,
+    current,
+    history: [current],
+    draft: null,
+    needsRecheck: false,
+    recheck: { pending: false, reasons: [], markedAt: null },
+    ...overrides,
+  } as SummaryViewValue
+}
+
+describe('manual summary view model (F03-R01/R02/R04/R07)', () => {
+  it('uses one manual section per scope and an honest empty sentence', () => {
+    expect(summarySectionTitle('task')).toBe('任务概况')
+    expect(summarySectionTitle('project')).toBe('项目总览')
+    expect(summaryEmptyText('task')).toBe('暂无任务概况。')
+    expect(summaryEmptyText('project')).toBe('暂无项目总览。')
+  })
+
+  it('reads the official body only from the current version, and shows nothing when there is none', () => {
+    const view = summaryView()
+    expect(summarySectionBody(view.current?.content)).toBe('旧正文')
+    expect(summaryOfficialText(view)).toBe('旧正文')
+    expect(summaryOfficialText(summaryView({ current: null, history: [] }))).toBe('')
+    expect(summaryOfficialText(null)).toBe('')
+    // A version with a differently identified first section still shows its body.
+    const content: SummaryContentValue = { sections: [{ id: 'other', title: 'T', body: '正文' }], conclusions: [] }
+    expect(summarySectionBody(content)).toBe('正文')
+  })
+
+  it('prefers the unsaved draft in the editor while keeping the official body distinct', () => {
+    const view = summaryView({ draft: summaryDraft('草稿正文') })
+    expect(summaryDraftText(view)).toBe('草稿正文')
+    expect(summaryEditorText(view)).toBe('草稿正文')
+    expect(summaryOfficialText(view)).toBe('旧正文')
+    expect(summaryDraftText(summaryView())).toBeNull()
+    expect(summaryEditorText(summaryView())).toBe('旧正文')
+    expect(summaryEditorText(null)).toBe('')
+  })
+
+  it('builds exactly one manual section for a save and preserves conclusions', () => {
+    const conclusions: readonly SummaryConclusionWire[] = [
+      { id: 'c1', text: '结论', statedState: 'current', state: 'current', amendedBy: null },
+    ]
+    expect(summaryContentForSave('task', '正文', conclusions)).toEqual({
+      sections: [{ id: 'manual', title: '任务概况', body: '正文' }],
+      conclusions,
+    })
+    expect(summaryContentForSave('project', '总览', [])).toEqual({
+      sections: [{ id: 'manual', title: '项目总览', body: '总览' }],
+    })
+    // Empty is legal: an emptied textarea clears the body rather than inventing one.
+    expect(summaryContentForSave('task', '', null).sections[0]?.body).toBe('')
+  })
+
+  it('captures the read baseline and badges a restored draft without inventing one', () => {
+    const ready = summaryEditorReady('task', 't1', summaryView({ draft: summaryDraft('草稿正文') }), 'op-1')
+    expect(ready.status).toBe('ready')
+    expect(ready.baseline).toEqual({ revision: 3, applicabilityRevision: 1, summaryVersionId: 'v1' })
+    expect(ready.updateId).toBe('op-1')
+    expect(ready.text).toBe('草稿正文')
+    expect(ready.notice).toContain('草稿')
+    expect(summaryEditorReady('task', 't1', summaryView(), 'op-1').notice).toBeNull()
+
+    const loading = summaryEditorLoading('task', 't1')
+    expect(loading.status).toBe('loading')
+    expect(loading.baseline).toBeNull()
+    expect(loading.text).toBe('')
+
+    const failed = summaryEditorFailed('task', 't1', '读取失败')
+    expect(failed.status).toBe('failed')
+    expect(failed.baseline).toBeNull()
+    expect(failed.text).toBe('')
+    expect(failed.error).toBe('读取失败')
+  })
+
+  it('gates editing and saving on the baseline and the update id, and never mints one while typing', () => {
+    const ready = summaryEditorReady('task', 't1', summaryView(), 'op-1')
+    expect(summaryCanEdit(ready)).toBe(true)
+    expect(summaryCanSave(ready)).toBe(false)
+
+    const editing = { ...ready, editing: true }
+    expect(summaryCanEdit(editing)).toBe(false)
+    expect(summaryCanSave(editing)).toBe(true)
+    expect(summaryCanSave({ ...editing, updateId: null })).toBe(false)
+    expect(summaryCanSave({ ...editing, baseline: null })).toBe(false)
+
+    const failed = summaryEditorFailed('task', 't1', 'x')
+    expect(summaryCanEdit(failed)).toBe(false)
+    expect(summaryCanSave(failed)).toBe(false)
+
+    const patched = summaryPatchText(editing, '新正文')
+    expect(patched.text).toBe('新正文')
+    expect(patched.updateId).toBe('op-1')
+    expect(summaryDirty(patched)).toBe(true)
+    expect(summaryDirty(editing)).toBe(false)
+  })
+
+  it('shows a plain line diff against the old official body', () => {
+    expect(summaryDiffRows('a', 'a')).toEqual([{ kind: 'same', text: 'a' }])
+    expect(summaryDiffRows('a\nb', 'a\nc')).toEqual([
+      { kind: 'same', text: 'a' },
+      { kind: 'removed', text: 'b' },
+      { kind: 'added', text: 'c' },
+    ])
+    expect(summaryDiffRows('', 'x')).toEqual([{ kind: 'added', text: 'x' }])
+    expect(summaryDiffRows('x', '')).toEqual([{ kind: 'removed', text: 'x' }])
+    expect(summaryDiffHasChanges(summaryDiffRows('a', 'a'))).toBe(false)
+    expect(summaryDiffHasChanges(summaryDiffRows('a', 'b'))).toBe(true)
+  })
+
+  it('previews the input against the official body, never against the draft', () => {
+    const state = {
+      ...summaryEditorReady('task', 't1', summaryView({ draft: summaryDraft('草稿正文') }), 'op-1'),
+      editing: true,
+      text: '旧正文\n新增行',
+    }
+    expect(summaryPreviewRows(state)).toEqual([
+      { kind: 'same', text: '旧正文' },
+      { kind: 'added', text: '新增行' },
+    ])
+  })
+
+  it('labels versions with their sequence, confirmation time, origin and change kind', () => {
+    const version = summaryVersion({ seq: 2, changeKind: 'modified', previousVersionId: 'v1' })
+    expect(summaryVersionLabel(version)).toBe('第 2 版')
+    expect(summaryVersionMeta(version)).toBe('2026-11-11 06:00:00 · 用户手动 · 修改')
+    expect(summaryOriginText('user')).toBe('用户手动')
+    expect(summaryOriginText('ai')).toBe('AI 生成')
+    expect(summaryOriginText('ai+user')).toBe('AI 与用户')
+    expect(summaryChangeKindText('created')).toBe('新建')
+    expect(summaryChangeKindText('cleared')).toBe('清空')
+    const entry = summaryVersionEntry(version)
+    expect(entry).toEqual({
+      versionId: 'v1',
+      label: '第 2 版',
+      meta: '2026-11-11 06:00:00 · 用户手动 · 修改',
+      origin: 'user',
+      changeKind: 'modified',
+      confirmedAt: '2026-11-11T06:00:00.000Z',
+    })
+    // History rows are metadata only: no body is smuggled into the list.
+    expect('content' in entry).toBe(false)
+  })
+
+  it('keeps the history newest-first and exposes metadata only', () => {
+    const newest = summaryVersion({ versionId: 'v2', seq: 2, changeKind: 'modified', previousVersionId: 'v1' })
+    const oldest = summaryVersion()
+    const view = summaryView({ current: newest, history: [newest, oldest] })
+    const entries = summaryHistoryEntries(view)
+    expect(entries.map((entry) => entry.versionId)).toEqual(['v2', 'v1'])
+    expect(entries.map((entry) => entry.label)).toEqual(['第 2 版', '第 1 版'])
+    expect(summaryHistoryEntries(null)).toEqual([])
+  })
+
+  it('never turns a manual view into an AI-authored summary', () => {
+    const entries = summaryHistoryEntries(summaryView())
+    expect(entries.every((entry) => entry.origin === 'user')).toBe(true)
+    expect(entries[0]?.meta).toContain('用户手动')
+    expect(entries[0]?.meta).not.toContain('AI')
   })
 })

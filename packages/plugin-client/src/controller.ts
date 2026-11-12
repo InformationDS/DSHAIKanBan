@@ -56,11 +56,31 @@ import {
   FIELDS_BASELINE_MISSING_MESSAGE,
   FIELDS_NO_CHANGE_TEXT,
   NO_FIELD_CHANGE_MESSAGE,
+  SUMMARY_ALREADY_APPLIED_TEXT,
+  SUMMARY_BASELINE_MISSING_TEXT,
+  SUMMARY_DRAFT_FAILED_TEXT,
+  SUMMARY_DRAFT_SAVED_TEXT,
+  SUMMARY_DRAFT_SAVING_TEXT,
+  SUMMARY_NO_CHANGE_TEXT,
+  SUMMARY_READ_FAILED_TEXT,
+  SUMMARY_SAVED_STALE_TEXT,
+  SUMMARY_SAVED_TEXT,
+  SUMMARY_SAVE_UNKNOWN_TEXT,
+  summaryConclusionsOf,
+  summaryContentForSave,
+  summaryEditorFailed,
+  summaryEditorLoading,
+  summaryEditorReady,
+  summaryEditorText,
+  summaryPatchText,
+  summaryVersionLabel,
   type ActivityEntryView,
   type BoardCapabilities,
   type BoardTask,
   type BoardView,
   type StatusId,
+  type SummaryEditorState,
+  type SummaryScopeKind,
   type TaskDetailView,
 } from './model.js'
 import {
@@ -73,9 +93,13 @@ import {
   type CreateTaskInput,
   type CreateTaskResult,
   type FormalStatusValue,
+  type ManualSummarySaveInput,
   type ProjectChoice,
   type ReorderInput,
   type StatusChangeInput,
+  type SummaryDraftSaveResult,
+  type SummaryReadResult,
+  type SummarySaveResult,
   type UndoInput,
   type UpdateFieldsInput,
   type UpdateFieldsResult,
@@ -89,7 +113,7 @@ import { encodeFieldsVersion, encodeStatusVersion } from './wire.js'
 
 /** What the panel is currently doing. */
 export interface BoardBusy {
-  readonly kind: 'read' | 'status' | 'reorder' | 'undo' | 'create' | 'fields'
+  readonly kind: 'read' | 'status' | 'reorder' | 'undo' | 'create' | 'fields' | 'summary'
   readonly taskId?: string
 }
 
@@ -105,6 +129,8 @@ export type RetryIntent =
   | { readonly kind: 'undo'; readonly input: UndoInput }
   | { readonly kind: 'create'; readonly input: CreateTaskInput }
   | { readonly kind: 'fields'; readonly input: UpdateFieldsInput }
+  | { readonly kind: 'summary-read'; readonly scopeKind: SummaryScopeKind; readonly scopeId: string }
+  | { readonly kind: 'summary-save'; readonly input: ManualSummarySaveInput }
 
 /**
  * The undo affordance attached to a successful change.
@@ -283,6 +309,10 @@ export interface BoardState {
   readonly taskActivity: ActivityState
   /** The activity area rendered under the project header. */
   readonly projectActivity: ActivityState
+  /** The open task's manual-summary editor, or `null` when the detail is closed. */
+  readonly taskSummary: SummaryEditorState | null
+  /** The project overview editor, or `null` while the area is closed. */
+  readonly projectSummary: SummaryEditorState | null
   readonly feedback: BoardFeedback | null
   readonly busy: BoardBusy | null
 }
@@ -498,6 +528,39 @@ export interface BoardController {
   loadProjectActivity(): Promise<void>
   /** Hide the project activity area (resets it to idle; no request). */
   closeProjectActivity(): void
+
+  /* ----- slice F03: manual summaries / project overview ----- */
+
+  /**
+   * Re-read the open task's manual summary (scopeKind `task`). Opening a detail
+   * also triggers this automatically; a failed read stays visible and retryable.
+   */
+  loadTaskSummary(): Promise<void>
+  /** Re-read the selected project's overview (scopeKind `project`). */
+  loadProjectSummary(): Promise<void>
+  /** Close the project overview area (no request). */
+  closeProjectSummary(): void
+
+  /**
+   * Open one scope's summary editor. Refused when the read is not ready or has
+   * no baseline: a baseline is never invented (SAVE-05).
+   */
+  openSummaryEditor(scopeKind: SummaryScopeKind): void
+  /** Close the editor and discard the unsaved input (a saved draft survives). */
+  closeSummaryEditor(scopeKind: SummaryScopeKind): void
+  /** Patch the textarea; typing mints no identity (F03-R07). */
+  setSummaryText(scopeKind: SummaryScopeKind, text: string): void
+  /** Upsert the core draft slot; never creates an official version. */
+  saveSummaryDraft(scopeKind: SummaryScopeKind): Promise<void>
+  /** Show the old-official vs new-input diff; the input is kept. */
+  previewSummary(scopeKind: SummaryScopeKind): void
+  /** Leave the preview and keep the input (draft semantics). */
+  cancelSummaryPreview(scopeKind: SummaryScopeKind): void
+  /**
+   * Commit the previewed body. The same update id is reused by every attempt of
+   * this intent, so a double click or retry cannot create two versions.
+   */
+  saveSummary(scopeKind: SummaryScopeKind): Promise<void>
 }
 
 /**
@@ -531,6 +594,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     fieldEdit: null,
     taskActivity: { kind: 'idle' },
     projectActivity: { kind: 'idle' },
+    taskSummary: null,
+    projectSummary: null,
     feedback: null,
     busy: null,
   }
@@ -577,6 +642,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       fieldEdit: null,
       taskActivity: { kind: 'idle' },
       projectActivity: { kind: 'idle' },
+      taskSummary: null,
+      projectSummary: null,
       feedback: null,
       busy: null,
     })
@@ -644,6 +711,10 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const activityOwner = task === undefined ? null : openTaskId
     const taskActivityReset = state.taskActivity.kind !== 'idle'
       && (activityOwner === null || state.taskActivity.scopeId !== activityOwner)
+    // The summary editor belongs to exactly one open task: losing the task closes
+    // it instead of showing the previous task's overview under a new detail.
+    const taskSummaryReset = state.taskSummary !== null
+      && (task === undefined || state.taskSummary.scopeId !== openTaskId)
     setState({
       read: {
         kind: 'ready',
@@ -658,6 +729,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       detail: task === undefined ? null : deriveTaskDetail(task),
       ...(nextEdit === edit ? {} : { fieldEdit: nextEdit }),
       ...(taskActivityReset ? { taskActivity: { kind: 'idle' as const } } : {}),
+      ...(taskSummaryReset ? { taskSummary: null } : {}),
     })
   }
 
@@ -1102,6 +1174,286 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     applyActivityResult(scope, scopeId, result)
   }
 
+  /* ---------------------------------------------------------------- *
+   * F03: manual summary / project overview
+   * ---------------------------------------------------------------- */
+
+  const summaryStateOf = (scopeKind: SummaryScopeKind): SummaryEditorState | null =>
+    scopeKind === 'task' ? state.taskSummary : state.projectSummary
+
+  const setSummaryState = (scopeKind: SummaryScopeKind, next: SummaryEditorState | null): void => {
+    setState(scopeKind === 'task' ? { taskSummary: next } : { projectSummary: next })
+  }
+
+  /** Patch one summary editor, dropping `undefined` keys like {@link setState}. */
+  const patchSummaryState = (scopeKind: SummaryScopeKind, patch: Partial<SummaryEditorState>): void => {
+    const current = summaryStateOf(scopeKind)
+    if (current === null) return
+    const next: Record<string, unknown> = { ...current }
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined) next[key] = value
+    }
+    setSummaryState(scopeKind, next as unknown as SummaryEditorState)
+  }
+
+  /** Whether the scope a summary belongs to is still the one on screen. */
+  const summaryScopeStillOpen = (scopeKind: SummaryScopeKind, scopeId: string): boolean =>
+    scopeKind === 'task' ? state.openTaskId === scopeId : state.selectedProjectId === scopeId
+
+  const loadSummaryFor = async (scopeKind: SummaryScopeKind, scopeId: string): Promise<void> => {
+    // A retry after the detail/selection closed has no scope to land on.
+    if (!summaryScopeStillOpen(scopeKind, scopeId)) return
+    const current = summaryStateOf(scopeKind)
+    // One read per scope at a time; no polling, no automatic repetition.
+    if (current !== null && current.status === 'loading' && current.scopeId === scopeId) return
+    // Keep an in-flight edit across an explicit re-read: the stale-baseline path
+    // tells the user to re-read, and the typed input must not vanish (F03-R04).
+    const prior = current !== null && current.scopeId === scopeId && current.editing ? current : null
+    setSummaryState(scopeKind, summaryEditorLoading(scopeKind, scopeId))
+    let result: SummaryReadResult
+    try {
+      result = await source.readSummary({ scopeKind, scopeId })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      result = { ok: false, code: 'read-failed', message: `${SUMMARY_READ_FAILED_TEXT}（${message}）` }
+    }
+    // A late response never lands on a different task/project (F01-R01).
+    if (!summaryScopeStillOpen(scopeKind, scopeId)) return
+    if (!result.ok) {
+      const text = result.message.trim().length > 0 ? result.message : SUMMARY_READ_FAILED_TEXT
+      setSummaryState(scopeKind, summaryEditorFailed(scopeKind, scopeId, text))
+      setState({
+        feedback: { kind: 'failure', text, code: result.code, retry: { kind: 'summary-read', scopeKind, scopeId } },
+      })
+      return
+    }
+    if (result.summary === null) {
+      // Host contract: an existing scope answers with a view whose `current` may
+      // be null. A null *view* is an inconsistency, never an empty state.
+      const text = '概况读取结果不一致（缺少概况视图），请重新读取。'
+      setSummaryState(scopeKind, summaryEditorFailed(scopeKind, scopeId, text))
+      setState({
+        feedback: { kind: 'failure', text, code: 'read-failed', retry: { kind: 'summary-read', scopeKind, scopeId } },
+      })
+      return
+    }
+    const ready = summaryEditorReady(scopeKind, scopeId, result.summary, mintOperationId())
+    if (prior === null) {
+      setSummaryState(scopeKind, ready)
+      return
+    }
+    // Re-read while editing: keep the typed text, move the baseline to the new
+    // view, and mark the input as still unsaved.
+    const kept: SummaryEditorState = {
+      ...ready,
+      text: prior.text,
+      dirty: prior.text !== summaryEditorText(ready.view),
+      editing: true,
+      notice: '已重新读取概况基线，未保存的输入已保留。',
+    }
+    setSummaryState(scopeKind, kept)
+  }
+
+  const beginSummaryEdit = (scopeKind: SummaryScopeKind): void => {
+    const editor = summaryStateOf(scopeKind)
+    if (editor === null || state.busy !== null) return
+    if (editor.status !== 'ready' || editor.baseline === null) {
+      // SAVE-05: no baseline means no save. Never invent one; re-read instead.
+      setState({
+        feedback: {
+          kind: 'failure',
+          text: SUMMARY_BASELINE_MISSING_TEXT,
+          code: 'read-failed',
+          retry: { kind: 'summary-read', scopeKind, scopeId: editor.scopeId },
+        },
+      })
+      return
+    }
+    patchSummaryState(scopeKind, {
+      editing: true,
+      previewing: false,
+      error: null,
+      notice: null,
+      updateId: editor.updateId ?? mintOperationId(),
+    })
+  }
+
+  const endSummaryEdit = (scopeKind: SummaryScopeKind): void => {
+    if (state.busy?.kind === 'summary') return
+    const editor = summaryStateOf(scopeKind)
+    if (editor === null || !editor.editing) return
+    // Closing discards the *unsaved* input only; a saved draft stays in the view
+    // and is what the editor reopens with (F03-R07).
+    patchSummaryState(scopeKind, {
+      editing: false,
+      previewing: false,
+      error: null,
+      notice: null,
+      text: summaryEditorText(editor.view),
+      dirty: false,
+      draftStatus: 'none',
+      draftError: null,
+    })
+  }
+
+  const writeSummaryText = (scopeKind: SummaryScopeKind, text: string): void => {
+    const editor = summaryStateOf(scopeKind)
+    if (editor === null || editor.status !== 'ready' || !editor.editing) return
+    patchSummaryState(scopeKind, summaryPatchText(editor, text))
+  }
+
+  const persistSummaryDraft = async (scopeKind: SummaryScopeKind): Promise<void> => {
+    const editor = summaryStateOf(scopeKind)
+    if (editor === null || editor.status !== 'ready' || !editor.editing) return
+    if (editor.draftStatus === 'saving') return
+    const content = summaryContentForSave(scopeKind, editor.text, summaryConclusionsOf(editor.view))
+    patchSummaryState(scopeKind, {
+      draftStatus: 'saving',
+      draftError: null,
+      notice: SUMMARY_DRAFT_SAVING_TEXT,
+    })
+    let result: SummaryDraftSaveResult
+    try {
+      result = await source.saveSummaryDraft({
+        scopeKind,
+        scopeId: editor.scopeId,
+        content,
+        ...(editor.updateId === null ? {} : { updateId: editor.updateId }),
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      result = { ok: false, code: 'save-failed', message }
+    }
+    const current = summaryStateOf(scopeKind)
+    if (current === null || current.scopeId !== editor.scopeId || current.status !== 'ready') return
+    if (!result.ok) {
+      patchSummaryState(scopeKind, {
+        draftStatus: 'failed',
+        draftError: result.message.trim().length > 0 ? result.message : SUMMARY_DRAFT_FAILED_TEXT,
+        notice: null,
+      })
+      return
+    }
+    // A draft is never a version: only the draft slot of the view changes.
+    const view: SummaryEditorState['view'] = current.view === null
+      ? null
+      : { ...current.view, draft: result.draft }
+    patchSummaryState(scopeKind, {
+      view,
+      draftStatus: 'saved',
+      draftError: null,
+      dirty: current.text !== summaryEditorText(view),
+      notice: SUMMARY_DRAFT_SAVED_TEXT,
+    })
+  }
+
+  const enterSummaryPreview = (scopeKind: SummaryScopeKind): void => {
+    const editor = summaryStateOf(scopeKind)
+    if (editor === null || editor.status !== 'ready' || !editor.editing) return
+    patchSummaryState(scopeKind, { previewing: true, error: null })
+  }
+
+  const leaveSummaryPreview = (scopeKind: SummaryScopeKind): void => {
+    const editor = summaryStateOf(scopeKind)
+    if (editor === null || !editor.previewing) return
+    patchSummaryState(scopeKind, { previewing: false })
+  }
+
+  const runSummarySave = async (input: ManualSummarySaveInput): Promise<void> => {
+    if (state.busy !== null) return
+    const scopeKind = input.scopeKind
+    const editor = summaryStateOf(scopeKind)
+    if (editor === null || editor.scopeId !== input.scopeId || editor.status !== 'ready') return
+    setState({ busy: { kind: 'summary' }, feedback: null })
+    patchSummaryState(scopeKind, { status: 'saving', error: null, notice: null })
+    let result: SummarySaveResult
+    try {
+      result = await source.saveSummary(input)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      result = { ok: false, code: 'unknown-result', message: `${SUMMARY_SAVE_UNKNOWN_TEXT}（${message}）` }
+    }
+    // Late response: the detail/selection changed while the save was in flight.
+    if (!summaryScopeStillOpen(scopeKind, input.scopeId)) {
+      setState({ busy: null })
+      return
+    }
+    if (result.ok) {
+      const view = result.view
+      if (view === null) {
+        // The write landed but the authoritative re-read failed. This is neither
+        // a failure nor a success: only a re-read is offered (REC-01/REC-05).
+        patchSummaryState(scopeKind, {
+          status: 'ready',
+          editing: false,
+          previewing: false,
+          dirty: false,
+          updateId: null,
+          notice: SUMMARY_SAVED_STALE_TEXT,
+          draftStatus: 'none',
+          draftError: null,
+        })
+        setState({ busy: null, feedback: { kind: 'stale-view', text: SUMMARY_SAVED_STALE_TEXT } })
+        return
+      }
+      setSummaryState(scopeKind, summaryEditorReady(scopeKind, input.scopeId, view, mintOperationId()))
+      if (result.outcome === 'no-change') {
+        setState({ busy: null, feedback: { kind: 'validation', text: SUMMARY_NO_CHANGE_TEXT } })
+        return
+      }
+      const version = view.current
+      const text = result.outcome === 'already-applied'
+        ? SUMMARY_ALREADY_APPLIED_TEXT
+        : version === null
+          ? SUMMARY_SAVED_TEXT
+          : `${SUMMARY_SAVED_TEXT}（${summaryVersionLabel(version)}）`
+      setState({ busy: null, feedback: { kind: 'success', text } })
+      return
+    }
+    // Failure: keep the typed input and the old official view. Only a
+    // replay-safe code may re-send the write; everything else only re-reads.
+    const message = result.message.trim().length > 0 ? result.message : SUMMARY_SAVE_UNKNOWN_TEXT
+    const baseline = result.baseline
+    const note = baseline === undefined
+      ? ''
+      : `（期望版本 ${String(baseline.expected.revision)}，实际 ${String(baseline.actual.revision)}）`
+    const replayable = result.code === 'save-failed' || result.code === 'unavailable'
+    const retry: RetryIntent | null = result.code === 'invalid-input'
+      ? null
+      : replayable
+        ? { kind: 'summary-save', input }
+        : { kind: 'summary-read', scopeKind, scopeId: input.scopeId }
+    patchSummaryState(scopeKind, {
+      status: 'ready',
+      editing: true,
+      previewing: false,
+      error: `${message}${note}`,
+      notice: null,
+    })
+    setState({
+      busy: null,
+      feedback: { kind: 'failure', text: `${message}${note}`, code: result.code, retry },
+    })
+  }
+
+  const commitSummary = async (scopeKind: SummaryScopeKind): Promise<void> => {
+    const editor = summaryStateOf(scopeKind)
+    if (editor === null || editor.status !== 'ready' || editor.baseline === null || !editor.editing) return
+    if (state.busy !== null) return
+    const updateId = editor.updateId ?? mintOperationId()
+    const draft = editor.view?.draft ?? null
+    const input: ManualSummarySaveInput = {
+      scopeKind,
+      scopeId: editor.scopeId,
+      updateId,
+      expected: editor.baseline,
+      content: summaryContentForSave(scopeKind, editor.text, summaryConclusionsOf(editor.view)),
+      // The draft is consumed only after a successful commit (F03-R07).
+      ...(draft === null ? {} : { consumeDraftIds: [draft.draftId] }),
+    }
+    await runSummarySave(input)
+  }
+
   return {
     getState: () => state,
 
@@ -1227,6 +1579,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         fieldEdit: null,
         taskActivity: { kind: 'idle' },
         projectActivity: { kind: 'idle' },
+        taskSummary: null,
+        projectSummary: null,
         feedback: null,
         busy: null,
       })
@@ -1250,8 +1604,13 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       setState({
         openTaskId: taskId,
         detail: deriveTaskDetail(task),
-        ...(switched ? { fieldEdit: null, taskActivity: { kind: 'idle' as const } } : {}),
+        ...(switched
+          ? { fieldEdit: null, taskActivity: { kind: 'idle' as const }, taskSummary: null }
+          : {}),
       })
+      // Opening a task is the explicit moment its summary is read (F03-R01);
+      // nothing is loaded while the detail is closed.
+      if (switched) void loadSummaryFor('task', taskId)
     },
 
     closeDetail() {
@@ -1260,6 +1619,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         detail: null,
         fieldEdit: null,
         taskActivity: { kind: 'idle' },
+        taskSummary: null,
       })
     },
 
@@ -1387,6 +1747,13 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
           return
         case 'fields':
           void runUpdateFields(retry.input)
+          return
+        case 'summary-read':
+          void loadSummaryFor(retry.scopeKind, retry.scopeId)
+          return
+        case 'summary-save':
+          // Replay-safe codes only: same updateId ⇒ at most one version.
+          void runSummarySave(retry.input)
           return
         default:
           return
@@ -1624,6 +1991,58 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     closeProjectActivity() {
       if (state.projectActivity.kind === 'idle') return
       setState({ projectActivity: { kind: 'idle' } })
+    },
+
+    /* ---------------------------------------------------------------- *
+     * F03: manual summary / project overview
+     * ---------------------------------------------------------------- */
+
+    async loadTaskSummary() {
+      const taskId = state.openTaskId
+      if (taskId === null) return
+      await loadSummaryFor('task', taskId)
+    },
+
+    async loadProjectSummary() {
+      const projectId = state.selectedProjectId
+      if (projectId === null) return
+      await loadSummaryFor('project', projectId)
+    },
+
+    closeProjectSummary() {
+      // Closing is never allowed to race an in-flight save: the write owns the
+      // editor until it settles (same rule as the create/field editors).
+      if (state.busy?.kind === 'summary') return
+      if (state.projectSummary === null) return
+      setState({ projectSummary: null })
+    },
+
+    openSummaryEditor(scopeKind) {
+      beginSummaryEdit(scopeKind)
+    },
+
+    closeSummaryEditor(scopeKind) {
+      endSummaryEdit(scopeKind)
+    },
+
+    setSummaryText(scopeKind, text) {
+      writeSummaryText(scopeKind, text)
+    },
+
+    async saveSummaryDraft(scopeKind) {
+      await persistSummaryDraft(scopeKind)
+    },
+
+    previewSummary(scopeKind) {
+      enterSummaryPreview(scopeKind)
+    },
+
+    cancelSummaryPreview(scopeKind) {
+      leaveSummaryPreview(scopeKind)
+    },
+
+    async saveSummary(scopeKind) {
+      await commitSummary(scopeKind)
     },
   }
 }

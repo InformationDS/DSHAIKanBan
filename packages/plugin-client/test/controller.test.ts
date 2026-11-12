@@ -25,19 +25,39 @@ import type {
   CreateTaskInput,
   CreateTaskResult,
   FormalStatusValue,
+  ManualSummaryDraftSaveInput,
+  ManualSummarySaveInput,
   ProjectListResult,
   ReorderInput,
   StatusChangeInput,
+  SummaryDraftSaveResult,
+  SummaryReadResult,
+  SummarySaveResult,
+  SummaryScopeInput,
   UndoInput,
   UpdateFieldsInput,
   UpdateFieldsResult,
   WriteResult,
 } from '../src/source.js'
+import type {
+  SummaryBaselineWire,
+  SummaryContentValue,
+  SummaryDraftValue,
+  SummaryVersionValue,
+  SummaryViewValue,
+} from '../src/wire.js'
 import {
   BLOCKED_REASON_REQUIRED_MESSAGE,
   FIELD_TITLE_REQUIRED_MESSAGE,
   FIELDS_BASELINE_MISSING_MESSAGE,
   NO_FIELD_CHANGE_MESSAGE,
+  SUMMARY_ALREADY_APPLIED_TEXT,
+  SUMMARY_BASELINE_MISSING_TEXT,
+  SUMMARY_DRAFT_SAVED_TEXT,
+  SUMMARY_NO_CHANGE_TEXT,
+  SUMMARY_SAVED_STALE_TEXT,
+  SUMMARY_SAVED_TEXT,
+  SUMMARY_SAVE_UNKNOWN_TEXT,
   TASK_TITLE_REQUIRED_MESSAGE,
   type TaskDetailView,
 } from '../src/model.js'
@@ -85,6 +105,68 @@ function snapshot(overrides: Record<string, unknown> = {}) {
   }
 }
 
+/** A summary content payload with the single manual section S1 edits. */
+function summaryContent(body: string, scopeKind: 'task' | 'project' = 'task'): SummaryContentValue {
+  return {
+    sections: [{ id: 'manual', title: scopeKind === 'task' ? '任务概况' : '项目总览', body }],
+    conclusions: [],
+  }
+}
+
+/** The baseline the host reports for the official summary version below. */
+const SUMMARY_BASELINE: SummaryBaselineWire = { revision: 3, applicabilityRevision: 1, summaryVersionId: 'v1' }
+
+/** One official summary version as the host reports it. */
+function summaryVersion(overrides: Record<string, unknown> = {}): SummaryVersionValue {
+  return {
+    versionId: 'v1',
+    seq: 1,
+    confirmedAt: '2026-11-11T06:00:00.000Z',
+    origin: 'user',
+    changeKind: 'created',
+    previousVersionId: null,
+    content: summaryContent('旧正文'),
+    conclusions: [],
+    readToken: 'rt-1',
+    ...overrides,
+  } as SummaryVersionValue
+}
+
+/** One unsaved manual draft as the host reports it. */
+function summaryDraft(body: string, overrides: Record<string, unknown> = {}): SummaryDraftValue {
+  return {
+    draftId: 'd-1',
+    state: 'draft',
+    updateId: 'op-draft',
+    updatedAt: '2026-11-11T06:30:00.000Z',
+    base: { scopeRevision: 3, applicabilityRevision: 1 },
+    content: summaryContent(body),
+    ...overrides,
+  } as SummaryDraftValue
+}
+
+/**
+ * A summary view as the host reports it (F03): the scope always exists, so a
+ * missing official summary is `current: null` with a usable baseline — never
+ * a null view.
+ */
+function summaryView(overrides: Record<string, unknown> = {}): SummaryViewValue {
+  const current = summaryVersion()
+  return {
+    scopeKind: 'task',
+    scopeId: 't1',
+    revision: 3,
+    applicabilityRevision: 1,
+    baseline: { ...SUMMARY_BASELINE },
+    current,
+    history: [current],
+    draft: null,
+    needsRecheck: false,
+    recheck: { pending: false, reasons: [], markedAt: null },
+    ...overrides,
+  } as SummaryViewValue
+}
+
 interface FakeSource extends BoardSource {
   reads: number
   /** Project ids the controller asked for, in order (Q1=B: explicit per call). */
@@ -99,11 +181,18 @@ interface FakeSource extends BoardSource {
   createCalls: CreateTaskInput[]
   updateCalls: UpdateFieldsInput[]
   activityCalls: ActivityInput[]
+  summaryReadCalls: SummaryScopeInput[]
+  summarySaveCalls: ManualSummarySaveInput[]
+  summaryDraftCalls: ManualSummaryDraftSaveInput[]
   nextRead: BoardReadResult
   nextWrite: WriteResult
   nextCreate: CreateTaskResult
   nextUpdate: UpdateFieldsResult
   nextActivity: ActivityResult
+  /** The next answer to `readSummary`; `null` lets the fake derive a view. */
+  nextSummaryRead: SummaryReadResult | null
+  nextSummarySave: SummarySaveResult
+  nextSummaryDraft: SummaryDraftSaveResult
   /** When true, `setStatus` stays pending until `release()` is called. */
   holdWrites: boolean
   release(): void
@@ -128,6 +217,9 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
     createCalls: [],
     updateCalls: [],
     activityCalls: [],
+    summaryReadCalls: [],
+    summarySaveCalls: [],
+    summaryDraftCalls: [],
     nextRead: options.read ?? { ok: true, snapshot: snapshot() as never },
     nextWrite: options.write ?? { ok: true, snapshot: snapshot() as never, undoable: true },
     nextCreate: {
@@ -145,6 +237,40 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
       snapshot: snapshot() as never,
     },
     nextActivity: { ok: true, entries: [] },
+    nextSummaryRead: null,
+    nextSummarySave: {
+      ok: true,
+      outcome: 'committed',
+      revision: 4,
+      applicabilityRevision: 1,
+      versionId: 'v2',
+      changeKind: 'modified',
+      consumedDraftIds: [],
+      draftUpdateFailures: [],
+      needsRecheck: false,
+      view: summaryView({
+        revision: 4,
+        baseline: { revision: 4, applicabilityRevision: 1, summaryVersionId: 'v2' },
+        current: summaryVersion({
+          versionId: 'v2',
+          seq: 2,
+          changeKind: 'modified',
+          previousVersionId: 'v1',
+          content: summaryContent('新正文'),
+        }),
+        history: [
+          summaryVersion({
+            versionId: 'v2',
+            seq: 2,
+            changeKind: 'modified',
+            previousVersionId: 'v1',
+            content: summaryContent('新正文'),
+          }),
+          summaryVersion(),
+        ],
+      }),
+    },
+    nextSummaryDraft: { ok: true, draft: summaryDraft('草稿正文') },
     holdWrites: false,
     release: () => undefined,
     async readBoard(projectId) {
@@ -180,6 +306,22 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
     async loadActivity(input) {
       source.activityCalls.push(input)
       return source.nextActivity
+    },
+    async readSummary(input) {
+      source.summaryReadCalls.push(input)
+      if (source.nextSummaryRead !== null) return source.nextSummaryRead
+      return {
+        ok: true,
+        summary: summaryView({ scopeKind: input.scopeKind, scopeId: input.scopeId }),
+      }
+    },
+    async saveSummary(input) {
+      source.summarySaveCalls.push(input)
+      return source.nextSummarySave
+    },
+    async saveSummaryDraft(input) {
+      source.summaryDraftCalls.push(input)
+      return source.nextSummaryDraft
     },
   }
   void options.capabilities
@@ -1568,5 +1710,560 @@ describe('late responses never resurrect closed areas or a reset selection', () 
     const state = controller.getState()
     expect(state.selectedProjectId).toBeNull()
     expect(state.read.kind).toBe('selection-required')
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * F03: manual summary and project overview
+ * ------------------------------------------------------------------ */
+
+describe('manual summary (F03-R01/R02/R04/R07: read, edit, draft, preview, save)', () => {
+  it('reads the task summary when the detail opens and keeps the official body apart from the draft slot', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    const controller = await loadedController(source)
+
+    controller.openDetail('t1')
+    await flush()
+
+    expect(source.summaryReadCalls).toEqual([{ scopeKind: 'task', scopeId: 't1' }])
+    const editor = controller.getState().taskSummary
+    expect(editor?.status).toBe('ready')
+    expect(editor?.text).toBe('旧正文')
+    expect(editor?.view?.current?.versionId).toBe('v1')
+    expect(editor?.baseline).toEqual({ revision: 3, applicabilityRevision: 1, summaryVersionId: 'v1' })
+    expect(editor?.editing).toBe(false)
+  })
+
+  it('treats current:null as a legal empty state: it is editable and the first save uses the reported baseline', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = {
+      ok: true,
+      summary: summaryView({
+        revision: 0,
+        applicabilityRevision: 0,
+        baseline: { revision: 0, applicabilityRevision: 0, summaryVersionId: null },
+        current: null,
+        history: [],
+      }),
+    }
+    source.nextSummarySave = {
+      ok: true,
+      outcome: 'committed',
+      revision: 1,
+      applicabilityRevision: 0,
+      versionId: 'v-first',
+      changeKind: 'created',
+      consumedDraftIds: [],
+      draftUpdateFailures: [],
+      needsRecheck: false,
+      view: summaryView({
+        revision: 1,
+        applicabilityRevision: 0,
+        baseline: { revision: 1, applicabilityRevision: 0, summaryVersionId: 'v-first' },
+        current: summaryVersion({
+          versionId: 'v-first',
+          seq: 1,
+          changeKind: 'created',
+          previousVersionId: null,
+          content: summaryContent('首次正文'),
+        }),
+        history: [summaryVersion({
+          versionId: 'v-first',
+          seq: 1,
+          changeKind: 'created',
+          previousVersionId: null,
+          content: summaryContent('首次正文'),
+        })],
+      }),
+    }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+
+    expect(controller.getState().taskSummary?.view?.current).toBeNull()
+    expect(controller.getState().taskSummary?.text).toBe('')
+
+    controller.openSummaryEditor('task')
+    expect(controller.getState().taskSummary?.editing).toBe(true)
+    controller.setSummaryText('task', '首次正文')
+    controller.previewSummary('task')
+    await controller.saveSummary('task')
+
+    expect(source.summarySaveCalls).toHaveLength(1)
+    const call = source.summarySaveCalls[0]
+    expect(call?.expected).toEqual({ revision: 0, applicabilityRevision: 0, summaryVersionId: null })
+    expect(call?.content).toEqual({ sections: [{ id: 'manual', title: '任务概况', body: '首次正文' }] })
+    const state = controller.getState()
+    expect(state.taskSummary?.view?.current?.versionId).toBe('v-first')
+    expect(state.feedback?.kind).toBe('success')
+    if (state.feedback?.kind !== 'success') throw new Error('unreachable')
+    expect(state.feedback.text).toContain(SUMMARY_SAVED_TEXT)
+  })
+
+  it('restores the stored draft and marks it unsaved while the official version stays untouched', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView({ draft: summaryDraft('草稿正文') }) }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+
+    const editor = controller.getState().taskSummary
+    expect(editor?.text).toBe('草稿正文')
+    expect(editor?.notice).toContain('草稿')
+    expect(editor?.view?.current?.content.sections[0]?.body).toBe('旧正文')
+    expect(editor?.dirty).toBe(false)
+  })
+
+  it('saves a manual draft without creating an official version', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '草稿正文')
+
+    await controller.saveSummaryDraft('task')
+
+    expect(source.summaryDraftCalls).toHaveLength(1)
+    expect(source.summaryDraftCalls[0]).toEqual({
+      scopeKind: 'task',
+      scopeId: 't1',
+      updateId: expect.any(String),
+      content: { sections: [{ id: 'manual', title: '任务概况', body: '草稿正文' }] },
+    })
+    const state = controller.getState()
+    expect(state.taskSummary?.draftStatus).toBe('saved')
+    expect(state.taskSummary?.notice).toBe(SUMMARY_DRAFT_SAVED_TEXT)
+    expect(state.taskSummary?.view?.draft?.draftId).toBe('d-1')
+    expect(state.taskSummary?.view?.current?.versionId).toBe('v1')
+    expect(source.summarySaveCalls).toHaveLength(0)
+  })
+
+  it('keeps the input when a draft save fails and never touches the official content', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    source.nextSummaryDraft = { ok: false, code: 'save-failed', message: '磁盘不可写' }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '草稿正文')
+
+    await controller.saveSummaryDraft('task')
+
+    const editor = controller.getState().taskSummary
+    expect(editor?.draftStatus).toBe('failed')
+    expect(editor?.draftError).toBe('磁盘不可写')
+    expect(editor?.text).toBe('草稿正文')
+    expect(editor?.view?.current?.versionId).toBe('v1')
+    expect(editor?.notice).toBeNull()
+  })
+
+  it('previews against the official body and goes back to editing with the input kept', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView({ draft: summaryDraft('草稿正文') }) }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '旧正文\n新增行')
+
+    controller.previewSummary('task')
+    expect(controller.getState().taskSummary?.previewing).toBe(true)
+
+    controller.cancelSummaryPreview('task')
+    const editor = controller.getState().taskSummary
+    expect(editor?.previewing).toBe(false)
+    expect(editor?.editing).toBe(true)
+    expect(editor?.text).toBe('旧正文\n新增行')
+  })
+
+  it('commits with the read baseline, consumes the saved draft id and reports the new version', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView({ draft: summaryDraft('草稿正文') }) }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '草稿正文')
+    controller.previewSummary('task')
+
+    await controller.saveSummary('task')
+
+    expect(source.summarySaveCalls).toHaveLength(1)
+    const call = source.summarySaveCalls[0]
+    expect(call?.expected).toEqual({ revision: 3, applicabilityRevision: 1, summaryVersionId: 'v1' })
+    expect(call?.consumeDraftIds).toEqual(['d-1'])
+    expect(call?.content).toEqual({ sections: [{ id: 'manual', title: '任务概况', body: '草稿正文' }] })
+
+    const state = controller.getState()
+    expect(state.busy).toBeNull()
+    expect(state.taskSummary?.editing).toBe(false)
+    expect(state.taskSummary?.previewing).toBe(false)
+    expect(state.taskSummary?.view?.current?.versionId).toBe('v2')
+    expect(state.taskSummary?.view?.draft).toBeNull()
+    expect(state.feedback?.kind).toBe('success')
+    if (state.feedback?.kind !== 'success') throw new Error('unreachable')
+    expect(state.feedback.text).toContain('第 2 版')
+  })
+
+  it('reports no-change without claiming a new version', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    source.nextSummarySave = {
+      ok: true,
+      outcome: 'no-change',
+      revision: 3,
+      summaryVersionId: 'v1',
+      view: summaryView(),
+    }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '旧正文')
+    await controller.saveSummary('task')
+
+    const state = controller.getState()
+    expect(state.taskSummary?.editing).toBe(false)
+    expect(state.taskSummary?.view?.current?.versionId).toBe('v1')
+    expect(state.feedback).toEqual({ kind: 'validation', text: SUMMARY_NO_CHANGE_TEXT })
+  })
+
+  it('names an idempotent replay instead of claiming a second save', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    source.nextSummarySave = {
+      ok: true,
+      outcome: 'already-applied',
+      revision: 4,
+      applicabilityRevision: 1,
+      appliedRevision: 3,
+      appliedAt: '2026-11-11T06:00:00.000Z',
+      versionId: 'v2',
+      consumedDraftIds: [],
+      view: summaryView({
+        revision: 4,
+        baseline: { revision: 4, applicabilityRevision: 1, summaryVersionId: 'v2' },
+        current: summaryVersion({ versionId: 'v2', seq: 2, changeKind: 'modified', previousVersionId: 'v1' }),
+      }),
+    }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '旧正文')
+    await controller.saveSummary('task')
+
+    const state = controller.getState()
+    expect(state.taskSummary?.view?.current?.versionId).toBe('v2')
+    expect(state.feedback).toEqual({ kind: 'success', text: SUMMARY_ALREADY_APPLIED_TEXT })
+  })
+
+  it('shows a stale view when the write landed but the re-read failed, and only re-reads on retry', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    source.nextSummarySave = {
+      ok: true,
+      outcome: 'committed',
+      revision: 4,
+      applicabilityRevision: 1,
+      versionId: 'v2',
+      changeKind: 'modified',
+      consumedDraftIds: [],
+      draftUpdateFailures: [],
+      needsRecheck: false,
+      view: null,
+    }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '新正文')
+    await controller.saveSummary('task')
+
+    const state = controller.getState()
+    expect(state.feedback).toEqual({ kind: 'stale-view', text: SUMMARY_SAVED_STALE_TEXT })
+    expect(state.taskSummary?.editing).toBe(false)
+    expect(state.taskSummary?.notice).toBe(SUMMARY_SAVED_STALE_TEXT)
+
+    const readsBefore = source.reads
+    controller.retryPending()
+    await flush()
+    expect(source.summarySaveCalls).toHaveLength(1)
+    expect(source.reads).toBe(readsBefore + 1)
+  })
+
+  it('keeps the typed input and offers a re-read on a stale baseline, then rebases on the new baseline', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    source.nextSummarySave = {
+      ok: false,
+      code: 'stale-baseline',
+      message: '概况已被其他操作更新，本次未保存；请核对最新内容后再提交。',
+      baseline: {
+        expected: { revision: 3, applicabilityRevision: 1, summaryVersionId: 'v1' },
+        actual: { revision: 5, applicabilityRevision: 1, summaryVersionId: 'v9' },
+      },
+    }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '我的新正文')
+    controller.previewSummary('task')
+    await controller.saveSummary('task')
+
+    const failed = controller.getState()
+    expect(failed.taskSummary?.editing).toBe(true)
+    expect(failed.taskSummary?.text).toBe('我的新正文')
+    expect(failed.taskSummary?.error).toContain('期望版本 3')
+    expect(failed.taskSummary?.error).toContain('实际 5')
+    expect(failed.feedback?.kind).toBe('failure')
+    if (failed.feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(failed.feedback.retry).toEqual({ kind: 'summary-read', scopeKind: 'task', scopeId: 't1' })
+
+    source.nextSummaryRead = {
+      ok: true,
+      summary: summaryView({
+        revision: 5,
+        baseline: { revision: 5, applicabilityRevision: 1, summaryVersionId: 'v9' },
+        current: summaryVersion({ versionId: 'v9', seq: 5, changeKind: 'modified', previousVersionId: 'v1' }),
+      }),
+    }
+    controller.retryPending()
+    await flush()
+
+    const rebased = controller.getState().taskSummary
+    expect(rebased?.baseline).toEqual({ revision: 5, applicabilityRevision: 1, summaryVersionId: 'v9' })
+    expect(rebased?.text).toBe('我的新正文')
+    expect(rebased?.editing).toBe(true)
+    expect(rebased?.notice).toContain('未保存的输入已保留')
+  })
+
+  it('treats an unknown save result as read-only: no automatic resend', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    source.nextSummarySave = { ok: false, code: 'unknown-result', message: '网络中断' }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '新正文')
+    await controller.saveSummary('task')
+
+    const state = controller.getState()
+    expect(state.taskSummary?.editing).toBe(true)
+    expect(state.taskSummary?.text).toBe('新正文')
+    expect(state.feedback?.kind).toBe('failure')
+    if (state.feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(state.feedback.retry).toEqual({ kind: 'summary-read', scopeKind: 'task', scopeId: 't1' })
+
+    controller.retryPending()
+    await flush()
+    expect(source.summarySaveCalls).toHaveLength(1)
+  })
+
+  it('replays a replay-safe failure with the same update id', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    source.nextSummarySave = { ok: false, code: 'save-failed', message: '网络中断' }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '新正文')
+    await controller.saveSummary('task')
+
+    const failed = controller.getState().feedback
+    expect(failed?.kind).toBe('failure')
+    if (failed?.kind !== 'failure') throw new Error('unreachable')
+    expect(failed.retry?.kind).toBe('summary-save')
+    const firstUpdateId = source.summarySaveCalls[0]?.updateId
+
+    controller.retryPending()
+    await flush()
+    expect(source.summarySaveCalls).toHaveLength(2)
+    expect(source.summarySaveCalls[1]?.updateId).toBe(firstUpdateId)
+  })
+
+  it('shows an invalid-input error in place and offers no retry', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    source.nextSummarySave = { ok: false, code: 'invalid-input', message: '概况内容无效' }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '新正文')
+    await controller.saveSummary('task')
+
+    const state = controller.getState()
+    expect(state.taskSummary?.editing).toBe(true)
+    expect(state.taskSummary?.text).toBe('新正文')
+    expect(state.taskSummary?.error).toBe('概况内容无效')
+    expect(state.feedback).toEqual({ kind: 'failure', text: '概况内容无效', code: 'invalid-input', retry: null })
+  })
+
+  it('cancels an edit by restoring the official body, keeping a saved draft', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView({ draft: summaryDraft('草稿正文') }) }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '临时输入')
+
+    controller.closeSummaryEditor('task')
+
+    const editor = controller.getState().taskSummary
+    expect(editor?.editing).toBe(false)
+    expect(editor?.text).toBe('草稿正文')
+    expect(editor?.dirty).toBe(false)
+  })
+
+  it('offers a re-read after a failed summary read and does not fabricate content', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: false, code: 'read-failed', message: '读取失败' }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+
+    const failed = controller.getState()
+    expect(failed.taskSummary?.status).toBe('failed')
+    expect(failed.taskSummary?.text).toBe('')
+    expect(failed.feedback?.kind).toBe('failure')
+    if (failed.feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(failed.feedback.retry).toEqual({ kind: 'summary-read', scopeKind: 'task', scopeId: 't1' })
+
+    source.nextSummaryRead = null
+    controller.retryPending()
+    await flush()
+    expect(controller.getState().taskSummary?.status).toBe('ready')
+  })
+
+  it('treats a null summary view as an inconsistency that can only be re-read', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: null }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+
+    const failed = controller.getState()
+    expect(failed.taskSummary?.status).toBe('failed')
+    expect(failed.taskSummary?.baseline).toBeNull()
+    expect(failed.feedback?.kind).toBe('failure')
+    if (failed.feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(failed.feedback.retry).toEqual({ kind: 'summary-read', scopeKind: 'task', scopeId: 't1' })
+
+    controller.openSummaryEditor('task')
+    expect(controller.getState().taskSummary?.editing).toBe(false)
+    expect(controller.getState().feedback?.kind).toBe('failure')
+    if (controller.getState().feedback?.kind !== 'failure') throw new Error('unreachable')
+    expect(controller.getState().feedback.text).toBe(SUMMARY_BASELINE_MISSING_TEXT)
+  })
+
+  it('loads and saves the project overview for the selected project, including an empty official body', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = {
+      ok: true,
+      summary: summaryView({
+        scopeKind: 'project',
+        scopeId: 'ws-1',
+        revision: 0,
+        applicabilityRevision: 0,
+        baseline: { revision: 0, applicabilityRevision: 0, summaryVersionId: null },
+        current: null,
+        history: [],
+      }),
+    }
+    source.nextSummarySave = {
+      ok: true,
+      outcome: 'committed',
+      revision: 1,
+      applicabilityRevision: 0,
+      versionId: 'p1',
+      changeKind: 'created',
+      consumedDraftIds: [],
+      draftUpdateFailures: [],
+      needsRecheck: false,
+      view: summaryView({
+        scopeKind: 'project',
+        scopeId: 'ws-1',
+        revision: 1,
+        applicabilityRevision: 0,
+        baseline: { revision: 1, applicabilityRevision: 0, summaryVersionId: 'p1' },
+        current: summaryVersion({
+          versionId: 'p1',
+          seq: 1,
+          changeKind: 'created',
+          previousVersionId: null,
+          content: summaryContent('项目正文', 'project'),
+        }),
+        history: [summaryVersion({
+          versionId: 'p1',
+          seq: 1,
+          changeKind: 'created',
+          previousVersionId: null,
+          content: summaryContent('项目正文', 'project'),
+        })],
+      }),
+    }
+    const controller = await loadedController(source)
+
+    await controller.loadProjectSummary()
+    expect(source.summaryReadCalls).toEqual([{ scopeKind: 'project', scopeId: 'ws-1' }])
+    expect(controller.getState().projectSummary?.text).toBe('')
+
+    controller.openSummaryEditor('project')
+    controller.setSummaryText('project', '项目正文')
+    controller.previewSummary('project')
+    await controller.saveSummary('project')
+
+    expect(source.summarySaveCalls[0]?.scopeKind).toBe('project')
+    expect(source.summarySaveCalls[0]?.content).toEqual({
+      sections: [{ id: 'manual', title: '项目总览', body: '项目正文' }],
+    })
+    expect(controller.getState().projectSummary?.view?.current?.versionId).toBe('p1')
+
+    controller.closeProjectSummary()
+    expect(controller.getState().projectSummary).toBeNull()
+  })
+
+  it('drops both summary areas when the project selection changes', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    const controller = await loadedController(source)
+    controller.openDetail('t1')
+    await flush()
+    await controller.loadProjectSummary()
+    expect(controller.getState().taskSummary).not.toBeNull()
+    expect(controller.getState().projectSummary).not.toBeNull()
+
+    source.nextRead = {
+      ok: true,
+      snapshot: snapshot({ project: { ...PROJECT, projectId: 'ws-2' } }) as never,
+    }
+    await controller.selectProject('ws-2')
+
+    const state = controller.getState()
+    expect(state.taskSummary).toBeNull()
+    expect(state.projectSummary).toBeNull()
+  })
+
+  it('drops a late summary response after the detail was closed', async () => {
+    const source = fakeSource()
+    let release: (result: SummaryReadResult) => void = () => undefined
+    source.readSummary = () => new Promise<SummaryReadResult>((resolve) => { release = resolve })
+    const controller = await loadedController(source)
+
+    controller.openDetail('t1')
+    controller.closeDetail()
+    release({ ok: true, summary: summaryView() })
+    await flush()
+
+    expect(controller.getState().taskSummary).toBeNull()
   })
 })

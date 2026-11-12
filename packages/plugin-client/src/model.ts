@@ -30,6 +30,15 @@
  * @module @aikanban/plugin-client/model
  */
 
+import type {
+  SummaryBaselineWire,
+  SummaryConclusionWire,
+  SummaryContentValue,
+  SummaryContentWire,
+  SummaryViewValue,
+  SummaryVersionValue,
+} from './wire.js'
+
 /* ------------------------------------------------------------------ *
  * Status ids the product rules bind to (asserted against core in tests)
  * ------------------------------------------------------------------ */
@@ -732,4 +741,485 @@ export function deriveActivityEntryView(entry: ActivityEntryLike): ActivityEntry
  */
 export function deriveActivityEntries(entries: readonly ActivityEntryLike[]): ActivityEntryView[] {
   return entries.map((entry) => deriveActivityEntryView(entry))
+}
+
+/* ------------------------------------------------------------------ *
+ * F03 manual summaries — editor state, preview diff and version labels
+ *
+ * S1 scope: one prose section per scope (task summary / project overview).
+ * The official body is authoritative; a draft is *only* a draft and is never
+ * rendered as an official version (F03-R02/R07). An empty official body is a
+ * legal empty state, never an error and never filled with invented text.
+ * ------------------------------------------------------------------ */
+
+/** The object a manual summary belongs to (F03 S1: task summary / project overview). */
+export type SummaryScopeKind = 'task' | 'project'
+
+/** The single section id/title S1 writes; the body is the textarea text. */
+export const SUMMARY_SECTION_ID = 'manual'
+export const SUMMARY_TASK_SECTION_TITLE = '任务概况'
+export const SUMMARY_PROJECT_SECTION_TITLE = '项目总览'
+
+/**
+ * The section title for one scope.
+ *
+ * @param scopeKind - the scope.
+ * @returns the title shown in the editor and stored in the section.
+ */
+export function summarySectionTitle(scopeKind: SummaryScopeKind): string {
+  return scopeKind === 'task' ? SUMMARY_TASK_SECTION_TITLE : SUMMARY_PROJECT_SECTION_TITLE
+}
+
+/**
+ * The empty-state text for one scope. An official body that is absent or blank
+ * is the explicit "暂无" answer, not a failure (F03-R01).
+ *
+ * @param scopeKind - the scope.
+ * @returns the empty-state sentence.
+ */
+export function summaryEmptyText(scopeKind: SummaryScopeKind): string {
+  return scopeKind === 'task' ? '暂无任务概况。' : '暂无项目总览。'
+}
+
+/** Loading sentence for a summary read. */
+export const SUMMARY_LOADING_TEXT = '正在读取概况…'
+/** Read-failure sentence; never rendered as "暂无" (REC-05). */
+export const SUMMARY_READ_FAILED_TEXT = '概况读取失败，未显示任何内容。'
+/** Retry label for a failed summary read. */
+export const SUMMARY_RETRY_TEXT = '重新读取概况'
+/** Entry label that opens the summary editor. */
+export const SUMMARY_EDIT_TEXT = '编辑概况'
+/** Entry label that switches the editor to the preview (diff) state. */
+export const SUMMARY_PREVIEW_TEXT = '预览修改'
+/** Label of the button that commits the previewed body. */
+export const SUMMARY_CONFIRM_SAVE_TEXT = '确认保存'
+/** Label that leaves the preview and keeps the input. */
+export const SUMMARY_BACK_TO_EDIT_TEXT = '返回编辑'
+/** Label that closes the editor and discards unsaved input. */
+export const SUMMARY_CANCEL_EDIT_TEXT = '取消编辑'
+/** Explicit draft save (S1 has no discard endpoint; a draft may be overwritten). */
+export const SUMMARY_SAVE_DRAFT_TEXT = '保存草稿'
+export const SUMMARY_DRAFT_SAVING_TEXT = '正在保存草稿…'
+export const SUMMARY_DRAFT_SAVED_TEXT = '草稿已保存（尚未成为正式概况）。'
+export const SUMMARY_DRAFT_FAILED_TEXT = '草稿保存失败，正式内容未改变。'
+/** Badge shown when the loaded editor text came from a draft. */
+export const SUMMARY_DRAFT_BADGE = '草稿'
+/** Preview heading: old official body vs the new input. */
+export const SUMMARY_PREVIEW_TITLE = '预览修改：旧正式内容 vs 新内容'
+/** Shown when the scope has no official version yet. */
+export const SUMMARY_NO_OFFICIAL_TEXT = '暂无正式概况'
+/** Shown when the preview has no line-level differences. */
+export const SUMMARY_NO_DIFF_TEXT = '新内容与旧正式内容一致。'
+/** The data layer answered `no-change`: no version was created. */
+export const SUMMARY_NO_CHANGE_TEXT = '未做修改：概况内容没有变化。'
+/** The data layer recognised the same update id and did not write twice. */
+export const SUMMARY_ALREADY_APPLIED_TEXT = '该修改已生效（重复提交已识别）。'
+/** Generic commit success sentence. */
+export const SUMMARY_SAVED_TEXT = '概况已保存'
+/** Commit landed but the authoritative re-read failed (`view: null`). */
+export const SUMMARY_SAVED_STALE_TEXT = '概况已保存，但视图未刷新。请重新读取。'
+/** Save outcome unknown: verify the current body first; never replay blindly. */
+export const SUMMARY_SAVE_UNKNOWN_TEXT = '概况保存结果未知：请先核对当前概况，不要重复提交。'
+/** No baseline means no editable save; re-read instead of inventing one. */
+export const SUMMARY_BASELINE_MISSING_TEXT = '无法编辑：概况缺少基线，请重新读取后再试。'
+/** Version line when no official version exists. */
+export const SUMMARY_NO_VERSION_TEXT = '暂无正式版本'
+/** The only origin S1 can produce: the user's own manual edit. */
+export const SUMMARY_USER_ORIGIN_TEXT = '用户手动'
+
+/**
+ * The body text of a summary content value.
+ *
+ * @param content - a wire content value, or null/undefined when absent.
+ * @returns the S1 section's body, or `''` when there is no section.
+ */
+export function summarySectionBody(content: SummaryContentValue | null | undefined): string {
+  if (content === null || content === undefined) return ''
+  const section = content.sections.find((item) => item.id === SUMMARY_SECTION_ID) ?? content.sections[0]
+  return section?.body ?? ''
+}
+
+/**
+ * The official body text of a summary view.
+ *
+ * @param view - the summary view, or null before it is read.
+ * @returns the official body, or `''` when there is no official version.
+ */
+export function summaryOfficialText(view: SummaryViewValue | null): string {
+  if (view === null || view.current === null) return ''
+  return summarySectionBody(view.current.content)
+}
+
+/**
+ * The draft body text of a summary view.
+ *
+ * @param view - the summary view, or null.
+ * @returns the draft body, or null when there is no draft.
+ */
+export function summaryDraftText(view: SummaryViewValue | null): string | null {
+  if (view === null || view.draft === null) return null
+  return summarySectionBody(view.draft.content)
+}
+
+/**
+ * The text an editor opens with: the draft when one exists, else the official
+ * body. A draft is restored so a crash/reload does not lose the input (F03-R07).
+ *
+ * @param view - the summary view, or null.
+ * @returns the initial editor text.
+ */
+export function summaryEditorText(view: SummaryViewValue | null): string {
+  const draft = summaryDraftText(view)
+  return draft ?? summaryOfficialText(view)
+}
+
+/**
+ * The conclusions that must survive a manual body save (F03-R05: a prose edit
+ * never silently drops the existing conclusion fragments).
+ *
+ * @param view - the summary view, or null.
+ * @returns the conclusions to carry into the saved content.
+ */
+export function summaryConclusionsOf(view: SummaryViewValue | null): readonly SummaryConclusionWire[] {
+  if (view === null) return []
+  if (view.current !== null) return view.current.conclusions
+  if (view.draft !== null) return view.draft.content.conclusions
+  return []
+}
+
+/**
+ * Build the S1 single-section content for a save/draft.
+ *
+ * @param scopeKind - which scope the body belongs to (decides the section title).
+ * @param text - the textarea text (kept verbatim; empty is legal and clears).
+ * @param conclusions - conclusions to preserve; empty means "omit".
+ * @returns the wire content value.
+ */
+export function summaryContentForSave(
+  scopeKind: SummaryScopeKind,
+  text: string,
+  conclusions: readonly SummaryConclusionWire[] | null | undefined,
+): SummaryContentWire {
+  const kept = conclusions ?? []
+  return {
+    sections: [{ id: SUMMARY_SECTION_ID, title: summarySectionTitle(scopeKind), body: text }],
+    ...(kept.length === 0 ? {} : { conclusions: kept }),
+  }
+}
+
+/** Editor lifecycle: loading → ready | failed; saving is a transient ready state. */
+export type SummaryEditorStatus = 'loading' | 'ready' | 'failed' | 'saving'
+
+/** Draft-save lifecycle, independent of the official version (F03-R07). */
+export type SummaryDraftStatus = 'none' | 'saving' | 'saved' | 'failed'
+
+/**
+ * One scope's summary editor state.
+ *
+ * `text` is the only editable value. `baseline` is captured from the read
+ * (SAVE-05) and never invented; `updateId` is minted when the editor opens and
+ * reused by a retry so a double submit cannot create two versions (F03-R07).
+ */
+export interface SummaryEditorState {
+  readonly scopeKind: SummaryScopeKind
+  readonly scopeId: string
+  readonly status: SummaryEditorStatus
+  readonly view: SummaryViewValue | null
+  readonly text: string
+  readonly baseline: SummaryBaselineWire | null
+  readonly editing: boolean
+  readonly previewing: boolean
+  readonly dirty: boolean
+  readonly error: string | null
+  readonly notice: string | null
+  readonly updateId: string | null
+  readonly draftStatus: SummaryDraftStatus
+  readonly draftError: string | null
+}
+
+/**
+ * Build the loading state for one scope.
+ *
+ * @param scopeKind - the scope kind.
+ * @param scopeId - the scope id.
+ * @returns the loading editor state.
+ */
+export function summaryEditorLoading(scopeKind: SummaryScopeKind, scopeId: string): SummaryEditorState {
+  return {
+    scopeKind,
+    scopeId,
+    status: 'loading',
+    view: null,
+    text: '',
+    baseline: null,
+    editing: false,
+    previewing: false,
+    dirty: false,
+    error: null,
+    notice: null,
+    updateId: null,
+    draftStatus: 'none',
+    draftError: null,
+  }
+}
+
+/**
+ * Build the failed state for one scope. No baseline is fabricated; the only
+ * offered action is a re-read (REC-05).
+ *
+ * @param scopeKind - the scope kind.
+ * @param scopeId - the scope id.
+ * @param message - the failure sentence.
+ * @returns the failed editor state.
+ */
+export function summaryEditorFailed(
+  scopeKind: SummaryScopeKind,
+  scopeId: string,
+  message: string,
+): SummaryEditorState {
+  return {
+    scopeKind,
+    scopeId,
+    status: 'failed',
+    view: null,
+    text: '',
+    baseline: null,
+    editing: false,
+    previewing: false,
+    dirty: false,
+    error: message,
+    notice: null,
+    updateId: null,
+    draftStatus: 'none',
+    draftError: null,
+  }
+}
+
+/**
+ * Build the ready state from a successful read. A restored draft is marked so
+ * the UI can badge it; the official version is untouched.
+ *
+ * @param scopeKind - the scope kind.
+ * @param scopeId - the scope id.
+ * @param view - the read summary view.
+ * @param updateId - the save identity for this editing session.
+ * @returns the ready editor state.
+ */
+export function summaryEditorReady(
+  scopeKind: SummaryScopeKind,
+  scopeId: string,
+  view: SummaryViewValue,
+  updateId: string,
+): SummaryEditorState {
+  return {
+    scopeKind,
+    scopeId,
+    status: 'ready',
+    view,
+    text: summaryEditorText(view),
+    baseline: view.baseline,
+    editing: false,
+    previewing: false,
+    dirty: false,
+    error: null,
+    notice: view.draft === null ? null : '已恢复未保存的草稿（尚未成为正式概况）。',
+    updateId,
+    draftStatus: 'none',
+    draftError: null,
+  }
+}
+
+/**
+ * Whether the editor text differs from what it was loaded with (draft or
+ * official). Used to decide whether a draft save is meaningful.
+ *
+ * @param state - the editor state.
+ * @returns true when the text is dirty.
+ */
+export function summaryDirty(state: SummaryEditorState): boolean {
+  return state.text !== summaryEditorText(state.view)
+}
+
+/**
+ * Whether the editor may open. A missing baseline is a re-read, not an editable
+ * empty state (SAVE-05).
+ *
+ * @param state - the editor state.
+ * @returns true when editing can start.
+ */
+export function summaryCanEdit(state: SummaryEditorState): boolean {
+  return state.status === 'ready' && state.baseline !== null && !state.editing
+}
+
+/**
+ * Whether the editor may commit. Mirrors the data layer's requirements: a
+ * baseline and one update id per intent (F03-R02/R07).
+ *
+ * @param state - the editor state.
+ * @returns true when a save may be attempted.
+ */
+export function summaryCanSave(state: SummaryEditorState): boolean {
+  return state.status === 'ready' && state.baseline !== null && state.updateId !== null && state.editing
+}
+
+/**
+ * Patch the editor text and refresh the dirty flag. A typing change never mints
+ * a new update id (F03-R07).
+ *
+ * @param state - the editor state.
+ * @param text - the new textarea value.
+ * @returns the patched state.
+ */
+export function summaryPatchText(state: SummaryEditorState, text: string): SummaryEditorState {
+  return { ...state, text, dirty: text !== summaryEditorText(state.view), error: null }
+}
+
+/** One row of the plain-text preview diff. */
+export type SummaryDiffKind = 'same' | 'removed' | 'added'
+
+/** A preview diff row: one line of the old/new body. */
+export interface SummaryDiffRow {
+  readonly kind: SummaryDiffKind
+  readonly text: string
+}
+
+/**
+ * Plain line diff between the old official body and the new input.
+ *
+ * S1 only needs to show "what would change" in prose; this is a block diff over
+ * the common prefix/suffix, so unchanged edges stay visible and the changed
+ * middle is shown as removed lines followed by added lines.
+ *
+ * @param previous - the current official body (may be empty).
+ * @param next - the editor input (may be empty).
+ * @returns the diff rows; an unchanged body yields only `same` rows.
+ */
+export function summaryDiffRows(previous: string, next: string): SummaryDiffRow[] {
+  const before = previous.length === 0 ? [] : previous.split('\n')
+  const after = next.length === 0 ? [] : next.split('\n')
+  let prefix = 0
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1
+  let suffix = 0
+  while (
+    suffix < before.length - prefix
+    && suffix < after.length - prefix
+    && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) {
+    suffix += 1
+  }
+  const rows: SummaryDiffRow[] = []
+  for (let index = 0; index < prefix; index += 1) rows.push({ kind: 'same', text: before[index] ?? '' })
+  for (let index = prefix; index < before.length - suffix; index += 1) rows.push({ kind: 'removed', text: before[index] ?? '' })
+  for (let index = prefix; index < after.length - suffix; index += 1) rows.push({ kind: 'added', text: after[index] ?? '' })
+  for (let index = before.length - suffix; index < before.length; index += 1) rows.push({ kind: 'same', text: before[index] ?? '' })
+  return rows
+}
+
+/**
+ * The preview rows for one editor state: the official body (never the draft)
+ * versus the input. A draft is not a version and must not be diffed as one.
+ *
+ * @param state - the editor state.
+ * @returns the preview rows.
+ */
+export function summaryPreviewRows(state: SummaryEditorState): SummaryDiffRow[] {
+  return summaryDiffRows(summaryOfficialText(state.view), state.text)
+}
+
+/**
+ * Whether a preview diff contains any change.
+ *
+ * @param rows - the diff rows.
+ * @returns true when at least one line was removed or added.
+ */
+export function summaryDiffHasChanges(rows: readonly SummaryDiffRow[]): boolean {
+  return rows.some((row) => row.kind !== 'same')
+}
+
+/**
+ * Human label for a version's origin. S1 manual saves are always `user`.
+ *
+ * @param origin - the wire origin.
+ * @returns the Chinese label.
+ */
+export function summaryOriginText(origin: SummaryVersionValue['origin']): string {
+  switch (origin) {
+    case 'ai': return 'AI 生成'
+    case 'user': return SUMMARY_USER_ORIGIN_TEXT
+    case 'ai+user': return 'AI 与用户'
+    default: return origin
+  }
+}
+
+/**
+ * Human label for a version's change kind.
+ *
+ * @param changeKind - the wire change kind.
+ * @returns the Chinese label.
+ */
+export function summaryChangeKindText(changeKind: SummaryVersionValue['changeKind']): string {
+  switch (changeKind) {
+    case 'created': return '新建'
+    case 'modified': return '修改'
+    case 'cleared': return '清空'
+    default: return changeKind
+  }
+}
+
+/**
+ * The sequence label of one version.
+ *
+ * @param version - the version.
+ * @returns e.g. `第 2 版`.
+ */
+export function summaryVersionLabel(version: SummaryVersionValue): string {
+  return `第 ${String(version.seq)} 版`
+}
+
+/**
+ * The metadata line of one version: confirmation time, origin and change kind.
+ *
+ * @param version - the version.
+ * @returns the metadata sentence.
+ */
+export function summaryVersionMeta(version: SummaryVersionValue): string {
+  return `${formatActivityTime(version.confirmedAt)} · ${summaryOriginText(version.origin)} · ${summaryChangeKindText(version.changeKind)}`
+}
+
+/** A render row for the version history list (metadata only, no body). */
+export interface SummaryVersionEntry {
+  readonly versionId: string
+  readonly label: string
+  readonly meta: string
+  readonly origin: SummaryVersionValue['origin']
+  readonly changeKind: SummaryVersionValue['changeKind']
+  readonly confirmedAt: string
+}
+
+/**
+ * Map one version to its render row.
+ *
+ * @param version - the version.
+ * @returns the render row.
+ */
+export function summaryVersionEntry(version: SummaryVersionValue): SummaryVersionEntry {
+  return {
+    versionId: version.versionId,
+    label: summaryVersionLabel(version),
+    meta: summaryVersionMeta(version),
+    origin: version.origin,
+    changeKind: version.changeKind,
+    confirmedAt: version.confirmedAt,
+  }
+}
+
+/**
+ * Map a summary view's history (newest first by contract) to render rows.
+ *
+ * @param view - the summary view, or null.
+ * @returns the version rows; empty when nothing is official yet.
+ */
+export function summaryHistoryEntries(view: SummaryViewValue | null): SummaryVersionEntry[] {
+  if (view === null) return []
+  return view.history.map((version) => summaryVersionEntry(version))
 }

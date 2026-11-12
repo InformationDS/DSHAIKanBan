@@ -37,11 +37,38 @@ import {
   ACTIVITY_RETRY_TEXT,
   ACTIVITY_TASK_TITLE,
   BLOCKED_STATUS_ID,
+  SUMMARY_BACK_TO_EDIT_TEXT,
+  SUMMARY_CANCEL_EDIT_TEXT,
+  SUMMARY_CONFIRM_SAVE_TEXT,
+  SUMMARY_DRAFT_BADGE,
+  SUMMARY_DRAFT_FAILED_TEXT,
+  SUMMARY_DRAFT_SAVING_TEXT,
+  SUMMARY_DRAFT_SAVED_TEXT,
+  SUMMARY_EDIT_TEXT,
+  SUMMARY_LOADING_TEXT,
+  SUMMARY_NO_DIFF_TEXT,
+  SUMMARY_NO_VERSION_TEXT,
+  SUMMARY_PREVIEW_TEXT,
+  SUMMARY_PREVIEW_TITLE,
+  SUMMARY_READ_FAILED_TEXT,
+  SUMMARY_RECHECK_NOTE,
+  SUMMARY_RETRY_TEXT,
+  SUMMARY_SAVE_DRAFT_TEXT,
   deriveCardProgress,
   statusLabelOf,
+  summaryDiffHasChanges,
+  summaryEmptyText,
+  summaryHistoryEntries,
+  summaryOfficialText,
+  summaryPreviewRows,
+  summarySectionTitle,
+  summaryVersionLabel,
+  summaryVersionMeta,
   type ActivityEntryView,
   type BoardTask,
   type BoardView,
+  type SummaryEditorState,
+  type SummaryScopeKind,
   type TaskDetailView,
 } from './model.js'
 import type {
@@ -134,6 +161,23 @@ export interface BoardActions {
   /** Load the selected project's activity history (explicit). */
   onProjectActivity(): void
   onProjectActivityClose(): void
+
+  /* ----- F03: manual summary / project overview ----- */
+
+  /**
+   * Explicitly (re)read one scope's summary. Used both by the project overview
+   * button and by the retry after a failed read — a retry only re-reads.
+   */
+  onSummaryOpen(scopeKind: SummaryScopeKind): void
+  /** Close the project overview area (the task area closes with the detail). */
+  onSummaryClose(scopeKind: SummaryScopeKind): void
+  onSummaryEdit(scopeKind: SummaryScopeKind): void
+  onSummaryText(scopeKind: SummaryScopeKind, text: string): void
+  onSummaryDraft(scopeKind: SummaryScopeKind): void
+  onSummaryPreview(scopeKind: SummaryScopeKind): void
+  onSummaryBack(scopeKind: SummaryScopeKind): void
+  onSummaryCancel(scopeKind: SummaryScopeKind): void
+  onSummarySave(scopeKind: SummaryScopeKind): void
 }
 
 /** One status a menu may offer: the id that travels, the label that is shown. */
@@ -651,6 +695,226 @@ function renderFieldEdit(edit: FieldEditState, saving: boolean, actions: BoardAc
 }
 
 /**
+ * The manual-summary area (F03).
+ *
+ * One area serves both scopes: the task detail renders it for the open task and
+ * the project header for the selected project. It only shows what the data
+ * layer returned — no placeholder progress, no invented "AI" text, no
+ * auto-save. A save that landed but whose re-read failed is a stale view, not a
+ * failure: the only offered action is a fresh read (REC-01/REC-05).
+ *
+ * @param scopeKind - 'task' or 'project'.
+ * @param editor - the scope's editor state, or null when not loaded.
+ * @param saving - whether a summary save is in flight.
+ * @param actions - the panel's actions.
+ * @returns the summary node.
+ */
+function renderSummaryArea(
+  scopeKind: SummaryScopeKind,
+  editor: SummaryEditorState | null | undefined,
+  saving: boolean,
+  actions: BoardActions,
+): ReactNode {
+  const heading = summarySectionTitle(scopeKind)
+  if (editor === null || editor === undefined) {
+    return createElement(
+      'section',
+      { key: `summary-${scopeKind}`, 'data-aikanban-summary': scopeKind, style: { ...CARD_STYLE, marginTop: '8px' } },
+      createElement('div', { key: 'title', style: { fontWeight: 600, fontSize: '12px' } }, heading),
+      createElement(
+        'button',
+        { key: 'open', type: 'button', 'data-aikanban-summary-open': scopeKind, onClick: () => { actions.onSummaryOpen(scopeKind) } },
+        '读取概况',
+      ),
+    )
+  }
+  if (editor.status === 'loading') {
+    return createElement(
+      'section',
+      { key: `summary-${scopeKind}`, 'data-aikanban-summary': scopeKind, style: { ...CARD_STYLE, marginTop: '8px' } },
+      createElement('div', { key: 'title', style: { fontWeight: 600, fontSize: '12px' } }, heading),
+      createElement('div', { key: 'loading', 'data-aikanban-summary-loading': scopeKind, style: MUTED }, SUMMARY_LOADING_TEXT),
+    )
+  }
+  if (editor.status === 'failed') {
+    return createElement(
+      'section',
+      { key: `summary-${scopeKind}`, 'data-aikanban-summary': scopeKind, style: { ...CARD_STYLE, marginTop: '8px' } },
+      createElement('div', { key: 'title', style: { fontWeight: 600, fontSize: '12px' } }, heading),
+      createElement('div', { key: 'failed', role: 'alert', 'data-aikanban-summary-failed': scopeKind, style: ERROR_TEXT_STYLE }, editor.error ?? SUMMARY_READ_FAILED_TEXT),
+      createElement(
+        'button',
+        { key: 'reload', type: 'button', 'data-aikanban-summary-reload': scopeKind, onClick: () => { actions.onSummaryOpen(scopeKind) } },
+        SUMMARY_RETRY_TEXT,
+      ),
+    )
+  }
+
+  const view = editor.view
+  const current = view?.current ?? null
+  const draft = view?.draft ?? null
+  const official = summaryOfficialText(view)
+  const versions = summaryHistoryEntries(view)
+  const rows = summaryPreviewRows(editor)
+  const children: ReactNode[] = [
+    createElement(
+      'div',
+      { key: 'title', style: { fontWeight: 600, fontSize: '12px' } },
+      heading,
+      draft === null
+        ? null
+        : createElement('span', { key: 'draft-badge', 'data-aikanban-summary-draft-badge': scopeKind, style: { ...MUTED, marginLeft: '6px' } }, SUMMARY_DRAFT_BADGE),
+    ),
+    view?.needsRecheck === true
+      ? createElement('div', { key: 'recheck', style: { fontSize: '12px' } }, SUMMARY_RECHECK_NOTE)
+      : null,
+    current === null
+      ? createElement('div', { key: 'version', 'data-aikanban-summary-version': 'none', style: MUTED }, SUMMARY_NO_VERSION_TEXT)
+      : createElement(
+        'div',
+        { key: 'version', 'data-aikanban-summary-version': current.versionId, style: MUTED },
+        `${summaryVersionLabel(current)} · ${summaryVersionMeta(current)}`,
+      ),
+  ]
+
+  if (!editor.editing) {
+    children.push(createElement(
+      'div',
+      { key: 'official', 'data-aikanban-summary-official': scopeKind, style: { fontSize: '12px', marginTop: '4px', whiteSpace: 'pre-wrap' } },
+      official.length > 0 ? official : summaryEmptyText(scopeKind),
+    ))
+    children.push(createElement(
+      'button',
+      { key: 'edit', type: 'button', 'data-aikanban-summary-edit': scopeKind, onClick: () => { actions.onSummaryEdit(scopeKind) }, style: { marginTop: '6px' } },
+      SUMMARY_EDIT_TEXT,
+    ))
+  } else if (!editor.previewing) {
+    children.push(createElement('textarea', {
+      key: 'text',
+      'data-aikanban-summary-text': scopeKind,
+      'aria-label': heading,
+      value: editor.text,
+      rows: 6,
+      disabled: saving,
+      onChange: (event: { target: { value: string } }) => { actions.onSummaryText(scopeKind, event.target.value) },
+      style: { width: '100%', marginTop: '4px', fontFamily: 'inherit', fontSize: '12px' },
+    }))
+    children.push(createElement(
+      'div',
+      { key: 'draft-row', style: { marginTop: '6px' } },
+      createElement(
+        'button',
+        {
+          key: 'draft',
+          type: 'button',
+          'data-aikanban-summary-save-draft': scopeKind,
+          onClick: () => { actions.onSummaryDraft(scopeKind) },
+          disabled: saving || editor.draftStatus === 'saving',
+        },
+        SUMMARY_SAVE_DRAFT_TEXT,
+      ),
+      editor.draftStatus === 'saving'
+        ? createElement('span', { key: 'draft-saving', style: MUTED }, SUMMARY_DRAFT_SAVING_TEXT)
+        : null,
+      editor.draftStatus === 'saved'
+        ? createElement('span', { key: 'draft-saved', 'data-aikanban-summary-draft-status': 'saved', style: MUTED }, SUMMARY_DRAFT_SAVED_TEXT)
+        : null,
+      editor.draftStatus === 'failed'
+        ? createElement('span', { key: 'draft-failed', 'data-aikanban-summary-draft-error': scopeKind, style: ERROR_TEXT_STYLE }, editor.draftError ?? SUMMARY_DRAFT_FAILED_TEXT)
+        : null,
+    ))
+    children.push(createElement(
+      'div',
+      { key: 'actions', style: { marginTop: '6px' } },
+      createElement(
+        'button',
+        { key: 'preview', type: 'button', 'data-aikanban-summary-preview': scopeKind, onClick: () => { actions.onSummaryPreview(scopeKind) }, disabled: saving },
+        SUMMARY_PREVIEW_TEXT,
+      ),
+      createElement(
+        'button',
+        { key: 'cancel', type: 'button', 'data-aikanban-summary-cancel': scopeKind, onClick: () => { actions.onSummaryCancel(scopeKind) }, disabled: saving, style: { marginLeft: '6px' } },
+        SUMMARY_CANCEL_EDIT_TEXT,
+      ),
+    ))
+  } else {
+    children.push(createElement(
+      'div',
+      { key: 'preview-title', style: { fontSize: '12px', marginTop: '4px', fontWeight: 600 } },
+      SUMMARY_PREVIEW_TITLE,
+    ))
+    children.push(createElement(
+      'div',
+      { key: 'diff', 'data-aikanban-summary-diff': scopeKind, style: { marginTop: '4px' } },
+      summaryDiffHasChanges(rows)
+        ? rows.map((row, index) => createElement(
+          'div',
+          {
+            key: `row-${String(index)}`,
+            'data-aikanban-summary-diff-row': row.kind,
+            style: { ...MUTED, whiteSpace: 'pre-wrap' },
+          },
+          `${row.kind === 'removed' ? '- ' : row.kind === 'added' ? '+ ' : '  '}${row.text}`,
+        ))
+        : createElement('div', { key: 'no-diff', style: MUTED }, SUMMARY_NO_DIFF_TEXT),
+    ))
+    children.push(createElement(
+      'div',
+      { key: 'actions', style: { marginTop: '6px' } },
+      createElement(
+        'button',
+        { key: 'save', type: 'button', 'data-aikanban-summary-save': scopeKind, onClick: () => { actions.onSummarySave(scopeKind) }, disabled: saving },
+        SUMMARY_CONFIRM_SAVE_TEXT,
+      ),
+      createElement(
+        'button',
+        { key: 'back', type: 'button', 'data-aikanban-summary-back': scopeKind, onClick: () => { actions.onSummaryBack(scopeKind) }, disabled: saving, style: { marginLeft: '6px' } },
+        SUMMARY_BACK_TO_EDIT_TEXT,
+      ),
+      createElement(
+        'button',
+        { key: 'cancel', type: 'button', 'data-aikanban-summary-cancel': scopeKind, onClick: () => { actions.onSummaryCancel(scopeKind) }, disabled: saving, style: { marginLeft: '6px' } },
+        SUMMARY_CANCEL_EDIT_TEXT,
+      ),
+    ))
+  }
+
+  if (editor.error !== null) {
+    children.push(createElement('div', { key: 'error', role: 'alert', 'data-aikanban-summary-error': scopeKind, style: ERROR_TEXT_STYLE }, editor.error))
+  }
+  if (saving) {
+    children.push(createElement('div', { key: 'saving', 'data-aikanban-summary-saving': scopeKind, style: MUTED }, '正在保存概况…'))
+  }
+  if (editor.notice !== null) {
+    children.push(createElement('div', { key: 'notice', 'data-aikanban-summary-notice': scopeKind, style: MUTED }, editor.notice))
+  }
+  if (versions.length > 0) {
+    children.push(createElement(
+      'div',
+      { key: 'history', 'data-aikanban-summary-history': scopeKind, style: { marginTop: '6px' } },
+      createElement('div', { key: 'history-title', style: { fontWeight: 600, fontSize: '12px' } }, '版本历史（新→旧）'),
+      versions.map((version) => createElement(
+        'div',
+        { key: version.versionId, 'data-aikanban-summary-history-entry': version.versionId, style: MUTED },
+        `${version.label} · ${version.meta}`,
+      )),
+    ))
+  }
+  if (scopeKind === 'project') {
+    children.push(createElement(
+      'button',
+      { key: 'close', type: 'button', 'data-aikanban-summary-close': scopeKind, onClick: () => { actions.onSummaryClose(scopeKind) }, disabled: saving, style: { marginTop: '6px' } },
+      '收起项目总览',
+    ))
+  }
+  return createElement(
+    'section',
+    { key: `summary-${scopeKind}`, 'data-aikanban-summary': scopeKind, style: { ...CARD_STYLE, marginTop: '8px' } },
+    children,
+  )
+}
+
+/**
  * The task detail skeleton (F02-R07).
  *
  * @param detail - the detail view.
@@ -660,6 +924,8 @@ function renderFieldEdit(edit: FieldEditState, saving: boolean, actions: BoardAc
  * @param canUndo - whether the data layer can serve undo at all.
  * @param fieldEdit - the open inline editor, if any.
  * @param taskActivity - the task-scope activity state.
+ * @param taskSummary - the task-scope summary editor state.
+ * @param summarySaving - whether a summary save is in flight.
  * @returns the detail node.
  */
 function renderDetail(
@@ -670,6 +936,8 @@ function renderDetail(
   canUndo: boolean,
   fieldEdit: FieldEditState | null,
   taskActivity: ActivityState,
+  taskSummary: SummaryEditorState | null,
+  summarySaving: boolean,
 ): ReactNode {
   return createElement(
     'section',
@@ -684,6 +952,9 @@ function renderDetail(
     detail.needsRecheck
       ? createElement('div', { key: 'recheck', style: { fontSize: '12px' } }, '概况待核对：请核对概况适用范围。')
       : null,
+    // F03: the manual summary lives in the detail; it is read when the detail
+    // opens and only ever shows data-layer content.
+    renderSummaryArea('task', taskSummary, summarySaving, actions),
     detail.blockedReason !== null
       ? createElement('div', { key: 'blocked', style: { fontSize: '12px' } }, `阻塞原因：${detail.blockedReason}`)
       : null,
@@ -1065,6 +1336,21 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
           ACTIVITY_PROJECT_TITLE,
         )
         : renderActivitySection('project', state.projectActivity, actions, actions.onProjectActivityClose))
+      // F03: the project overview is explicit (never read automatically) and
+      // independent from tasks/records: an empty project can still be saved.
+      children.push((state.projectSummary ?? null) === null
+        ? createElement(
+          'button',
+          {
+            key: 'project-summary-button',
+            type: 'button',
+            'data-aikanban-project-summary-button': 'true',
+            onClick: () => { actions.onSummaryOpen('project') },
+            style: { marginBottom: '8px', marginLeft: '6px' },
+          },
+          '项目总览',
+        )
+        : renderSummaryArea('project', state.projectSummary, state.busy?.kind === 'summary', actions))
     }
 
     children.push(createElement(
@@ -1094,6 +1380,8 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
       view?.capabilities.undo === true,
       state.fieldEdit,
       state.taskActivity,
+      state.taskSummary,
+      state.busy?.kind === 'summary',
     ))
   }
   // On the selection screen the selector renders the (only possible) listing
@@ -1173,6 +1461,18 @@ export function BoardPanel(props: { readonly controller: BoardController }): Rea
     onTaskActivityClose: () => { controller.closeTaskActivity() },
     onProjectActivity: () => { void controller.loadProjectActivity() },
     onProjectActivityClose: () => { controller.closeProjectActivity() },
+    onSummaryOpen: (scopeKind) => {
+      if (scopeKind === 'task') void controller.loadTaskSummary()
+      else void controller.loadProjectSummary()
+    },
+    onSummaryClose: () => { controller.closeProjectSummary() },
+    onSummaryEdit: (scopeKind) => { controller.openSummaryEditor(scopeKind) },
+    onSummaryText: (scopeKind, text) => { controller.setSummaryText(scopeKind, text) },
+    onSummaryDraft: (scopeKind) => { void controller.saveSummaryDraft(scopeKind) },
+    onSummaryPreview: (scopeKind) => { controller.previewSummary(scopeKind) },
+    onSummaryBack: (scopeKind) => { controller.cancelSummaryPreview(scopeKind) },
+    onSummaryCancel: (scopeKind) => { controller.closeSummaryEditor(scopeKind) },
+    onSummarySave: (scopeKind) => { void controller.saveSummary(scopeKind) },
   }
   return renderBoard(state, actions)
 }

@@ -24,11 +24,36 @@ import {
   ACTIVITY_LOADING_TEXT,
   ACTIVITY_RETRY_TEXT,
   ACTIVITY_TASK_TITLE,
+  SUMMARY_BACK_TO_EDIT_TEXT,
+  SUMMARY_CANCEL_EDIT_TEXT,
+  SUMMARY_CONFIRM_SAVE_TEXT,
+  SUMMARY_DRAFT_BADGE,
+  SUMMARY_DRAFT_SAVED_TEXT,
+  SUMMARY_EDIT_TEXT,
+  SUMMARY_LOADING_TEXT,
+  SUMMARY_NO_DIFF_TEXT,
+  SUMMARY_NO_VERSION_TEXT,
+  SUMMARY_PREVIEW_TEXT,
+  SUMMARY_PREVIEW_TITLE,
+  SUMMARY_RETRY_TEXT,
+  SUMMARY_SAVE_DRAFT_TEXT,
+  SUMMARY_SAVED_STALE_TEXT,
   deriveTaskDetail,
+  summaryEditorFailed,
+  summaryEditorLoading,
+  summaryEditorReady,
+  summaryEmptyText,
   type ActivityEntryView,
   type BoardTask,
   type BoardView,
+  type SummaryEditorState,
 } from '../src/model.js'
+import type {
+  SummaryContentValue,
+  SummaryDraftValue,
+  SummaryVersionValue,
+  SummaryViewValue,
+} from '../src/wire.js'
 import {
   SELECTION_REQUIRED_DESCRIPTION,
   SELECTION_REQUIRED_TITLE,
@@ -193,6 +218,8 @@ function state(overrides: Partial<BoardState> = {}): BoardState {
     fieldEdit: null,
     taskActivity: { kind: 'idle' },
     projectActivity: { kind: 'idle' },
+    taskSummary: null,
+    projectSummary: null,
     feedback: null,
     busy: null,
     ...overrides,
@@ -253,6 +280,15 @@ function recordingActions(): RecordingActions {
     onTaskActivityClose: () => { calls.push('task-activity-close') },
     onProjectActivity: () => { calls.push('project-activity') },
     onProjectActivityClose: () => { calls.push('project-activity-close') },
+    onSummaryOpen: (scopeKind) => { calls.push(`summary-open:${scopeKind}`) },
+    onSummaryClose: (scopeKind) => { calls.push(`summary-close:${scopeKind}`) },
+    onSummaryEdit: (scopeKind) => { calls.push(`summary-edit:${scopeKind}`) },
+    onSummaryText: (scopeKind, text) => { calls.push(`summary-text:${scopeKind}:${text}`) },
+    onSummaryDraft: (scopeKind) => { calls.push(`summary-draft:${scopeKind}`) },
+    onSummaryPreview: (scopeKind) => { calls.push(`summary-preview:${scopeKind}`) },
+    onSummaryBack: (scopeKind) => { calls.push(`summary-back:${scopeKind}`) },
+    onSummaryCancel: (scopeKind) => { calls.push(`summary-cancel:${scopeKind}`) },
+    onSummarySave: (scopeKind) => { calls.push(`summary-save:${scopeKind}`) },
   }
 }
 
@@ -654,5 +690,276 @@ describe('rendered tree integrity (regression: duplicate activity buttons / empt
     dragStart?.({ dataTransfer: { setData: (type, data) => { payloads.push(`${type}:${data}`) } } })
     expect(payloads).toEqual(['text/plain:t1'])
     expect(actions.calls).toEqual(['drag:t1'])
+  })
+})
+
+function summaryContent(body: string, scopeKind: 'task' | 'project' = 'task'): SummaryContentValue {
+  return {
+    sections: [{ id: 'manual', title: scopeKind === 'task' ? '任务概况' : '项目总览', body }],
+    conclusions: [],
+  }
+}
+
+function summaryVersion(overrides: Partial<SummaryVersionValue> = {}): SummaryVersionValue {
+  return {
+    versionId: 'v1',
+    seq: 1,
+    confirmedAt: '2026-11-11T06:00:00.000Z',
+    origin: 'user',
+    changeKind: 'created',
+    previousVersionId: null,
+    content: summaryContent('旧正文'),
+    conclusions: [],
+    readToken: 'rt-1',
+    ...overrides,
+  }
+}
+
+function summaryDraft(body: string): SummaryDraftValue {
+  return {
+    draftId: 'd-1',
+    state: 'draft',
+    updateId: 'op-draft',
+    updatedAt: '2026-11-11T07:00:00.000Z',
+    base: { scopeRevision: 3, applicabilityRevision: 1 },
+    content: summaryContent(body),
+  }
+}
+
+function summaryView(overrides: Partial<SummaryViewValue> = {}): SummaryViewValue {
+  const current = summaryVersion()
+  return {
+    scopeKind: 'task',
+    scopeId: 't1',
+    revision: 3,
+    applicabilityRevision: 1,
+    baseline: { revision: 3, applicabilityRevision: 1, summaryVersionId: 'v1' },
+    current,
+    history: [current],
+    draft: null,
+    needsRecheck: false,
+    recheck: { pending: false, reasons: [], markedAt: null },
+    ...overrides,
+  }
+}
+
+function summaryEditor(scopeKind: 'task' | 'project', overrides: Partial<SummaryEditorState> = {}): SummaryEditorState {
+  const scopeId = scopeKind === 'task' ? 't1' : 'ws-1'
+  return {
+    ...summaryEditorReady(scopeKind, scopeId, summaryView({ scopeKind, scopeId }), 'op-1'),
+    ...overrides,
+  }
+}
+
+describe('manual summary UI (F03-R01/R02/R04/R07)', () => {
+  it('shows the task summary with its version and an explicit edit entry', () => {
+    const actions = recordingActions()
+    const tree = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      taskSummary: summaryEditor('task'),
+    }), actions)
+
+    const areas = elementsWith(tree, 'data-aikanban-summary')
+    expect(areas).toHaveLength(1)
+    expect(areas[0]?.props['data-aikanban-summary']).toBe('task')
+    expect(textOf(areas[0] as TestElement)).toContain('第 1 版')
+    expect(textOf(areas[0] as TestElement)).toContain('用户手动')
+    expect(textOf(areas[0] as TestElement)).toContain('旧正文')
+    expect(textOf(areas[0] as TestElement)).toContain(SUMMARY_EDIT_TEXT)
+
+    const edit = elementsWith(tree, 'data-aikanban-summary-edit')
+    expect(edit).toHaveLength(1)
+    click(edit[0] as TestElement)
+    expect(actions.calls).toEqual(['summary-edit:task'])
+  })
+
+  it('shows an honest empty sentence with no version and still offers editing', () => {
+    const tree = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      taskSummary: summaryEditor('task', {
+        view: summaryView({
+          current: null,
+          history: [],
+          baseline: { revision: 0, applicabilityRevision: 0, summaryVersionId: null },
+        }),
+      }),
+    }), recordingActions())
+
+    expect(textOf(tree)).toContain(summaryEmptyText('task'))
+    const version = elementsWith(tree, 'data-aikanban-summary-version')
+    expect(version).toHaveLength(1)
+    expect(version[0]?.props['data-aikanban-summary-version']).toBe('none')
+    expect(textOf(version[0] as TestElement)).toBe(SUMMARY_NO_VERSION_TEXT)
+    expect(elementsWith(tree, 'data-aikanban-summary-edit')).toHaveLength(1)
+  })
+
+  it('edits the body in a textarea and offers draft, preview and cancel', () => {
+    const actions = recordingActions()
+    const tree = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      taskSummary: summaryEditor('task', { editing: true, text: '旧正文\n新行' }),
+    }), actions)
+
+    const textarea = elementsWith(tree, 'data-aikanban-summary-text')
+    expect(textarea).toHaveLength(1)
+    expect(textarea[0]?.props['value']).toBe('旧正文\n新行')
+    expect(textOf(tree)).toContain(SUMMARY_SAVE_DRAFT_TEXT)
+    expect(textOf(tree)).toContain(SUMMARY_PREVIEW_TEXT)
+
+    change(textarea[0] as TestElement, '改后')
+    click(elementsWith(tree, 'data-aikanban-summary-save-draft')[0] as TestElement)
+    click(elementsWith(tree, 'data-aikanban-summary-preview')[0] as TestElement)
+    click(elementsWith(tree, 'data-aikanban-summary-cancel')[0] as TestElement)
+    expect(actions.calls).toEqual([
+      'summary-text:task:改后',
+      'summary-draft:task',
+      'summary-preview:task',
+      'summary-cancel:task',
+    ])
+    expect(textOf(tree)).toContain(SUMMARY_CANCEL_EDIT_TEXT)
+  })
+
+  it('previews removed and added lines against the official body, never the draft', () => {
+    const actions = recordingActions()
+    const tree = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      taskSummary: summaryEditor('task', {
+        view: summaryView({ draft: summaryDraft('草稿正文') }),
+        editing: true,
+        previewing: true,
+        text: '旧正文\n新增行',
+      }),
+    }), actions)
+
+    expect(textOf(tree)).toContain(SUMMARY_PREVIEW_TITLE)
+    const rows = elementsWith(tree, 'data-aikanban-summary-diff-row')
+    const added = rows.filter((row) => row.props['data-aikanban-summary-diff-row'] === 'added')
+    expect(added).toHaveLength(1)
+    expect(textOf(added[0] as TestElement)).toContain('+ 新增行')
+    expect(rows.filter((row) => row.props['data-aikanban-summary-diff-row'] === 'removed')).toHaveLength(0)
+
+    click(elementsWith(tree, 'data-aikanban-summary-save')[0] as TestElement)
+    click(elementsWith(tree, 'data-aikanban-summary-back')[0] as TestElement)
+    click(elementsWith(tree, 'data-aikanban-summary-cancel')[0] as TestElement)
+    expect(actions.calls).toEqual([
+      'summary-save:task',
+      'summary-back:task',
+      'summary-cancel:task',
+    ])
+    expect(textOf(tree)).toContain(SUMMARY_CONFIRM_SAVE_TEXT)
+    expect(textOf(tree)).toContain(SUMMARY_BACK_TO_EDIT_TEXT)
+  })
+
+  it('says a preview without differences has no changes instead of inventing a diff', () => {
+    const tree = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      taskSummary: summaryEditor('task', { editing: true, previewing: true, text: '旧正文' }),
+    }), recordingActions())
+
+    expect(textOf(tree)).toContain(SUMMARY_NO_DIFF_TEXT)
+    expect(elementsWith(tree, 'data-aikanban-summary-diff-row')).toHaveLength(0)
+  })
+
+  it('renders a failed read with a reload and a loading state without content', () => {
+    const failedActions = recordingActions()
+    const failed = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      taskSummary: summaryEditorFailed('task', 't1', '概况读取失败'),
+    }), failedActions)
+
+    const failure = elementsWith(failed, 'data-aikanban-summary-failed')
+    expect(failure).toHaveLength(1)
+    expect(textOf(failure[0] as TestElement)).toContain('概况读取失败')
+    const reload = elementsWith(failed, 'data-aikanban-summary-reload')
+    expect(reload).toHaveLength(1)
+    expect(textOf(reload[0] as TestElement)).toBe(SUMMARY_RETRY_TEXT)
+    click(reload[0] as TestElement)
+    expect(failedActions.calls).toEqual(['summary-open:task'])
+
+    const loading = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      taskSummary: summaryEditorLoading('task', 't1'),
+    }), recordingActions())
+    expect(elementsWith(loading, 'data-aikanban-summary-loading')).toHaveLength(1)
+    expect(textOf(loading)).toContain(SUMMARY_LOADING_TEXT)
+  })
+
+  it('badges a restored draft and reports a saved draft without claiming a version', () => {
+    const tree = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      taskSummary: summaryEditor('task', {
+        view: summaryView({ draft: summaryDraft('草稿正文') }),
+        editing: true,
+        draftStatus: 'saved',
+      }),
+    }), recordingActions())
+
+    const badge = elementsWith(tree, 'data-aikanban-summary-draft-badge')
+    expect(badge).toHaveLength(1)
+    expect(textOf(badge[0] as TestElement)).toBe(SUMMARY_DRAFT_BADGE)
+    const status = elementsWith(tree, 'data-aikanban-summary-draft-status')
+    expect(status).toHaveLength(1)
+    expect(status[0]?.props['data-aikanban-summary-draft-status']).toBe('saved')
+    expect(textOf(status[0] as TestElement)).toBe(SUMMARY_DRAFT_SAVED_TEXT)
+    expect(textOf(tree)).not.toContain('第 2 版')
+  })
+
+  it('offers a project overview entry on a ready board and renders it with an explicit close', () => {
+    const actions = recordingActions()
+    const closed = renderBoard(readyState(), actions)
+    const button = elementsWith(closed, 'data-aikanban-project-summary-button')
+    expect(button).toHaveLength(1)
+    expect(textOf(button[0] as TestElement)).toBe('项目总览')
+    click(button[0] as TestElement)
+    expect(actions.calls).toEqual(['summary-open:project'])
+
+    const closeActions = recordingActions()
+    const open = renderBoard(readyState({ projectSummary: summaryEditor('project') }), closeActions)
+    const areas = elementsWith(open, 'data-aikanban-summary')
+    expect(areas).toHaveLength(1)
+    expect(areas[0]?.props['data-aikanban-summary']).toBe('project')
+    expect(elementsWith(open, 'data-aikanban-project-summary-button')).toHaveLength(0)
+    const close = elementsWith(open, 'data-aikanban-summary-close')
+    expect(close).toHaveLength(1)
+    click(close[0] as TestElement)
+    expect(closeActions.calls).toEqual(['summary-close:project'])
+  })
+
+  it('lists version history newest first as metadata only, without AI origin', () => {
+    const newest = summaryVersion({ versionId: 'v2', seq: 2, changeKind: 'modified', previousVersionId: 'v1' })
+    const oldest = summaryVersion()
+    const tree = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      taskSummary: summaryEditor('task', {
+        view: summaryView({ current: newest, history: [newest, oldest] }),
+      }),
+    }), recordingActions())
+
+    const entries = elementsWith(tree, 'data-aikanban-summary-history-entry')
+    expect(entries.map((entry) => entry.props['data-aikanban-summary-history-entry'])).toEqual(['v2', 'v1'])
+    expect(textOf(entries[0] as TestElement)).toBe('第 2 版 · 2026-11-11 06:00:00 · 用户手动 · 修改')
+    expect(textOf(entries[1] as TestElement)).toBe('第 1 版 · 2026-11-11 06:00:00 · 用户手动 · 新建')
+    expect(textOf(tree)).not.toContain('AI 生成')
+  })
+
+  it('shows the stale-view notice inside the summary area instead of a fresh version', () => {
+    const tree = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      taskSummary: summaryEditor('task', { notice: SUMMARY_SAVED_STALE_TEXT }),
+    }), recordingActions())
+
+    const notice = elementsWith(tree, 'data-aikanban-summary-notice')
+    expect(notice).toHaveLength(1)
+    expect(textOf(notice[0] as TestElement)).toBe(SUMMARY_SAVED_STALE_TEXT)
   })
 })

@@ -1799,6 +1799,42 @@ describe('manual summary (F03-R01/R02/R04/R07: read, edit, draft, preview, save)
     expect(state.feedback?.kind).toBe('success')
     if (state.feedback?.kind !== 'success') throw new Error('unreachable')
     expect(state.feedback.text).toContain(SUMMARY_SAVED_TEXT)
+
+    // F03-R02: the save response is enough to refresh the card and the open
+    // detail; neither may wait for a project switch, a reload or a restart.
+    expect(state.detail?.summaryProgress?.line).toBe('首次正文')
+    expect(state.detail?.progress).toEqual({ source: 'summary', text: '首次正文' })
+    const board = viewOf(state)
+    const card = board?.columns.flatMap((column) => column.tasks).find((task) => task.taskId === 't1')
+    expect(card?.summaryProgress).toEqual({
+      line: '首次正文',
+      versionId: 'v-first',
+      confirmedAt: '2026-11-11T06:00:00.000Z',
+    })
+    expect(card?.hasSummary).toBe(true)
+  })
+
+  it('refreshes the card immediately after a committed summary save without a board re-read', async () => {
+    const source = fakeSource()
+    source.nextSummaryRead = { ok: true, summary: summaryView() }
+    const controller = await loadedController(source)
+    const readsBefore = source.reads
+    controller.openDetail('t1')
+    await flush()
+    controller.openSummaryEditor('task')
+    controller.setSummaryText('task', '即时刷新正文')
+    controller.previewSummary('task')
+
+    await controller.saveSummary('task')
+
+    expect(source.reads).toBe(readsBefore)
+    const state = controller.getState()
+    const card = viewOf(state)?.columns
+      .flatMap((column) => column.tasks)
+      .find((task) => task.taskId === 't1')
+    expect(card?.summaryProgress?.line).toBe('新正文')
+    expect(card?.summaryProgress?.versionId).toBe('v2')
+    expect(state.detail?.summaryProgress?.line).toBe('新正文')
   })
 
   it('restores the stored draft and marks it unsaved while the official version stays untouched', async () => {

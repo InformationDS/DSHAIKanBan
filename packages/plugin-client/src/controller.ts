@@ -82,6 +82,7 @@ import {
   type SummaryEditorState,
   type SummaryScopeKind,
   type TaskDetailView,
+  type TaskProgressView,
 } from './model.js'
 import {
   nextOperationId,
@@ -1359,6 +1360,73 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     patchSummaryState(scopeKind, { previewing: false })
   }
 
+  /**
+   * Reduce an authoritative summary view to the one card line core would report.
+   *
+   * Core's `progressLineOf` uses the first non-empty line of the first non-empty
+   * section (whitespace collapsed, at most 160 characters). The save response
+   * carries that same content, so the card can be updated without a second
+   * `board/read` — and must be, because F03-R02 requires the saved summary to be
+   * visible immediately (not only after switching projects or restarting).
+   *
+   * @param view - the summary re-read returned by a successful save.
+   * @returns the card progress, or `null` when there is no official summary body.
+   */
+  function summaryProgressOf(view: SummaryEditorState['view']): TaskProgressView | null {
+    const current = view?.current
+    if (current === null || current === undefined) return null
+    for (const section of current.content.sections) {
+      for (const rawLine of section.body.split(/\r?\n/u)) {
+        const line = rawLine.replace(/\s+/gu, ' ').trim()
+        if (line.length === 0) continue
+        return {
+          line: line.length <= 160 ? line : `${line.slice(0, 159)}…`,
+          versionId: current.versionId,
+          confirmedAt: current.confirmedAt,
+        }
+      }
+    }
+    return null
+  }
+
+  /**
+   * Write the saved summary into the board card and the open detail immediately.
+   *
+   * The board snapshot is the only place a card reads `summaryProgress` from
+   * (`deriveCardProgress`), and the detail keeps its own copy (`TaskDetailView`);
+   * both must be refreshed together. No other task field is touched, and a
+   * project-scope save never changes a card.
+   *
+   * @param taskId - the task whose summary was saved.
+   * @param view - the authoritative summary re-read returned by the save.
+   */
+  function applyTaskSummaryProgress(taskId: string, view: SummaryEditorState['view']): void {
+    if (state.read.kind !== 'ready') return
+    const sourceTask = state.read.view.columns
+      .flatMap((column) => column.tasks)
+      .find((task) => task.taskId === taskId)
+    if (sourceTask === undefined) return
+    const progress = summaryProgressOf(view)
+    const updatedTask: BoardTask = {
+      ...sourceTask,
+      summaryProgress: progress,
+      hasSummary: view !== null && view.current !== null,
+      needsRecheck: view?.needsRecheck === true,
+      ...(view === null ? {} : { recheckCodes: view.recheck.reasons.map((reason) => reason.code) }),
+    }
+    const columns = state.read.view.columns.map((column) => {
+      if (!column.tasks.some((task) => task.taskId === taskId)) return column
+      return {
+        ...column,
+        tasks: column.tasks.map((task) => (task.taskId === taskId ? updatedTask : task)),
+      }
+    })
+    setState({
+      read: { ...state.read, view: { ...state.read.view, columns } },
+      ...(state.detail?.taskId === taskId ? { detail: deriveTaskDetail(updatedTask) } : {}),
+    })
+  }
+
   const runSummarySave = async (input: ManualSummarySaveInput): Promise<void> => {
     if (state.busy !== null) return
     const scopeKind = input.scopeKind
@@ -1397,6 +1465,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         return
       }
       setSummaryState(scopeKind, summaryEditorReady(scopeKind, input.scopeId, view, mintOperationId()))
+      if (scopeKind === 'task') applyTaskSummaryProgress(input.scopeId, view)
       if (result.outcome === 'no-change') {
         setState({ busy: null, feedback: { kind: 'validation', text: SUMMARY_NO_CHANGE_TEXT } })
         return

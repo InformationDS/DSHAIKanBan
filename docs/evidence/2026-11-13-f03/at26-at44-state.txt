@@ -1,0 +1,408 @@
+{
+  "task_t11": {
+    "key": "scope1_task_t11e8f75da2b33f6c11e6b8c6dd77ef13",
+    "revision": 1,
+    "lastCommittedUpdateId": "op-mwe9qbgo-1",
+    "lastConfirmedAt": "2026-11-13T01:00:16.948Z",
+    "task": {
+      "projectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+      "title": "AT-01 收口-2026-11-12",
+      "goal": "AT-01 补充任务（同标题）",
+      "status": "done",
+      "blockedReason": null,
+      "archived": false,
+      "order": 1,
+      "fieldsRevision": 1,
+      "statusRevision": 3,
+      "goalRevision": 1,
+      "lastFieldUpdateId": "op-mwdilkc3-9",
+      "lastStatusUpdateId": "op-mwdm77cp-3",
+      "recentFieldUpdateIds": [
+        "op-mwdilkc3-9"
+      ],
+      "recentStatusUpdateIds": [
+        "op-mwdm77cp-3",
+        "op-mwdm6o6t-2",
+        "op-mwdm5ll5-1"
+      ],
+      "lastStatusChange": {
+        "updateId": "op-mwdm77cp-3",
+        "at": "2026-11-12T13:59:52.827Z",
+        "kind": "transition",
+        "from": {
+          "status": "blocked",
+          "blockedReason": "AT-03 拖拽验收阻塞原因"
+        },
+        "to": {
+          "status": "done",
+          "blockedReason": null
+        }
+      },
+      "requestId": "op-mwdia9qt-2",
+      "pendingFieldDraft": null,
+      "createdAt": "2026-11-12T12:10:22.310Z",
+      "updatedAt": "2026-11-12T13:59:52.827Z"
+    },
+    "project": null,
+    "current": {
+      "taskRecord": {},
+      "taskSummary": {
+        "t11e8f75da2b33f6c11e6b8c6dd77ef13": "v1_taskSummary_t11e8f75da2b33f6c11e6b8c6dd77ef13_op-2d-mwe9qbgo-2d-1"
+      },
+      "projectRecord": {},
+      "projectOverview": {}
+    },
+    "chains": {
+      "taskRecord": {},
+      "taskSummary": {
+        "t11e8f75da2b33f6c11e6b8c6dd77ef13": [
+          {
+            "versionId": "v1_taskSummary_t11e8f75da2b33f6c11e6b8c6dd77ef13_op-2d-mwe9qbgo-2d-1",
+            "objectKind": "taskSummary",
+            "objectId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+            "scopeKind": "task",
+            "scopeId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+            "seq": 1,
+            "updateId": "op-mwe9qbgo-1",
+            "confirmedAt": "2026-11-13T01:00:16.948Z",
+            "previousVersionId": null,
+            "origin": "user",
+            "source": {
+              "generator": "manual",
+              "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13"
+            },
+            "readSourceVersionIds": [],
+            "coveredStage": null,
+            "aiDraft": null,
+            "userResult": null,
+            "changeKind": "created",
+            "content": {
+              "sections": [
+                {
+                  "id": "manual",
+                  "title": "任务概况",
+                  "body": "这是 AT-26 的用户手动任务概况。\n- 已完成：空看板创建与菜单状态流转。\n- 待办：重启后确认概况仍保留。"
+                }
+              ],
+              "conclusions": []
+            },
+            "revision": 1,
+            "applicabilityRevision": 0,
+            "restoredFrom": null
+          }
+        ]
+      },
+      "projectRecord": {},
+      "projectOverview": {}
+    },
+    "activityTail": [
+      {
+        "activityId": "2026-11-12T13:58:37.964Z#3",
+        "at": "2026-11-12T13:58:37.964Z",
+        "scopeKind": "task",
+        "scopeId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+        "code": "task-status-changed",
+        "summary": "状态已更新：未开始 → 进行中",
+        "details": {
+          "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+          "from": "todo",
+          "to": "doing",
+          "requestId": "op-mwdm5ll5-1"
+        }
+      },
+      {
+        "activityId": "2026-11-12T13:59:27.991Z#4",
+        "at": "2026-11-12T13:59:27.991Z",
+        "scopeKind": "task",
+        "scopeId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+        "code": "task-blocked",
+        "summary": "已阻塞：AT-03 拖拽验收阻塞原因",
+        "details": {
+          "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+          "from": "doing",
+          "to": "blocked",
+          "reason": "AT-03 拖拽验收阻塞原因",
+          "reopened": "false",
+          "requestId": "op-mwdm6o6t-2"
+        }
+      },
+      {
+        "activityId": "2026-11-12T13:59:52.827Z#5",
+        "at": "2026-11-12T13:59:52.827Z",
+        "scopeKind": "task",
+        "scopeId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+        "code": "task-unblocked",
+        "summary": "阻塞已解除：已完成",
+        "details": {
+          "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+          "from": "blocked",
+          "to": "done",
+          "previousReason": "AT-03 拖拽验收阻塞原因",
+          "requestId": "op-mwdm77cp-3"
+        }
+      },
+      {
+        "activityId": "2026-11-13T01:00:16.948Z#6",
+        "at": "2026-11-13T01:00:16.948Z",
+        "scopeKind": "task",
+        "scopeId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+        "code": "summary-saved",
+        "summary": "已保存手动任务概况（第 1 次提交）",
+        "details": {
+          "updateId": "op-mwe9qbgo-1",
+          "versionId": "v1_taskSummary_t11e8f75da2b33f6c11e6b8c6dd77ef13_op-2d-mwe9qbgo-2d-1",
+          "revision": "1",
+          "changeKind": "created",
+          "generator": "manual"
+        }
+      }
+    ]
+  },
+  "task_t82": {
+    "key": "scope1_task_t82ce5472e6c70a3982d22609b99a4f8e",
+    "revision": 0,
+    "lastCommittedUpdateId": null,
+    "lastConfirmedAt": null,
+    "task": {
+      "projectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+      "title": "AT-01 收口-2026-11-12",
+      "goal": "验收：空项目创建、连点、无 AI 副作用",
+      "status": "cancelled",
+      "blockedReason": null,
+      "archived": false,
+      "order": 0,
+      "fieldsRevision": 0,
+      "statusRevision": 6,
+      "goalRevision": 0,
+      "lastFieldUpdateId": null,
+      "lastStatusUpdateId": "op-mwdiehbi-8",
+      "recentFieldUpdateIds": [],
+      "recentStatusUpdateIds": [
+        "op-mwdiehbi-8",
+        "op-mwdie1yd-7",
+        "op-mwdidm3x-6",
+        "op-mwdid69k-5",
+        "op-mwdicild-4",
+        "op-mwdib2sl-3"
+      ],
+      "lastStatusChange": {
+        "updateId": "op-mwdiehbi-8",
+        "at": "2026-11-12T12:13:33.873Z",
+        "kind": "transition",
+        "from": {
+          "status": "todo",
+          "blockedReason": null
+        },
+        "to": {
+          "status": "cancelled",
+          "blockedReason": null
+        }
+      },
+      "requestId": "op-mwdi4r2s-1",
+      "pendingFieldDraft": null,
+      "createdAt": "2026-11-12T12:07:12.105Z",
+      "updatedAt": "2026-11-12T12:13:33.873Z"
+    },
+    "project": null,
+    "current": {
+      "taskRecord": {},
+      "taskSummary": {},
+      "projectRecord": {},
+      "projectOverview": {}
+    },
+    "chains": {
+      "taskRecord": {},
+      "taskSummary": {},
+      "projectRecord": {},
+      "projectOverview": {}
+    },
+    "activityTail": [
+      {
+        "activityId": "2026-11-12T12:12:32.891Z#4",
+        "at": "2026-11-12T12:12:32.891Z",
+        "scopeKind": "task",
+        "scopeId": "t82ce5472e6c70a3982d22609b99a4f8e",
+        "code": "task-undone",
+        "summary": "已撤销状态流转：回到 进行中",
+        "details": {
+          "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+          "undoneUpdateId": "op-mwdicild-4",
+          "from": "blocked",
+          "to": "doing",
+          "requestId": "op-mwdid69k-5"
+        }
+      },
+      {
+        "activityId": "2026-11-12T12:12:53.424Z#5",
+        "at": "2026-11-12T12:12:53.424Z",
+        "scopeKind": "task",
+        "scopeId": "t82ce5472e6c70a3982d22609b99a4f8e",
+        "code": "task-status-changed",
+        "summary": "状态已更新：进行中 → 已完成",
+        "details": {
+          "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+          "from": "doing",
+          "to": "done",
+          "requestId": "op-mwdidm3x-6"
+        }
+      },
+      {
+        "activityId": "2026-11-12T12:13:13.959Z#6",
+        "at": "2026-11-12T12:13:13.959Z",
+        "scopeKind": "task",
+        "scopeId": "t82ce5472e6c70a3982d22609b99a4f8e",
+        "code": "task-reopened",
+        "summary": "任务已重新打开：未开始",
+        "details": {
+          "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+          "from": "done",
+          "to": "todo",
+          "requestId": "op-mwdie1yd-7"
+        }
+      },
+      {
+        "activityId": "2026-11-12T12:13:33.873Z#7",
+        "at": "2026-11-12T12:13:33.873Z",
+        "scopeKind": "task",
+        "scopeId": "t82ce5472e6c70a3982d22609b99a4f8e",
+        "code": "task-status-changed",
+        "summary": "状态已更新：未开始 → 已取消",
+        "details": {
+          "taskId": "t82ce5472e6c70a3982d22609b99a4f8e",
+          "from": "todo",
+          "to": "cancelled",
+          "requestId": "op-mwdiehbi-8"
+        }
+      }
+    ]
+  },
+  "project_pluginInstall": {
+    "key": "scope1_project_bee90684-2d-17b6-2d-42f1-2d-95c1-2d-bdf7b6f36b24",
+    "revision": 1,
+    "lastCommittedUpdateId": "op-mwe9vbbb-3",
+    "lastConfirmedAt": "2026-11-13T01:02:58.725Z",
+    "task": null,
+    "project": {
+      "title": "pluginInstall",
+      "path": "D:\\BaiduSyncdisk\\dsh-plugin\\pluginInstall",
+      "workScope": {
+        "availability": "unknown",
+        "detail": null,
+        "observedAt": null
+      },
+      "position": {
+        "selectedTaskId": null,
+        "view": null,
+        "updatedAt": null
+      },
+      "boardOrder": {
+        "todo": [],
+        "doing": [
+          "t11e8f75da2b33f6c11e6b8c6dd77ef13"
+        ],
+        "blocked": [],
+        "done": [],
+        "cancelled": []
+      },
+      "orderRevision": 1,
+      "createdAt": "2026-11-12T12:05:32.732Z",
+      "updatedAt": "2026-11-12T13:58:37.964Z"
+    },
+    "current": {
+      "taskRecord": {},
+      "taskSummary": {},
+      "projectRecord": {},
+      "projectOverview": {
+        "bee90684-17b6-42f1-95c1-bdf7b6f36b24": "v1_projectOverview_bee90684-2d-17b6-2d-42f1-2d-95c1-2d-bdf7b6f36b24_op-2d-mwe9vbbb-2d-3"
+      }
+    },
+    "chains": {
+      "taskRecord": {},
+      "taskSummary": {},
+      "projectRecord": {},
+      "projectOverview": {
+        "bee90684-17b6-42f1-95c1-bdf7b6f36b24": [
+          {
+            "versionId": "v1_projectOverview_bee90684-2d-17b6-2d-42f1-2d-95c1-2d-bdf7b6f36b24_op-2d-mwe9vbbb-2d-3",
+            "objectKind": "projectOverview",
+            "objectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+            "scopeKind": "project",
+            "scopeId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+            "seq": 1,
+            "updateId": "op-mwe9vbbb-3",
+            "confirmedAt": "2026-11-13T01:02:58.725Z",
+            "previousVersionId": null,
+            "origin": "user",
+            "source": {
+              "generator": "manual",
+              "projectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24"
+            },
+            "readSourceVersionIds": [],
+            "coveredStage": null,
+            "aiDraft": null,
+            "userResult": null,
+            "changeKind": "created",
+            "content": {
+              "sections": [
+                {
+                  "id": "manual",
+                  "title": "项目总览",
+                  "body": "AT-44 项目总览：当前项目处于测试阶段。\n目标：完成 F03 人工概况与总览验收。\n约定：不把测试数据当作真实项目成果。"
+                }
+              ],
+              "conclusions": []
+            },
+            "revision": 1,
+            "applicabilityRevision": 0,
+            "restoredFrom": null
+          }
+        ]
+      }
+    },
+    "activityTail": [
+      {
+        "activityId": "2026-11-12T12:05:32.732Z#1",
+        "at": "2026-11-12T12:05:32.732Z",
+        "scopeKind": "project",
+        "scopeId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+        "code": "project-registered",
+        "summary": "项目已登记：pluginInstall",
+        "details": {
+          "projectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+          "path": "D:\\BaiduSyncdisk\\dsh-plugin\\pluginInstall",
+          "title": "pluginInstall"
+        }
+      },
+      {
+        "activityId": "2026-11-12T13:58:37.964Z#2",
+        "at": "2026-11-12T13:58:37.964Z",
+        "scopeKind": "project",
+        "scopeId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+        "code": "task-order-changed",
+        "summary": "列内顺序已保存：进行中 第 1 位",
+        "details": {
+          "projectId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+          "taskId": "t11e8f75da2b33f6c11e6b8c6dd77ef13",
+          "status": "doing",
+          "index": "0",
+          "requestId": "op-mwdm5ll5-1"
+        }
+      },
+      {
+        "activityId": "2026-11-13T01:02:58.725Z#3",
+        "at": "2026-11-13T01:02:58.725Z",
+        "scopeKind": "project",
+        "scopeId": "bee90684-17b6-42f1-95c1-bdf7b6f36b24",
+        "code": "summary-saved",
+        "summary": "已保存手动项目总览（第 1 次提交）",
+        "details": {
+          "updateId": "op-mwe9vbbb-3",
+          "versionId": "v1_projectOverview_bee90684-2d-17b6-2d-42f1-2d-95c1-2d-bdf7b6f36b24_op-2d-mwe9vbbb-2d-3",
+          "revision": "1",
+          "changeKind": "created",
+          "generator": "manual"
+        }
+      }
+    ]
+  }
+}

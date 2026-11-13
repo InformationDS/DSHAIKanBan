@@ -112,7 +112,7 @@ F01/F02 的数据层（`packages/core`）与浏览器看板 UI（`packages/plugi
 
 - **F01（主）**：项目解析（Q1=B）与任务管理动作（B）的接线；AT-01/AT-02/AT-107/AT-108 等的执行仍待 `verification.md` 的档 1 证据。
 - **F02（主）**：4 端点接线与写路径基线/撤销（Q2=A）；AT-03 部分执行、AT-109 通过（真实操作）、AT-29 待联合验收。
-- **边界 F03**：F03 需要正式的概况内容进入卡片/详情；A/B 只提供空 `summaryProgress` 回退（`types.ts:399-401`），不实现 F03 的编辑流程，也不得用占位文案冒充。
+- **边界 F03**：F03 需要正式的概况内容进入卡片/详情；A/B 只提供空 `summaryProgress` 回退（`types.ts:399-401`），不实现 F03 的编辑流程，也不得用占位文案冒充。**2026-11-13 更新**：F03 的手动概况/总览 core、wire、host 与 client 已实现并安装（`79e0fa2`+`973ee67`）；真实 GUI 已执行 AT-26（通过）、AT-44（部分执行），其余 AT 待执行/待联合验收。
 - **边界 F04**：F04 的对话运行提示/背景准备是 `hints` 的真实来源；A/B 期 `hints` 恒省略（[s1-wiring.md](../s1-wiring.md) §3.5），不得让 UI 自行合成。
 - **验收口径**：ADR 状态为 `已定`，工程证据见第 11 节；切片 A/B 的测试与探针是**辅助证据（档 2/档 3）**，不能替代 F01/F02 的 AT 执行；真实页面/真实 profile 的项按 [验收执行规则](../acceptance-execution.md) 的第 2 节档位标注。
 
@@ -128,19 +128,19 @@ F01/F02 的数据层（`packages/core`）与浏览器看板 UI（`packages/plugi
 
 ## 11. 验证证据
 
-**2026-11-11 状态更新：部分取证。** 集成测试、协议往返、隔离探针与六项门禁已由切片 A 实施记录（[§14—§17](../s1-wiring-implementation.md)）取证；插件已装入真实 `desktop` profile，并在桌面 DSH 0.2.2-rc.1 的真实 GUI 中复核读路径（项目选择 + 5 列快照）。**真实 GUI 写路径（改状态/撤销/排序）仍未执行**；ADR-005 仍为「提议」（页面侧 HTTP 200/原始信封未抓包），ADR-004 的 `main` 面板渲染已复核但有剩余未验证项。本记录按词表仍记 `已定`；不得写成已验证。以下保留原取证办法作为历史记录：
+**2026-11-11 状态更新：部分取证；2026-11-13 追加。** 集成测试、协议往返、隔离探针与六项门禁已由切片 A 实施记录（[§14—§17](../s1-wiring-implementation.md)）取证；插件已装入真实 `desktop` profile，并在桌面 DSH 0.2.2-rc.1 的真实 GUI 中复核读路径（项目选择 + 5 列快照）。**真实 GUI 写路径**：2026-11-12/13 已观察创建、菜单状态流转、阻塞原因、撤销、完成/取消/重开；2026-11-13 补测真实拖拽与键盘（AT-03 部分执行、AT-109 通过）；F03 概况/总览已保存并在重启后保留。ADR-005 仍为「提议」（页面侧 HTTP 200/原始信封未抓包），ADR-004 的 `main` 面板渲染已复核但有剩余未验证项。本记录按词表仍记 `已定`；不得写成已验证。以下保留原取证办法作为历史记录：
 
 1. **集成测试（档 2）**：`packages/plugin/test/board-adapter.test.ts` —— 真实 `createKanbanCore` + 内存 `StoragePort` 经真实 `createBoardChannelHandler` 打通 4 端点，覆盖成功/失败/未知结果/不抛异常/快照映射/基线拒绝/撤销竞争（用例清单见 [s1-wiring.md](../s1-wiring.md) §7.1）。故障注入只用内存 port 的 `beforeWrite`（测试代码路径，符合 [验收执行规则](../acceptance-execution.md) 第 3 节，不需要登记构建开关）。
 2. **协议往返（档 2）**：扩 `packages/plugin/test/channel-roundtrip.test.ts`（真实构建产物 + 信封），断言新增必填基线与撤销凭据确实过 wire。
 3. **隔离探针（档 3）**：`tools/probe-host.mjs` 新增「`registerBoardChannel` 实际被调用」断言（观察 `aikanban:board-channel` 事件；[s1-wiring.md](../s1-wiring.md) §7.2）。这是 ADR-005 `:92` 已点名但当前仍缺的证据。
 4. **门禁**：盘外沙盒**只执行 `COMMANDS:57` 的 install（不执行 `:56` 的 `cd`）** → 把生成的 `pnpm-lock.yaml` **复制回主仓库并提交**（沙盒是 detached worktree，不在其内提交）→ 沙盒 `pnpm install --frozen-lockfile` 复现（完整命令见 [s1-wiring.md](../s1-wiring.md) §7.3 A-G0）；`pnpm run typecheck`、`pnpm run build`、`pnpm -r --if-present run test`（含 `host.test.ts` 的**以运行时快照为基准**的 output schema 字段覆盖哨兵与通道注册用例）、`node tools/verify-host-import.mjs`（11/11 不得退化）、`python docs/tools/check_docs.py`。
-5. **真实 profile / 真实页面**（档 1）：把插件装入实际 profile、在真实 GUI 完成“选择项目→看板→改状态→撤销”的往返。**2026-11-11 更新**：真实 profile 安装与“选择项目→看板读取”已复核（读路径行为成立）；“改状态→撤销”的写路径未执行，ADR-005 的页面侧 HTTP 200/原始信封仍未抓包、ADR-004 的 `main` 渲染已复核但切换返回定位等仍未验证。
+5. **真实 profile / 真实页面**（档 1）：把插件装入实际 profile、在真实 GUI 完成“选择项目→看板→改状态→撤销”的往返。**2026-11-11 更新**：真实 profile 安装与“选择项目→看板读取”已复核（读路径行为成立）。**2026-11-12/13 更新**：真实 GUI 已完成创建、字段编辑、撤销、列内重排、阻塞原因、完成/取消/重开，以及真实拖拽与键盘；F03 概况/总览已保存并重启保留。ADR-005 的页面侧 HTTP 200/原始信封仍未抓包；ADR-004 的 `main` 渲染已复核但切换返回定位等仍未验证。
 
 取证完成后：把本记录状态从 `已定` 重新评估为 `采用`（或保留 `已定` 并写明缺口），证据按实测/探针/未验证分级写入本节；在此之前任何文档/实现记录不得引用本 ADR 声称“已验证”。
 
 ## 12. 尚未验证
 
-- 真实 `ctx.connection.rpc` 网络往返（Host/Origin/浏览器 token 校验、页面侧调用）——**2026-11-11 更新**：真实 profile/GUI 的页面内读路径已在行为上成立；页面侧原始 HTTP 200/信封未抓包，写端点未验证，ADR-005 仍 `提议`。
+- 真实 `ctx.connection.rpc` 网络往返（Host/Origin/浏览器 token 校验、页面侧调用）——**2026-11-11 更新**：真实 profile/GUI 的页面内读路径已在行为上成立；**2026-11-13 追加**：写端点已由真实 GUI 的创建/状态/撤销/概况保存行为观察，但页面侧原始 HTTP 200/信封仍未抓包，ADR-005 仍 `提议`。
 - 浏览器真实渲染与键盘交互（无 DOM 环境测试）——**2026-11-11 更新**：`main` 主面板/项目选择/空看板真实渲染已复核；非空任务卡片、详情已渲染；拖拽/键盘已于 2026-11-13 补测（AT-03/AT-109）。
 - 真实插件上下文里 `ctx.storageDomain.open` 的暴露形状与错误形状（spec/DomainSpecLike 形状已由安装包源码佐证，见 §6 第 5 条）。
 - `tsc -b` 对 core 源码导出（`packages/core/package.json:7-10`）的 project-reference 解析。

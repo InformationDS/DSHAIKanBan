@@ -2,7 +2,7 @@
 
 > **性质**：本文是 F03「手动维护任务概况与项目总览」在 S1 的**实现记录**，不是验收记录。它记录实际提交的契约、落点、门禁与仍未验证项；任何 AT 结论以未来 `verification.md` 的真实证据为准。
 >
-> **证据边界（2026-11-13，HEAD `973ee67`）**：F03 的代码与门禁层已实现，提交为 `79e0fa2`（core/wire/host）与 `973ee67`（client UI），全量测试 461 passed（core 80 / plugin-client 204 / plugin 177），`typecheck`/`build` `EXIT 0`，`verify-host-import` 12/12，`probe-host` 5/5；`verify-rpc-roundtrip` 28/28 但**只覆盖 8 端点/9 码，不覆盖 F03**。F03 **已于 2026-11-13 安装到真实 `desktop` profile 并因 F03 重启两次**；真实 GUI 已执行 AT-26（任务概况保存/版本/重启保留，通过）与 AT-44（项目总览保存/版本/重启保留，部分执行）；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收。逐条结论见 [verification.md](verification.md)，[交付状态](../../../delivery/status.md)记 F03「进行中 / 部分执行」。F01/F02 仍为部分执行，本文不借用其未执行 AT 作为 F03 结论。
+> **证据边界（2026-11-13，HEAD `58c7c69`）**：F03 的代码与门禁层已实现，提交为 `79e0fa2`（core/wire/host）、`973ee67`（client UI）与 `58c7c69`（R02 即时刷新修复），全量测试 462 passed（core 80 / plugin-client 205 / plugin 177），`typecheck`/`build` `EXIT 0`，`verify-host-import` 12/12，`probe-host` 5/5；`verify-rpc-roundtrip` 28/28 但**只覆盖 8 端点/9 码，不覆盖 F03**。F03 **已于 2026-11-13 安装到真实 `desktop` profile 并因 F03 重启三次**；真实 GUI 已执行 AT-26（任务概况保存/版本/重启保留，通过）与 AT-44（项目总览保存/版本/重启保留，部分执行）；R02 保存后卡片/详情不即时刷新的缺陷已修复并复验；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收。逐条结论见 [verification.md](verification.md)，[交付状态](../../../delivery/status.md)记 F03「进行中 / 部分执行」。F01/F02 仍为部分执行，本文不借用其未执行 AT 作为 F03 结论。
 >
 > **与计划初稿的关系**：本文在 2026-11-13 早先有一版设计/实施计划初稿；现按实际提交改写为实现记录。主要差异是：UI 没有采用计划中的「进展/决策/问题/下一步」多段表单，而是使用**单 section 文本**（`id: 'manual'`，标题「任务概况」/「项目总览」）；wire 端点、结果形状与 client 状态以实际代码为准，见 §2.1。
 
@@ -31,7 +31,7 @@
 ### 1.3 与 F01/F02 的边界
 
 - 任务标题、目标、状态、阻塞原因、列内顺序仍只由 F01/F02 的既有入口改变；`saveManualSummary` 只移动 scope head 的汇总成员，不写任务字段（F03-R03）。
-- 卡片/详情消费**正式**概况，不消费草稿；手动保存成功后，client 用响应中的 `view` 更新编辑器，并在下一次 `board/read` 中读取新的正式进展。
+- 卡片/详情消费**正式**概况，不消费草稿；手动保存成功后，client 用响应中的 `view` 更新编辑器，并立即把任务概况首行回写到当前 `read` 的任务卡与详情顶部（项目总览不触碰卡片）；不再依赖下一次 `board/read` 或切换项目。
 - 任务目标实质变化后的「概况待核对」由 core 的 recheck 机制返回，S1 只展示，不改写正文。
 
 ## 2. 规则落点（F03-R01—R07）
@@ -61,7 +61,7 @@
 - 预览：`summaryPreviewRows` 对旧正式正文与当前 textarea 文本做行级 diff（`same`/`removed`/`added`），显示「预览修改：旧正式内容 vs 新内容」；无差异时显示「新内容与旧正式内容一致。」。
 - 确认保存：一次只发一个 `summary/save`；`updateId` 在打开编辑器时铸造，重试复用（`summaryEditorState.updateId`），连点/两窗口提交按幂等处理。请求携带 `expected` 三元组（`revision` / `applicabilityRevision` / `summaryVersionId`）。
 - core 实质保存：追加一个版本条目（`changeKind` 由 `planMember` 判定，`previousVersionId` 指向前一版本，`revision + 1`），并在**同一次** scope-head 写入中追加 `summary-saved` 活动条目；无实质变化（或空内容对空正式内容）返回 `no-change`，不制造版本。
-- 保存成功才更新视图；保存失败时保留编辑器与输入，正式视图不变；成功响应中的 `view` 直接刷新编辑器，卡片下次 `board/read` 时读取新正式进展。
+- 保存成功才更新视图；保存失败时保留编辑器与输入，正式视图不变；成功响应中的 `view` 直接刷新编辑器，并由 `applyTaskSummaryProgress` 立即回写当前任务卡的 `summaryProgress`、`hasSummary` 与详情顶部；项目总览不触碰卡片。R02 缺陷已由 `58c7c69` 修复。
 
 ### 2.4 F03-R03 来源与控制边界
 
@@ -219,13 +219,13 @@
 - 没有 `summary/draft.discard` 端点，也没有「放弃草稿」按钮；草稿的放弃/清理仍只能走 core 既有方法，UI 未接。
 - UI 不暴露 `cleared` 分支（只发送 `content`）；core/wire 的 `cleared` 契约保留，空文本保存与显式清空在行为上尚未形成独立入口。
 - 活动区直接显示 core 生成的 `summary`（已是中文）与原始 `code`；S1 不需要额外的客户端 code→中文映射。
-- 2026-11-13 已安装到真实 profile 并因 F03 重启两次，真实 GUI 已执行 AT-26/44 的保存与重启观察；其余 AT 与失败路径仍待执行。
+- 2026-11-13 已安装到真实 profile 并因 F03 重启三次，真实 GUI 已执行 AT-26/44 的保存与重启观察；其余 AT 与失败路径仍待执行。
 
 ## 7. 测试与门禁（2026-11-13 @ `973ee67`）
 
 | 项 | 结果 | 备注 |
 | --- | --- | --- |
-| 全量测试 | **461 passed**（core **80** / plugin-client **204** / plugin **177**） | 含 F03 core/wire/adapter/client 用例；测试不等于 AT |
+| 全量测试 | **462 passed**（core **80** / plugin-client **205** / plugin **177**） | 含 F03 core/wire/adapter/client 用例与 R02 即时刷新回归；测试不等于 AT |
 | `pnpm typecheck` / `pnpm build` | `EXIT 0` | |
 | `verify-host-import` | **12/12** | 新增 wire/host 导入未破坏加载链 |
 | `probe-host` | **5/5** | 第 5 项 `channel=/aikanban registered=true path=compat dataLayerReady=true` |
@@ -236,10 +236,10 @@ F03 相关测试文件：`packages/core/test/f03-manual-summary.test.ts`、`pack
 
 ## 8. 仍未验证与风险
 
-- **安装与真实 GUI**：2026-11-13 已用 `tools/install-to-profile.mjs` 安装 F03 构建（client SHA256 `15DC8705…`、82541 B），并两次完全退出/重开 DSH；AT-26/44 已在真实 GUI 执行。安装后未再出现 web-boot 崩溃，回滚包在 `C:\Users\InformationDS\aikanban-profile-backup-20261113`。
+- **安装与真实 GUI**：2026-11-13 已用 `tools/install-to-profile.mjs` 安装 F03 构建（首次 client SHA256 `15DC8705…`、82541 B），并三次完全退出/重开 DSH（前两次为首次安装与保存验证，第三次为 R02 修复后复验）；R02 修复后以 client SHA256 `48661F59…`、83372 B 第三次安装/重启复验。AT-26/44 已在真实 GUI 执行；R02 即时刷新已复验。安装后未再出现 web-boot 崩溃，回滚包在 `C:\Users\InformationDS\aikanban-profile-backup-20261113` 与 `...-2`。
 - **AT 仅部分执行**：AT-26 S1 通过、AT-44 部分执行；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收；逐条见 [verification.md](verification.md)。不得把本文或 §7 的测试/门禁写成验收通过。
 - **联合场景未实现**：F06 记录、F09 结论修正、F10 历史恢复、F13 成果、F18 故障注入均不在本切片；AT-27/29/45/67 需联合验收；AT-49 需关闭 AI 并具备已登记的失败注入开关，当前未执行。
-- **R02 即时刷新缺陷**：真实 GUI 保存任务概况成功后，任务卡仍显示“尚未保存任务概况，显示任务目标”，详情顶部仍“正式概况整体进展：暂无任务概况”；切换项目或重启后才显示新概况。storage/版本历史正确。该缺陷违反“保存成功才更新卡片/总览”的即时语义，未修复，阻止 F03 功能级记通过。
+- **R02 即时刷新缺陷（已修复）**：曾出现保存任务概况成功后任务卡/详情顶部仍显示旧内容、切换项目或重启后才更新；storage/版本历史正确。2026-11-13 由 `58c7c69` 在 controller 保存成功路径回写 `summaryProgress` 修复；真实 GUI 第三次重启后保存第 2 版，未切项目、未重启即更新；证据 `docs/evidence/2026-11-13-f03/at26-r02-immediate.png` 与 `at26-r02-immediate-state.txt`。
 - **草稿生命周期缺口**：无自动保存/debounce、关闭丢弃内存输入、无放弃草稿入口；这与 F03-R07「离开/重启恢复可用草稿」仍有距离，需在真实 GUI 与后续实现中核实/补齐。
 - **类型注释与契约不一致**：`summary: null` 的旧注释（wire/adapter/source）仍是文档债务；实际行为以「已知 scope 返回视图」为准（§4.4）。
 - **工具覆盖缺口**：`verify-rpc-roundtrip` 未覆盖 F03 三端点；需要扩展端点/失败码清单后才能作为协议层证据。

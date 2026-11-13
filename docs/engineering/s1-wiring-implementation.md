@@ -4187,14 +4187,14 @@ node tools/install-to-profile.mjs --restore-latest
 - **复发风险**：只要再通过 dshmarket/pnpm 安装或更新插件，手工负载都可能再次被剪。当前缓解是“安装插件后重跑 install-to-profile”；根治方案是把插件作为 profile 的 `file:` 依赖交给 pnpm 管理（`@aikanban/dsh-aikanban: file:<stable payload>`），使 `pnpm install` 保留它。
 - **根治已实施（2026-11-12 22:25）**：稳定负载放在 `C:\Users\InformationDS\.dsh\aikanban-payload`；profile `package.json` 增加 `"@aikanban/dsh-aikanban": "file:C:/Users/InformationDS/.dsh/aikanban-payload"`，并执行 `pnpm install`。pnpm 输出 `+1 -1`（新增 AIKanBan，移除已失败的 dsh-whale-widget），第二次 `pnpm install` 保留负载（`Already up to date`），`lib/client.js` 仍为修复版 `5B108FE9…`。变更前清单备份在 `C:\Users\InformationDS\aikanban-managed-backup-20261112-2225`。`install-to-profile.mjs` 现在检测 `file:` 依赖并同时刷新稳定负载，后续升级不会让 pnpm 回退到旧 payload。待重启确认真实加载；`dsh-whale-widget` 已被 pnpm 移除（其安装此前即失败）。
 
-## 21. F03 手动概况与项目总览（2026-11-13，提交 79e0fa2 / 973ee67）
+## 21. F03 手动概况与项目总览（2026-11-13，提交 79e0fa2 / 973ee67 / 58c7c69）
 
 ### 21.1 提交、工作区与边界
 
 - HEAD `973ee67 feat(f03): add task summary and project overview UI`；前一提交 `79e0fa2 feat(f03): add manual summary core, wire and host API`；再前 `53a7732 docs(acceptance): record post-restart F01/F02 AT evidence`。工作区代码干净，仅有一份未跟踪的 F03 文档初稿（本次已改写为功能实现记录）。
-- `79e0fa2` 覆盖 core（类型、`readSummary`/`saveManualSummary`）、wire（三端点）与 host（适配器、channel、延迟端口）；`973ee67` 覆盖 client（source/channel-source/controller/model/board UI）与对应测试。
-- **边界**：F03 的代码与门禁层已实现（`79e0fa2` + `973ee67`）；2026-11-13 已安装到真实 `desktop` profile，并因 F03 两次完全退出/重开 DSH。真实 GUI 已执行 AT-26 S1（任务概况编辑/预览/保存/版本/重启保留，**通过（真实操作）**）与 AT-44（项目总览保存/版本/重启保留，**部分执行**，前置条件不满足）；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收。逐条见 `docs/prd/features/F03-manual-summaries/verification.md`；F01/F02 仍是部分执行，本文不改其口径。
-- **安装事实**：备份 `C:\Users\InformationDS\aikanban-profile-backup-20261113`，preflight verify-host-import 11/11、probe-host 5/5，安装/稳定负载 `lib/client.js` SHA256 `15DC8705360FF2C18E0A5DE7253256FAD909F35C77402C3966C7DF7F8177AF30`（82541 B）；首次 GUI `http://127.0.0.1:3640`（activation `mwe9oozd-1`），第二次 `http://127.0.0.1:1120`（activation `mwecj5mu-1`）；安装后无 web-boot/宿主崩溃。
+- `79e0fa2` 覆盖 core（类型、`readSummary`/`saveManualSummary`）、wire（三端点）与 host（适配器、channel、延迟端口）；`973ee67` 覆盖 client（source/channel-source/controller/model/board UI）与对应测试；`58c7c69` 修复保存后卡片/详情即时刷新。
+- **边界**：F03 的代码与门禁层已实现（`79e0fa2` + `973ee67` + `58c7c69`）；2026-11-13 已安装到真实 `desktop` profile，并因 F03 三次完全退出/重开 DSH。真实 GUI 已执行 AT-26 S1（任务概况编辑/预览/保存/版本/重启保留，**通过（真实操作）**）与 AT-44（项目总览保存/版本/重启保留，**部分执行**，前置条件不满足）；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收。逐条见 `docs/prd/features/F03-manual-summaries/verification.md`；F01/F02 仍是部分执行，本文不改其口径。
+- **安装事实**：备份 `C:\Users\InformationDS\aikanban-profile-backup-20261113`，preflight verify-host-import 11/11、probe-host 5/5，安装/稳定负载 `lib/client.js` SHA256 `15DC8705360FF2C18E0A5DE7253256FAD909F35C77402C3966C7DF7F8177AF30`（82541 B）；首次 GUI `http://127.0.0.1:3640`（activation `mwe9oozd-1`），第二次 `http://127.0.0.1:1120`（activation `mwecj5mu-1`），R02 修复后第三次 `http://127.0.0.1:14721`（activation `mwedgglm-1`）；安装后无 web-boot/宿主崩溃。R02 修复构建 `lib/client.js` SHA256 `48661F59…`、83372 B，备份 `...-20261113-2`。
 
 ### 21.2 core 契约与实现
 
@@ -4225,13 +4225,13 @@ node tools/install-to-profile.mjs --restore-latest
 - `controller.ts`：`BoardState` 增 `taskSummary`/`projectSummary`（:312-315）；API 于 :535-563、实现 :1997-2045；`loadSummaryFor`（:1203-1255）把 `summary === null` 视为读取不一致并失败；重读保留未保存输入并移动基线（:1245-1254）；保存失败保留输入，仅 `save-failed`/`unavailable` 给写重试，其它只重读；`view: null` 提示“概况已保存，但视图未刷新。请重新读取。”。
 - `model.ts`：单 section `SUMMARY_SECTION_ID='manual'`（:759），标题「任务概况」/「项目总览」（:760-761）；`summaryContentForSave`（:898-907）只生成该 section，正文原样，保留当前结论字段；版本/历史/预览文案见 :780-828、:1097-1222。
 - `board.tsx`：任务详情 `renderSummaryArea('task')`（:955-957），项目区入口（:1341-1353）；数据属性 `data-aikanban-summary='task'|'project'`、`summary-open`、`summary-edit`、`summary-text`、`summary-save-draft`、`summary-preview`、`summary-save`、`summary-back`、`summary-cancel`、`summary-close`、`summary-official`、`summary-version`、`summary-history`、`summary-diff`、`summary-error`、`summary-notice`、`summary-draft-badge` 等；活动条目仍显示 core `summary` 文本与原始 `code`。
-- 残余（未实现/未验证）：草稿仅显式「保存草稿」按钮，无自动 debounce；关闭编辑器丢弃未写入草稿的内存输入；无 `summary/draft.discard` 端点或「放弃草稿」按钮；UI 未暴露 `cleared` 分支；活动区直接显示 core 生成的中文 `summary`；真实 GUI 已安装并执行 AT-26/44，但 R02 保存后卡片不即时刷新，且其余 AT/失败路径未执行。
+- 残余（未实现/未验证）：草稿仅显式「保存草稿」按钮，无自动 debounce；关闭编辑器丢弃未写入草稿的内存输入；无 `summary/draft.discard` 端点或「放弃草稿」按钮；UI 未暴露 `cleared` 分支；活动区直接显示 core 生成的中文 `summary`；真实 GUI 已安装并执行 AT-26/44；R02 保存后卡片不即时刷新缺陷已由 `58c7c69` 修复并复验，其余 AT/失败路径仍未执行。
 
 ### 21.6 门禁（2026-11-13 @ `973ee67`）
 
 | 项 | 结果 | 备注 |
 | --- | --- | --- |
-| 全量测试 | **461 passed**（core **80** / plugin-client **204** / plugin **177**） | 含 F03 core/wire/adapter/client 用例；不等于 AT |
+| 全量测试 | **462 passed**（core **80** / plugin-client **205** / plugin **177**） | 含 F03 core/wire/adapter/client 用例与 R02 即时刷新回归；不等于 AT |
 | `typecheck` / `build` | `EXIT 0` | |
 | `verify-host-import` | **12/12** | 新导入未破坏 host bundle 加载链 |
 | `probe-host` | **5/5** | 第 5 项 `channel=/aikanban registered=true path=compat dataLayerReady=true` |
@@ -4242,10 +4242,10 @@ F03 相关测试：`packages/core/test/f03-manual-summary.test.ts`、`packages/p
 
 ### 21.7 真实 GUI、未验证与风险
 
-- **已安装/已重启/真实 GUI 已执行**：2026-11-13 已安装 F03 构建（client SHA256 `15DC8705…`）并重启两次；真实 GUI 已出现「项目总览」「编辑概况」，AT-26 S1 通过、AT-44 部分执行。
+- **已安装/已重启/真实 GUI 已执行**：2026-11-13 已安装 F03 构建并重启三次（首次 `15DC8705…`；R02 修复后 `48661F59…`、83372 B）；真实 GUI 已出现「项目总览」「编辑概况」，AT-26 S1 通过、AT-44 部分执行；R02 即时刷新已复验。
 - **AT 仅部分执行**：AT-26 S1 通过、AT-44 部分执行；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收；逐条见 F03 `verification.md`；不得把 §21.6 写成验收通过。
 - **联合场景未实现**：F06 记录、F09 结论修正、F10 历史恢复、F13 成果、F18 故障注入不在本切片；联合 AT 需另行验收。
-- **R02 即时刷新缺陷**：真实 GUI 保存任务概况成功后，任务卡与详情顶部仍显示旧 `summaryProgress`，切换项目/重启后恢复；storage/版本历史正确。该缺陷违反“保存成功才更新卡片/总览”的即时语义，未修复，阻止 F03 功能级记通过。
+- **R02 即时刷新缺陷（已修复）**：曾出现保存任务概况成功后任务卡与详情顶部仍显示旧 `summaryProgress`、切换项目/重启后才恢复；storage/版本历史正确。2026-11-13 由 `58c7c69` 在 controller 保存成功路径回写 `summaryProgress` 修复；真实 GUI 第三次重启后保存第 2 版，未切项目、未重启即更新。
 - **草稿生命周期缺口**：无自动保存、关闭丢内存输入、无放弃草稿入口，与 F03-R07 的“离开/重启恢复可用草稿”仍有距离，需真实 GUI 与后续实现核实。
 - **工具覆盖缺口**：`verify-rpc-roundtrip` 未覆盖 F03 三端点；需扩展端点/失败码清单后才能作为协议层证据。
 - **F01/F02 的「部分执行」口径不变**：F03 入口依赖其现有 UI，F03 不能借用 F01/F02 未执行的 AT 结论。

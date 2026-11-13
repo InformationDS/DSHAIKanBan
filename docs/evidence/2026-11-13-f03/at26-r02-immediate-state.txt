@@ -1,0 +1,12 @@
+F03 R02即时刷新验证（2026-11-13，重启后真实GUI）
+项目: pluginInstall / bee90684-17b6-42f1-95c1-bdf7b6f36b24
+任务: t11e8f75da2b33f6c11e6b8c6dd77ef13
+保存前卡片: 这是 AT-26 的用户手动任务概况。
+保存内容: R02 修复后即时刷新验证。 / - 保存后不切项目、不重启，卡片与详情应立即更新。
+保存后未切项目、未重启：
+  详情顶部: 正式概况整体进展：R02 修复后即时刷新验证。
+  看板卡片: R02 修复后即时刷新验证。
+  版本: v1_taskSummary_t11e8f75da2b33f6c11e6b8c6dd77ef13_op-2d-mwedimei-2d-1（第 2 版）
+  confirmedAt: 2026-11-13T02:45:05.483Z
+  活动: summary-saved，updateId op-mwedimei-1，changeKind modified，generator manual
+结论: R02 保存成功后卡片/详情即时刷新缺陷已修复；不依赖重新读取看板或切换项目。

@@ -29,13 +29,19 @@
  *   5. `activity/read` — a positive roundtrip for the task created in step 3;
  *      entries are newest-first and carry `task-created` + `task-title-changed`
  *      with string-only `details`.
- *   6. The fence negatives: no cookie → 401, bad `Origin` → 403, missing
+ *   6. Manual summary (F03) — three positive roundtrips on the task created in
+ *      step 3: `summary/read` (empty scope → `current: null` plus the write
+ *      baseline), `summary/save` (committed under that baseline, read back,
+ *      replayed as `already-applied`, re-saved as `no-change`, then rejected as
+ *      `stale-baseline` from the stale view), and `summary/draft.save` (upsert
+ *      one open draft without promoting it to an official version).
+ *   7. The fence negatives: no cookie → 401, bad `Origin` → 403, missing
  *      `content-type: application/json` → 415, non-POST method / missing
  *      endpoint segment → 404. A post-fence control request proves the cookie
  *      is still valid after the negative batch, so those statuses are caused by
  *      the deviation and not by a broken session.
- *   7. Supplementary contract negatives, clearly separated from the fence: an
- *      endpoint name outside the eight-endpoint contract answers HTTP 200 +
+ *   8. Supplementary contract negatives, clearly separated from the fence: an
+ *      endpoint name outside the eleven-endpoint contract answers HTTP 200 +
  *      `{ok:false,error:{code:'unknown-endpoint'}}`; an unregistered `projectId`
  *      answers HTTP 200 + `{ok:false,error:{code:'unknown-project'}}`; a
  *      `task/create` with a blank title answers HTTP 200 +
@@ -132,10 +138,11 @@ const OUT_DIR = join(WORKSPACE_ROOT, '.probe-out-scaffold', 'rpc-roundtrip')
 
 /** The one channel this repository registers (ADR-005). */
 const CHANNEL = '/aikanban'
-/** The eight-endpoint contract (slice A's five + slice B's three). */
+/** The eleven-endpoint contract (slice A's five + slice B's three + F03's three). */
 const CONTRACT_ENDPOINTS = [
   'board/read', 'project/list', 'task/status.set', 'task/reorder', 'task/status.undo',
   'task/create', 'task/fields.update', 'activity/read',
+  'summary/read', 'summary/save', 'summary/draft.save',
 ]
 /** The five board columns core produces for a fresh project. */
 const CONTRACT_COLUMN_STATUSES = ['todo', 'doing', 'blocked', 'done', 'cancelled']
@@ -146,6 +153,10 @@ const CONTRACT_FAILURE_CODES = [
 ]
 /** Host-only protocol codes: these never travel as browser failure codes. */
 const HOST_PROTOCOL_CODES = ['invalid-payload', 'unknown-endpoint']
+/** F03 vocabulary mirrored from the wire parser, so the tool checks the contract level. */
+const SUMMARY_ORIGINS = ['ai', 'user', 'ai+user']
+const SUMMARY_CHANGE_KINDS = ['created', 'modified', 'cleared']
+const SUMMARY_DRAFT_STATES = ['editing', 'ready', 'needsRecheck', 'saved', 'abandoned', 'failed']
 /** An id that cannot be in the isolated home's workspace fixture. */
 const UNREGISTERED_PROJECT_ID = '00000000-0000-4000-8000-000000000000'
 
@@ -159,12 +170,16 @@ What it verifies:
   positive   project/list and board/read return HTTP 200 + a valid
              {type:'server-response', rpcId, result} envelope; task/create,
              task/fields.update and activity/read roundtrip a real fixture
-             (create -> field save -> newest-first history)
+             (create -> field save -> newest-first history); summary/read,
+             summary/save and summary/draft.save roundtrip one manual summary
+             lifecycle (empty baseline -> committed -> read-back -> replay /
+             no-change -> stale-baseline -> draft upsert)
   fence      no cookie -> 401, bad Origin -> 403, non-JSON content-type -> 415,
              non-POST / missing endpoint segment -> 404
   contract   unknown endpoint -> 'unknown-endpoint', unregistered project ->
              'unknown-project', blank-title create -> 'invalid-input',
-             malformed fver1 baseline -> 'invalid-payload'
+             malformed fver1 baseline -> 'invalid-payload', missing summary task
+             -> 'not-found'
 
 Options:
   --profile <name>   isolated probe profile name (default: probe)
@@ -674,6 +689,195 @@ function validateActivityValue(value, expectedTaskId) {
 }
 
 /* ------------------------------------------------------------------ *
+ * F03 manual summary value validation (contract-level, no product import)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Build a summary content object in the shape `summary/save` and
+ * `summary/draft.save` accept: one section is enough to make the body
+ * identifiable in the read-back view.
+ *
+ * @param {string} body - section body; unique per request in this run.
+ * @returns {{ sections: { id: string, title: string, body: string }[] }} content.
+ */
+function summaryContent(body) {
+  return { sections: [{ id: 'progress', title: '进展', body }] }
+}
+
+/**
+ * Validate summary content as the wire parser reads it back. `sections` is
+ * required and non-empty; `conclusions` is optional but must be an array of
+ * conclusion objects when the response carries it.
+ *
+ * @param {unknown} value - the content field.
+ * @param {string} path - report path for messages.
+ * @returns {string[]} issues.
+ */
+function validateSummaryContent(value, path) {
+  const issues = []
+  if (!isRecord(value)) return [`${path} is not an object`]
+  if (!Array.isArray(value.sections)) {
+    issues.push(`${path}.sections is not an array`)
+  } else if (value.sections.length === 0) {
+    issues.push(`${path}.sections is empty`)
+  } else {
+    for (const [index, section] of value.sections.entries()) {
+      if (!isRecord(section)) {
+        issues.push(`${path}.sections[${index}] is not an object`)
+        continue
+      }
+      if (typeof section.id !== 'string' || section.id.length === 0) issues.push(`${path}.sections[${index}].id is not a non-empty string`)
+      if (typeof section.title !== 'string' || section.title.length === 0) issues.push(`${path}.sections[${index}].title is not a non-empty string`)
+      if (typeof section.body !== 'string') issues.push(`${path}.sections[${index}].body is not a string`)
+    }
+  }
+  if (value.conclusions !== undefined) {
+    if (!Array.isArray(value.conclusions)) {
+      issues.push(`${path}.conclusions is not an array`)
+    } else {
+      for (const [index, conclusion] of value.conclusions.entries()) {
+        if (!isRecord(conclusion)) {
+          issues.push(`${path}.conclusions[${index}] is not an object`)
+          continue
+        }
+        for (const key of ['id', 'text', 'statedState', 'state']) {
+          if (typeof conclusion[key] !== 'string' || conclusion[key].length === 0) {
+            issues.push(`${path}.conclusions[${index}].${key} is not a non-empty string`)
+          }
+        }
+        if (conclusion.amendedBy !== null && typeof conclusion.amendedBy !== 'string') {
+          issues.push(`${path}.conclusions[${index}].amendedBy is neither null nor a string`)
+        }
+      }
+    }
+  }
+  return issues
+}
+
+/**
+ * Validate one official summary version. `seq` starts at 1; `previousVersionId`
+ * is null on the first version; `readToken` must be non-empty.
+ *
+ * @param {unknown} value - the version object.
+ * @param {string} path - report path for messages.
+ * @returns {{ issues: string[], version: Record<string, unknown> | null }} validation result.
+ */
+function validateSummaryVersion(value, path) {
+  if (!isRecord(value)) return { issues: [`${path} is not an object`], version: null }
+  const issues = []
+  if (typeof value.versionId !== 'string' || value.versionId.length === 0) issues.push(`${path}.versionId is not a non-empty string`)
+  if (!isNonNegativeInteger(value.seq) || value.seq < 1) issues.push(`${path}.seq=${JSON.stringify(value.seq)} (expected an integer >= 1)`)
+  if (typeof value.confirmedAt !== 'string' || value.confirmedAt.length === 0) issues.push(`${path}.confirmedAt is not a non-empty string`)
+  if (!SUMMARY_ORIGINS.includes(value.origin)) issues.push(`${path}.origin=${JSON.stringify(value.origin)}`)
+  if (!SUMMARY_CHANGE_KINDS.includes(value.changeKind)) issues.push(`${path}.changeKind=${JSON.stringify(value.changeKind)}`)
+  if (value.previousVersionId !== null && (typeof value.previousVersionId !== 'string' || value.previousVersionId.length === 0)) {
+    issues.push(`${path}.previousVersionId is neither null nor a non-empty string`)
+  }
+  issues.push(...validateSummaryContent(value.content, `${path}.content`))
+  if (!Array.isArray(value.conclusions)) issues.push(`${path}.conclusions is not an array`)
+  if (typeof value.readToken !== 'string' || value.readToken.length === 0) issues.push(`${path}.readToken is not a non-empty string`)
+  return { issues, version: value }
+}
+
+/**
+ * Validate one summary draft. The draft state vocabulary comes from the wire
+ * parser; `updateId` is the optional idempotency key echoed back (null when the
+ * caller did not send one).
+ *
+ * @param {unknown} value - the draft object.
+ * @param {string} path - report path for messages.
+ * @returns {{ issues: string[], draft: Record<string, unknown> | null }} validation result.
+ */
+function validateSummaryDraft(value, path) {
+  if (!isRecord(value)) return { issues: [`${path} is not an object`], draft: null }
+  const issues = []
+  if (typeof value.draftId !== 'string' || value.draftId.length === 0) issues.push(`${path}.draftId is not a non-empty string`)
+  if (!SUMMARY_DRAFT_STATES.includes(value.state)) issues.push(`${path}.state=${JSON.stringify(value.state)}`)
+  if (value.updateId !== null && (typeof value.updateId !== 'string' || value.updateId.length === 0)) issues.push(`${path}.updateId is neither null nor a non-empty string`)
+  if (typeof value.updatedAt !== 'string' || value.updatedAt.length === 0) issues.push(`${path}.updatedAt is not a non-empty string`)
+  if (!isRecord(value.base)) {
+    issues.push(`${path}.base is not an object`)
+  } else {
+    if (!isNonNegativeInteger(value.base.scopeRevision)) issues.push(`${path}.base.scopeRevision is not a non-negative integer`)
+    if (!isNonNegativeInteger(value.base.applicabilityRevision)) issues.push(`${path}.base.applicabilityRevision is not a non-negative integer`)
+  }
+  issues.push(...validateSummaryContent(value.content, `${path}.content`))
+  return { issues, draft: value }
+}
+
+/**
+ * Validate a `summary/read` view and its write baseline. The baseline is the
+ * tuple a save must echo back, so it must agree with the view it was read with:
+ * `baseline.revision === revision`, same for `applicabilityRevision`, and
+ * `baseline.summaryVersionId` is null exactly until the first committed version.
+ *
+ * @param {unknown} value - the summary view.
+ * @param {string} path - report path for messages.
+ * @returns {{ issues: string[], view: Record<string, unknown> | null }} validation result.
+ */
+function validateSummaryView(value, path) {
+  if (!isRecord(value)) return { issues: [`${path} is not an object`], view: null }
+  const issues = []
+  if (value.scopeKind !== 'task' && value.scopeKind !== 'project') issues.push(`${path}.scopeKind=${JSON.stringify(value.scopeKind)}`)
+  if (typeof value.scopeId !== 'string' || value.scopeId.length === 0) issues.push(`${path}.scopeId is not a non-empty string`)
+  if (!isNonNegativeInteger(value.revision)) issues.push(`${path}.revision is not a non-negative integer`)
+  if (!isNonNegativeInteger(value.applicabilityRevision)) issues.push(`${path}.applicabilityRevision is not a non-negative integer`)
+  if (!isRecord(value.baseline)) {
+    issues.push(`${path}.baseline is not an object`)
+  } else {
+    const baseline = value.baseline
+    if (!isNonNegativeInteger(baseline.revision)) {
+      issues.push(`${path}.baseline.revision is not a non-negative integer`)
+    } else if (baseline.revision !== value.revision) {
+      issues.push(`${path}.baseline.revision=${String(baseline.revision)} differs from view.revision=${String(value.revision)}`)
+    }
+    if (!isNonNegativeInteger(baseline.applicabilityRevision)) {
+      issues.push(`${path}.baseline.applicabilityRevision is not a non-negative integer`)
+    } else if (baseline.applicabilityRevision !== value.applicabilityRevision) {
+      issues.push(`${path}.baseline.applicabilityRevision=${String(baseline.applicabilityRevision)} differs from view.applicabilityRevision=${String(value.applicabilityRevision)}`)
+    }
+    if (baseline.summaryVersionId !== null && (typeof baseline.summaryVersionId !== 'string' || baseline.summaryVersionId.length === 0)) {
+      issues.push(`${path}.baseline.summaryVersionId is neither null nor a non-empty string`)
+    }
+  }
+  if (value.current !== null) issues.push(...validateSummaryVersion(value.current, `${path}.current`).issues)
+  if (!Array.isArray(value.history)) {
+    issues.push(`${path}.history is not an array`)
+  } else {
+    for (const [index, version] of value.history.entries()) {
+      issues.push(...validateSummaryVersion(version, `${path}.history[${index}]`).issues)
+    }
+  }
+  if (value.draft !== null) issues.push(...validateSummaryDraft(value.draft, `${path}.draft`).issues)
+  if (typeof value.needsRecheck !== 'boolean') issues.push(`${path}.needsRecheck is not a boolean`)
+  if (!isRecord(value.recheck)) {
+    issues.push(`${path}.recheck is not an object`)
+  } else {
+    if (typeof value.recheck.pending !== 'boolean') issues.push(`${path}.recheck.pending is not a boolean`)
+    if (!Array.isArray(value.recheck.reasons)) issues.push(`${path}.recheck.reasons is not an array`)
+    if (value.recheck.markedAt !== null && typeof value.recheck.markedAt !== 'string') issues.push(`${path}.recheck.markedAt is neither null nor a string`)
+  }
+  return { issues, view: value }
+}
+
+/**
+ * Validate a `summary/read` success value: `{summary: view|null}`. `summary:null`
+ * is legal at the wire level (the scope may simply have no row for this caller),
+ * so the caller decides whether null is acceptable for the case being proven.
+ *
+ * @param {unknown} value - envelope `result.value`.
+ * @param {string} path - report path for messages.
+ * @returns {{ issues: string[], summary: Record<string, unknown> | null }} validation result.
+ */
+function validateSummaryReadValue(value, path) {
+  if (!isRecord(value)) return { issues: [`${path} is not an object`], summary: null }
+  if (!Object.prototype.hasOwnProperty.call(value, 'summary')) return { issues: [`${path}.summary is absent`], summary: null }
+  if (value.summary === null) return { issues: [], summary: null }
+  const validation = validateSummaryView(value.summary, `${path}.summary`)
+  return { issues: validation.issues, summary: validation.view }
+}
+
+/* ------------------------------------------------------------------ *
  * HTTP plumbing
  * ------------------------------------------------------------------ */
 
@@ -886,6 +1090,8 @@ function printReport(context) {
   const fieldsOk = fieldsChecks.length === 3 && fieldsChecks.every((check) => check.ok)
   const activityChecks = checks.filter((check) => ['POS-13', 'POS-14', 'POS-15'].includes(check.id))
   const activityOk = activityChecks.length === 3 && activityChecks.every((check) => check.ok)
+  const summaryChecks = checks.filter((check) => ['POS-16', 'POS-17', 'POS-18', 'POS-19', 'POS-20', 'POS-21', 'POS-22'].includes(check.id))
+  const summaryOk = summaryChecks.length === 7 && summaryChecks.every((check) => check.ok)
   const fenceChecks = checks.filter((check) => check.group === 'fence')
   const fenceOk = fenceChecks.length > 0 && fenceChecks.every((check) => check.ok)
   const infrastructureOk = (context.bootError ?? null) === null
@@ -896,6 +1102,7 @@ function printReport(context) {
   write(`  task/create over real HTTP  : ${createOk ? 'RPC roundtrip observed (idempotent creation + refreshed snapshot)' : 'NOT proven this run'}`)
   write(`  task/fields.update over HTTP: ${fieldsOk ? 'RPC roundtrip observed (decoded fver1/ver1 baselines + saved fields)' : 'NOT proven this run'}`)
   write(`  activity/read over real HTTP: ${activityOk ? 'RPC roundtrip observed (newest-first entries + string-only details)' : 'NOT proven this run'}`)
+  write(`  summary (F03) over HTTP     : ${summaryOk ? 'RPC roundtrip observed (empty baseline -> committed -> replay/no-change/stale-baseline -> draft upsert)' : 'NOT proven this run'}`)
   write(`  carrier fence               : ${fenceOk ? 'authentication + Host/Origin enforced (401/403/415/404 observed)' : 'one or more fence assertions FAILED'}`)
   write(`  registration path evidence  : ${evidence.registration?.observed === true ? `process-internal path=${String(evidence.registration.path)} (separate from the HTTP result)` : 'NOT OBSERVED this run'}`)
   write('  NOT proven here             : the browser half (a page\'s rpc.call after __DSH_BOOT__ assembly),')
@@ -980,7 +1187,7 @@ async function main() {
   // primary repo workspace so the report names the expected project.
   const primaryRow = fixtureRows.find((row) => normalizePath(row.path) === normalizePath(PRIMARY_WORKSPACE_PATH)) ?? fixtureRows[0]
 
-  write('\n[1/9] booting the isolated host (own DSH_HOME, --port 0, --no-open)')
+  write('\n[1/10] booting the isolated host (own DSH_HOME, --port 0, --no-open)')
   writeFileSync(observerPath, `// Generated by tools/verify-rpc-roundtrip.mjs — subscribes to the AIKanBan diagnostics channels.
 const dc = require('node:diagnostics_channel')
 dc.subscribe('aikanban:activation', (payload) => {
@@ -1048,7 +1255,7 @@ dc.subscribe('aikanban:board-channel', (payload) => {
     transcript.push({ label: 'host settled', urlLine: urlLine.replace(/token=[^&\s]+/, 'token=<redacted>') })
 
     // ---- authentication: launch token → signed cookie ----------------
-    write('\n[2/9] exchanging the launch token for the signed session cookie')
+    write('\n[2/10] exchanging the launch token for the signed session cookie')
     if (token === null) {
       record({
         id: 'AUTH-1', group: 'setup', name: 'launch URL carries a token and exchanges for a cookie',
@@ -1086,7 +1293,7 @@ dc.subscribe('aikanban:board-channel', (payload) => {
     }
 
     // ---- positive: project/list --------------------------------------
-    write('\n[3/9] positive: POST /aikanban/project/list over real HTTP')
+    write('\n[3/10] positive: POST /aikanban/project/list over real HTTP')
     // The delayed-ready board port answers `unavailable` until the core domain
     // has opened; polling is the black-box equivalent of the browser's retry and
     // keeps the tool honest about readiness instead of assuming a boot window.
@@ -1139,7 +1346,7 @@ dc.subscribe('aikanban:board-channel', (payload) => {
     })
 
     // ---- positive: board/read ----------------------------------------
-    write('\n[4/9] positive: POST /aikanban/board/read over real HTTP')
+    write('\n[4/10] positive: POST /aikanban/board/read over real HTTP')
     const listedProjects = listResult?.ok === true && Array.isArray(listValue?.projects) ? listValue.projects : []
     const selectedProject = listedProjects.find((item) => item?.projectId === primaryRow.id) ?? listedProjects[0]
     if (selectedProject === undefined) {
@@ -1201,7 +1408,7 @@ dc.subscribe('aikanban:board-channel', (payload) => {
     }
 
     // ---- positive: task/create ---------------------------------------
-    write('\n[5/9] positive: POST /aikanban/task/create over real HTTP')
+    write('\n[5/10] positive: POST /aikanban/task/create over real HTTP')
     // A unique requestId makes the retry idempotent: if the data layer is still
     // opening, a replay returns `already-created` for the same task instead of
     // creating a second one.
@@ -1288,7 +1495,7 @@ dc.subscribe('aikanban:board-channel', (payload) => {
     }
 
     // ---- positive: task/fields.update --------------------------------
-    write('\n[6/9] positive: POST /aikanban/task/fields.update over real HTTP')
+    write('\n[6/10] positive: POST /aikanban/task/fields.update over real HTTP')
     const updatedTitle = createdTask === null ? null : `${String(createdTask.title)} · updated`
     if (createdTask === null || updatedTitle === null) {
       for (const id of ['POS-10', 'POS-11', 'POS-12']) {
@@ -1355,7 +1562,7 @@ dc.subscribe('aikanban:board-channel', (payload) => {
     }
 
     // ---- positive: activity/read -------------------------------------
-    write('\n[7/9] positive: POST /aikanban/activity/read over real HTTP')
+    write('\n[7/10] positive: POST /aikanban/activity/read over real HTTP')
     if (createdTask === null) {
       for (const id of ['POS-13', 'POS-14', 'POS-15']) {
         record({
@@ -1411,8 +1618,326 @@ dc.subscribe('aikanban:board-channel', (payload) => {
       }
     }
 
+    // ---- positive: manual summary (F03) ------------------------------
+    write('\n[8/10] positive: POST /aikanban/summary/{read,save,draft.save} over real HTTP')
+    const summaryScopeId = createdTask === null ? null : createdTask.taskId
+    const summaryCheckIds = ['POS-16', 'POS-17', 'POS-18', 'POS-19', 'POS-20', 'POS-21', 'POS-22']
+    const recordSummaryNotAttempted = (ids, reason) => {
+      for (const id of ids) {
+        record({
+          id, group: 'positive',
+          name: 'manual summary read/save/draft over real HTTP',
+          expected: 'HTTP 200 + valid envelope + summary lifecycle',
+          actual: `not attempted: ${reason}`,
+          ok: false,
+        })
+      }
+    }
+    if (summaryScopeId === null) {
+      recordSummaryNotAttempted(summaryCheckIds, 'task/create produced no task id to scope the summary')
+    } else {
+      const summaryScope = { scopeKind: 'task', scopeId: summaryScopeId }
+      const summaryUpdateId = `roundtrip-summary-${randomUUID()}`
+      const summaryBody = `RPC roundtrip 摘要 ${summaryUpdateId.slice(-8)}`
+      const readSummary = (label) => postEnvelope({ label, endpoint: 'summary/read', payload: { ...summaryScope } })
+
+      // POS-16: the scope exists (the task was created above) and already carries
+      // the write baseline even though no official version exists yet.
+      const emptyRead = await readSummary('summary/read (empty scope)')
+      const emptyResult = resultOf(emptyRead.parsed)
+      const emptyValue = emptyResult?.ok === true && isRecord(emptyResult.value) ? emptyResult.value : null
+      const emptyValidation = emptyValue === null
+        ? { issues: [`result.ok=${String(emptyResult?.ok)} so there is no summary value to validate`], summary: null }
+        : validateSummaryReadValue(emptyValue, 'summary/read.value')
+      const emptyView = emptyValidation.summary
+      const emptyFacts = emptyView === null ? null : {
+        revision: emptyView.revision,
+        applicabilityRevision: emptyView.applicabilityRevision,
+        baselineVersionId: emptyView.baseline?.summaryVersionId ?? null,
+        historyLength: Array.isArray(emptyView.history) ? emptyView.history.length : null,
+      }
+      assertCheck({
+        id: 'POS-16', group: 'positive',
+        name: 'summary/read reports the empty task summary plus its write baseline',
+        expected: "HTTP 200 + valid envelope + view{scopeKind:'task', current:null, history:[], draft:null, baseline.summaryVersionId:null}",
+        actual: `HTTP ${String(emptyRead.status)} ${emptyView === null ? 'no view' : JSON.stringify(emptyFacts)}`,
+        httpStatus: emptyRead.status,
+        ok: emptyRead.status === 200
+          && emptyRead.issues.length === 0
+          && emptyValidation.issues.length === 0
+          && emptyView !== null
+          && emptyView.scopeKind === 'task'
+          && emptyView.scopeId === summaryScopeId
+          && emptyView.current === null
+          && emptyFacts.historyLength === 0
+          && emptyView.draft === null
+          && emptyView.needsRecheck === false
+          && emptyFacts.baselineVersionId === null,
+        actualWhenFail: `HTTP ${String(emptyRead.status)}; issues: ${[...emptyRead.issues, ...emptyValidation.issues].join('; ') || 'none'}; body=${emptyRead.body.slice(0, 300)}`,
+      })
+
+      if (emptyView === null) {
+        recordSummaryNotAttempted(['POS-17', 'POS-18', 'POS-19', 'POS-20', 'POS-21', 'POS-22'], 'summary/read produced no empty view to save under')
+      } else {
+        const emptyBaseline = {
+          expectedRevision: emptyView.revision,
+          expectedApplicabilityRevision: emptyView.applicabilityRevision,
+          expectedSummaryVersionId: emptyFacts.baselineVersionId,
+        }
+        const firstSavePayload = { ...summaryScope, updateId: summaryUpdateId, ...emptyBaseline, content: summaryContent(summaryBody) }
+
+        // POS-17: the first committed version under the empty baseline.
+        const firstSave = await postEnvelope({ label: 'summary/save (committed)', endpoint: 'summary/save', payload: firstSavePayload })
+        const firstSaveResult = resultOf(firstSave.parsed)
+        const firstSaveValue = firstSaveResult?.ok === true && isRecord(firstSaveResult.value) ? firstSaveResult.value : null
+        const firstSaveIssues = []
+        if (firstSaveValue === null) {
+          firstSaveIssues.push(`result.ok=${String(firstSaveResult?.ok)} so there is no committed value`)
+        } else {
+          if (firstSaveValue.outcome !== 'committed') firstSaveIssues.push(`outcome=${JSON.stringify(firstSaveValue.outcome)}`)
+          if (firstSaveValue.changeKind !== 'created') firstSaveIssues.push(`changeKind=${JSON.stringify(firstSaveValue.changeKind)}`)
+          if (firstSaveValue.revision !== emptyView.revision + 1) firstSaveIssues.push(`revision=${String(firstSaveValue.revision)} (expected ${String(emptyView.revision + 1)})`)
+          if (typeof firstSaveValue.versionId !== 'string' || firstSaveValue.versionId.length === 0) firstSaveIssues.push('versionId is not a non-empty string')
+          if (!Array.isArray(firstSaveValue.consumedDraftIds)) firstSaveIssues.push('consumedDraftIds is not an array')
+          if (!Array.isArray(firstSaveValue.draftUpdateFailures)) firstSaveIssues.push('draftUpdateFailures is not an array')
+          if (typeof firstSaveValue.needsRecheck !== 'boolean') firstSaveIssues.push('needsRecheck is not a boolean')
+          const savedViewValidation = isRecord(firstSaveValue.view)
+            ? validateSummaryView(firstSaveValue.view, 'summary/save.value.view')
+            : { issues: ['view is not an object'], view: null }
+          firstSaveIssues.push(...savedViewValidation.issues)
+          const savedView = savedViewValidation.view
+          if (savedView !== null) {
+            if (savedView.current === null) {
+              firstSaveIssues.push('view.current is null after a committed save')
+            } else {
+              if (savedView.current.versionId !== firstSaveValue.versionId) firstSaveIssues.push('view.current.versionId differs from the save versionId')
+              if (savedView.current.changeKind !== 'created') firstSaveIssues.push(`view.current.changeKind=${JSON.stringify(savedView.current.changeKind)}`)
+              if (savedView.current.origin !== 'user') firstSaveIssues.push(`view.current.origin=${JSON.stringify(savedView.current.origin)}`)
+              if (savedView.current.content?.sections?.[0]?.body !== summaryBody) firstSaveIssues.push(`view.current content body=${JSON.stringify(savedView.current.content?.sections?.[0]?.body)}`)
+            }
+            if (!Array.isArray(savedView.history) || savedView.history.length !== 1) firstSaveIssues.push(`view.history length=${Array.isArray(savedView.history) ? String(savedView.history.length) : 'n/a'} (expected 1)`)
+            if (!isRecord(savedView.baseline) || savedView.baseline.summaryVersionId !== firstSaveValue.versionId) firstSaveIssues.push('view.baseline.summaryVersionId does not carry the committed version')
+          }
+        }
+        assertCheck({
+          id: 'POS-17', group: 'positive',
+          name: 'summary/save commits the first official version under the empty baseline',
+          expected: 'HTTP 200 + outcome=committed + changeKind=created + revision advanced by 1 + view.current(origin=user) + history length 1',
+          actual: `HTTP ${String(firstSave.status)} outcome=${JSON.stringify(firstSaveValue?.outcome ?? null)} versionId=${JSON.stringify(firstSaveValue?.versionId ?? null)} revision=${String(firstSaveValue?.revision)}`,
+          httpStatus: firstSave.status,
+          ok: firstSave.status === 200 && firstSave.issues.length === 0 && firstSaveIssues.length === 0,
+          actualWhenFail: `HTTP ${String(firstSave.status)}; issues: ${[...firstSave.issues, ...firstSaveIssues].join('; ') || 'none'}; body=${firstSave.body.slice(0, 300)}`,
+        })
+        const committed = firstSaveValue !== null
+          && firstSaveValue.outcome === 'committed'
+          && typeof firstSaveValue.versionId === 'string'
+          && isNonNegativeInteger(firstSaveValue.revision)
+          && isRecord(firstSaveValue.view)
+          && isNonNegativeInteger(firstSaveValue.view.applicabilityRevision)
+          ? {
+              versionId: firstSaveValue.versionId,
+              revision: firstSaveValue.revision,
+              applicabilityRevision: firstSaveValue.view.applicabilityRevision,
+              view: firstSaveValue.view,
+            }
+          : null
+        if (committed === null) {
+          recordSummaryNotAttempted(['POS-18', 'POS-19', 'POS-20', 'POS-21', 'POS-22'], 'summary/save committed without a usable version/baseline to continue from')
+        } else {
+          // POS-18: reading the scope back returns the committed version in
+          // `current` and an advanced baseline that can drive the next save.
+          const existingRead = await readSummary('summary/read (existing version)')
+          const existingResult = resultOf(existingRead.parsed)
+          const existingValue = existingResult?.ok === true && isRecord(existingResult.value) ? existingResult.value : null
+          const existingValidation = existingValue === null
+            ? { issues: [`result.ok=${String(existingResult?.ok)} so there is no summary value to validate`], summary: null }
+            : validateSummaryReadValue(existingValue, 'summary/read.value')
+          const existingView = existingValidation.summary
+          const existingIssues = []
+          if (existingView === null) {
+            existingIssues.push('view is null')
+          } else {
+            if (existingView.current === null) existingIssues.push('current is null after a committed save')
+            else if (existingView.current.versionId !== committed.versionId) existingIssues.push(`current.versionId=${JSON.stringify(existingView.current.versionId)}`)
+            if (existingView.revision !== committed.revision) existingIssues.push(`revision=${String(existingView.revision)} (expected ${String(committed.revision)})`)
+            if (!Array.isArray(existingView.history) || existingView.history.length !== 1) existingIssues.push(`history length=${Array.isArray(existingView.history) ? String(existingView.history.length) : 'n/a'}`)
+            else if (existingView.history[0]?.versionId !== committed.versionId) existingIssues.push('history[0].versionId differs from the committed version')
+            if (!isRecord(existingView.baseline) || existingView.baseline.summaryVersionId !== committed.versionId) existingIssues.push('baseline.summaryVersionId does not carry the committed version')
+            if (existingView.current?.content?.sections?.[0]?.body !== summaryBody) existingIssues.push('current content body does not echo the committed body')
+          }
+          assertCheck({
+            id: 'POS-18', group: 'positive',
+            name: 'summary/read returns the committed version and the advanced baseline',
+            expected: 'HTTP 200 + current.versionId=committed + revision=committed + history length 1 + baseline.summaryVersionId=committed',
+            actual: `HTTP ${String(existingRead.status)} current=${JSON.stringify(existingView?.current?.versionId ?? null)} revision=${String(existingView?.revision)} history=${String(Array.isArray(existingView?.history) ? existingView.history.length : null)}`,
+            httpStatus: existingRead.status,
+            ok: existingRead.status === 200 && existingRead.issues.length === 0 && existingValidation.issues.length === 0 && existingIssues.length === 0,
+            actualWhenFail: `HTTP ${String(existingRead.status)}; issues: ${[...existingRead.issues, ...existingValidation.issues, ...existingIssues].join('; ') || 'none'}; body=${existingRead.body.slice(0, 300)}`,
+          })
+
+          // POS-19: replaying the committed updateId is idempotent; the stale
+          // baseline in the exact same payload must not turn it into a failure.
+          const replay = await postEnvelope({ label: 'summary/save (replay of the committed updateId)', endpoint: 'summary/save', payload: firstSavePayload })
+          const replayResult = resultOf(replay.parsed)
+          const replayValue = replayResult?.ok === true && isRecord(replayResult.value) ? replayResult.value : null
+          const replayIssues = []
+          if (replayValue === null) {
+            replayIssues.push(`result.ok=${String(replayResult?.ok)} so there is no replay value`)
+          } else {
+            if (replayValue.outcome !== 'already-applied') replayIssues.push(`outcome=${JSON.stringify(replayValue.outcome)}`)
+            if (replayValue.versionId !== committed.versionId) replayIssues.push(`versionId=${JSON.stringify(replayValue.versionId)}`)
+            if (replayValue.revision !== committed.revision) replayIssues.push(`revision=${String(replayValue.revision)} (expected ${String(committed.revision)})`)
+            if (!Array.isArray(replayValue.consumedDraftIds) || replayValue.consumedDraftIds.length !== 0) replayIssues.push('consumedDraftIds is not an empty array')
+          }
+          assertCheck({
+            id: 'POS-19', group: 'positive',
+            name: 'summary/save replays the same updateId as already-applied (no new version)',
+            expected: 'HTTP 200 + outcome=already-applied + the committed versionId + unchanged revision + consumedDraftIds []',
+            actual: `HTTP ${String(replay.status)} outcome=${JSON.stringify(replayValue?.outcome ?? null)} versionId=${JSON.stringify(replayValue?.versionId ?? null)}`,
+            httpStatus: replay.status,
+            ok: replay.status === 200 && replay.issues.length === 0 && replayIssues.length === 0,
+            actualWhenFail: `HTTP ${String(replay.status)}; issues: ${[...replay.issues, ...replayIssues].join('; ') || 'none'}; body=${replay.body.slice(0, 300)}`,
+          })
+
+          // POS-20: the identical body under the fresh baseline is a no-change
+          // save: it must not create a second version.
+          const noChangePayload = {
+            ...summaryScope,
+            updateId: `roundtrip-summary-nochange-${randomUUID()}`,
+            expectedRevision: committed.revision,
+            expectedApplicabilityRevision: committed.applicabilityRevision,
+            expectedSummaryVersionId: committed.versionId,
+            content: summaryContent(summaryBody),
+          }
+          const noChange = await postEnvelope({ label: 'summary/save (identical body)', endpoint: 'summary/save', payload: noChangePayload })
+          const noChangeResult = resultOf(noChange.parsed)
+          const noChangeValue = noChangeResult?.ok === true && isRecord(noChangeResult.value) ? noChangeResult.value : null
+          const noChangeIssues = []
+          if (noChangeValue === null) {
+            noChangeIssues.push(`result.ok=${String(noChangeResult?.ok)} so there is no no-change value`)
+          } else {
+            if (noChangeValue.outcome !== 'no-change') noChangeIssues.push(`outcome=${JSON.stringify(noChangeValue.outcome)}`)
+            if (noChangeValue.revision !== committed.revision) noChangeIssues.push(`revision=${String(noChangeValue.revision)} (expected ${String(committed.revision)})`)
+            if (noChangeValue.summaryVersionId !== committed.versionId) noChangeIssues.push(`summaryVersionId=${JSON.stringify(noChangeValue.summaryVersionId)}`)
+            if (isRecord(noChangeValue.view)) {
+              if (noChangeValue.view.current?.versionId !== committed.versionId) noChangeIssues.push('view.current.versionId changed on a no-change save')
+              if (!Array.isArray(noChangeValue.view.history) || noChangeValue.view.history.length !== 1) noChangeIssues.push('view.history length changed on a no-change save')
+            } else {
+              noChangeIssues.push('value.view is not an object')
+            }
+          }
+          assertCheck({
+            id: 'POS-20', group: 'positive',
+            name: 'summary/save with the identical body is no-change (no second version)',
+            expected: 'HTTP 200 + outcome=no-change + revision unchanged + summaryVersionId=committed + history length 1',
+            actual: `HTTP ${String(noChange.status)} outcome=${JSON.stringify(noChangeValue?.outcome ?? null)} revision=${String(noChangeValue?.revision)} summaryVersionId=${JSON.stringify(noChangeValue?.summaryVersionId ?? null)}`,
+            httpStatus: noChange.status,
+            ok: noChange.status === 200 && noChange.issues.length === 0 && noChangeIssues.length === 0,
+            actualWhenFail: `HTTP ${String(noChange.status)}; issues: ${[...noChange.issues, ...noChangeIssues].join('; ') || 'none'}; body=${noChange.body.slice(0, 300)}`,
+          })
+
+          // POS-21: a fresh updateId under the stale empty baseline is refused
+          // with the browser `stale-baseline` code and the expected/actual tuple.
+          const stalePayload = { ...summaryScope, updateId: `roundtrip-summary-stale-${randomUUID()}`, ...emptyBaseline, content: summaryContent(`${summaryBody} stale`) }
+          const stale = await postEnvelope({ label: 'summary/save (stale baseline)', endpoint: 'summary/save', payload: stalePayload })
+          const staleResult = resultOf(stale.parsed)
+          const staleFailure = staleResult?.ok === false ? failureOf(stale.parsed) : null
+          const staleBaseline = isRecord(staleFailure?.details?.baseline) ? staleFailure.details.baseline : null
+          const staleIssues = []
+          if (staleFailure === null) {
+            staleIssues.push(`result.ok=${String(staleResult?.ok)} so there is no failure envelope`)
+          } else {
+            if (staleFailure.code !== 'stale-baseline') staleIssues.push(`code=${JSON.stringify(staleFailure.code)}`)
+            if (!isRecord(staleBaseline?.expected) || staleBaseline.expected.revision !== emptyView.revision) staleIssues.push('details.baseline.expected.revision does not match the stale baseline')
+            if (!isRecord(staleBaseline?.actual) || staleBaseline.actual.revision !== committed.revision) staleIssues.push('details.baseline.actual.revision does not match the committed revision')
+            if (!isRecord(staleBaseline?.actual) || staleBaseline.actual.summaryVersionId !== committed.versionId) staleIssues.push('details.baseline.actual.summaryVersionId does not match the committed version')
+          }
+          assertCheck({
+            id: 'POS-21', group: 'positive',
+            name: 'summary/save under the stale baseline fails with stale-baseline + expected/actual',
+            expected: "HTTP 200 + result.ok=false + error.code='stale-baseline' + details.baseline.{expected,actual} revisions",
+            actual: `HTTP ${String(stale.status)} code=${JSON.stringify(staleFailure?.code ?? null)} expectedRevision=${String(staleBaseline?.expected?.revision)} actualRevision=${String(staleBaseline?.actual?.revision)}`,
+            httpStatus: stale.status,
+            ok: stale.status === 200 && stale.issues.length === 0 && staleIssues.length === 0,
+            actualWhenFail: `HTTP ${String(stale.status)}; issues: ${[...stale.issues, ...staleIssues].join('; ') || 'none'}; body=${stale.body.slice(0, 300)}`,
+          })
+
+          // POS-22: draft save upserts without promoting anything to an official
+          // version; the read after the draft keeps the committed revision.
+          const draftUpdateId = `roundtrip-draft-${randomUUID()}`
+          const draftFirstBody = `RPC roundtrip 草稿 ${draftUpdateId.slice(-8)}`
+          const draftFirst = await postEnvelope({ label: 'summary/draft.save (create)', endpoint: 'summary/draft.save', payload: { ...summaryScope, updateId: draftUpdateId, content: summaryContent(draftFirstBody) } })
+          const draftFirstResult = resultOf(draftFirst.parsed)
+          const draftFirstValue = draftFirstResult?.ok === true && isRecord(draftFirstResult.value) ? draftFirstResult.value : null
+          const draftFirstValidation = draftFirstValue === null
+            ? { issues: [`result.ok=${String(draftFirstResult?.ok)} so there is no draft value`], draft: null }
+            : validateSummaryDraft(draftFirstValue.draft, 'summary/draft.save.value.draft')
+          const draftFirstDraft = draftFirstValidation.draft
+          const draftIssues = [...draftFirstValidation.issues]
+          if (draftFirstDraft === null) {
+            draftIssues.push('value.draft is not an object')
+          } else {
+            if (draftFirstDraft.state !== 'editing') draftIssues.push(`state=${JSON.stringify(draftFirstDraft.state)}`)
+            if (draftFirstDraft.updateId !== draftUpdateId) draftIssues.push(`updateId=${JSON.stringify(draftFirstDraft.updateId)}`)
+            if (draftFirstDraft.content?.sections?.[0]?.body !== draftFirstBody) draftIssues.push('draft content does not echo the request body')
+            if (!isRecord(draftFirstDraft.base) || draftFirstDraft.base.scopeRevision !== committed.revision) draftIssues.push('draft.base.scopeRevision does not match the committed revision')
+          }
+          const draftSecondBody = `${draftFirstBody} (updated)`
+          const draftSecond = await postEnvelope({ label: 'summary/draft.save (upsert)', endpoint: 'summary/draft.save', payload: { ...summaryScope, content: summaryContent(draftSecondBody) } })
+          const draftSecondResult = resultOf(draftSecond.parsed)
+          const draftSecondValue = draftSecondResult?.ok === true && isRecord(draftSecondResult.value) ? draftSecondResult.value : null
+          const draftSecondValidation = draftSecondValue === null
+            ? { issues: [`result.ok=${String(draftSecondResult?.ok)} so there is no draft value`], draft: null }
+            : validateSummaryDraft(draftSecondValue.draft, 'summary/draft.save.value.draft')
+          const draftSecondDraft = draftSecondValidation.draft
+          draftIssues.push(...draftSecondValidation.issues)
+          if (draftFirstDraft !== null && draftSecondDraft !== null) {
+            if (draftSecondDraft.draftId !== draftFirstDraft.draftId) draftIssues.push('the upsert created a different draftId')
+            if (draftSecondDraft.content?.sections?.[0]?.body !== draftSecondBody) draftIssues.push('the upsert did not keep the newest body')
+          } else {
+            draftIssues.push('the upsert returned no draft object')
+          }
+          const readAfterDraft = await readSummary('summary/read (after draft)')
+          const afterDraftResult = resultOf(readAfterDraft.parsed)
+          const afterDraftValue = afterDraftResult?.ok === true && isRecord(afterDraftResult.value) ? afterDraftResult.value : null
+          const afterDraftValidation = afterDraftValue === null
+            ? { issues: [`result.ok=${String(afterDraftResult?.ok)} so there is no summary value to validate`], summary: null }
+            : validateSummaryReadValue(afterDraftValue, 'summary/read.value')
+          draftIssues.push(...afterDraftValidation.issues)
+          const afterDraftView = afterDraftValidation.summary
+          if (afterDraftView !== null) {
+            if (afterDraftView.revision !== committed.revision) draftIssues.push(`a draft changed the official revision (${String(afterDraftView.revision)} != ${String(committed.revision)})`)
+            if (afterDraftView.current?.versionId !== committed.versionId) draftIssues.push('a draft changed the current official version')
+            if (!isRecord(afterDraftView.draft) || afterDraftView.draft.draftId !== draftFirstDraft?.draftId) draftIssues.push('the read after the draft does not carry the upserted draft')
+            else if (afterDraftView.draft.content?.sections?.[0]?.body !== draftSecondBody) draftIssues.push('the read-after-draft draft body is stale')
+          } else {
+            draftIssues.push('the read after the draft returned no view')
+          }
+          assertCheck({
+            id: 'POS-22', group: 'positive',
+            name: 'summary/draft.save upserts one draft without an official version or revision bump',
+            expected: 'HTTP 200 + draft.state=editing (same draftId) + read after draft: revision/current unchanged, draft present + newest body',
+            actual: `HTTP ${String(draftFirst.status)}/${String(draftSecond.status)} draftId=${JSON.stringify(draftFirstDraft?.draftId ?? null)} revision=${String(afterDraftView?.revision)} body=${JSON.stringify(afterDraftView?.draft?.content?.sections?.[0]?.body ?? null)}`,
+            httpStatus: draftFirst.status,
+            ok: draftFirst.status === 200 && draftSecond.status === 200
+              && draftFirst.issues.length === 0 && draftSecond.issues.length === 0
+              && readAfterDraft.status === 200 && readAfterDraft.issues.length === 0
+              && draftIssues.length === 0,
+            actualWhenFail: `HTTP ${String(draftFirst.status)}/${String(draftSecond.status)}/${String(readAfterDraft.status)}; issues: ${[...draftFirst.issues, ...draftSecond.issues, ...readAfterDraft.issues, ...draftIssues].join('; ') || 'none'}; bodies=${[draftFirst.body, draftSecond.body, readAfterDraft.body].map((body) => body.slice(0, 200)).join(' | ')}`,
+          })
+          evidence.summary = {
+            scopeId: summaryScopeId,
+            emptyRevision: emptyView.revision,
+            committedVersionId: committed.versionId,
+            committedRevision: committed.revision,
+            draftId: draftFirstDraft?.draftId ?? null,
+          }
+        }
+      }
+    }
+
     // ---- fence negatives ---------------------------------------------
-    write('\n[8/9] negative: carrier fence and authentication')
+    write('\n[9/10] negative: carrier fence and authentication')
     // Each deviation changes exactly one request property. FEN-7 repeats a
     // healthy request afterwards so the 401/403/415/404 statuses cannot be
     // explained by a session that broke midway through the batch.
@@ -1495,11 +2020,11 @@ dc.subscribe('aikanban:board-channel', (payload) => {
     })
 
     // ---- contract negatives ------------------------------------------
-    write('\n[9/9] supplementary: contract-level failures over real HTTP (not fence evidence)')
+    write('\n[10/10] supplementary: contract-level failures over real HTTP (not fence evidence)')
     const unknownEndpoint = await postEnvelope({ label: 'contract: unknown endpoint', endpoint: 'does-not-exist', payload: {} })
     assertCheck({
       id: 'CON-1', group: 'contract',
-      name: 'endpoint outside the eight-endpoint contract returns a failure envelope, not a throw',
+      name: 'endpoint outside the eleven-endpoint contract returns a failure envelope, not a throw',
       expected: "HTTP 200 + result.ok=false + error.code='unknown-endpoint'",
       actual: `HTTP ${String(unknownEndpoint.status)} code=${JSON.stringify(failureCodeOf(unknownEndpoint.parsed))}`,
       httpStatus: unknownEndpoint.status,
@@ -1570,6 +2095,45 @@ dc.subscribe('aikanban:board-channel', (payload) => {
       actual: malformedActual,
       httpStatus: malformedStatus,
       ok: malformedOk,
+    })
+
+    // CON-5/CON-6 extend the same failure-code matrix to the summary endpoints:
+    // a random task id cannot exist in the isolated home, and the unregistered
+    // project id already used by CON-2 must map identically on the new read.
+    const missingSummaryTaskId = randomUUID()
+    const missingSummarySave = await postEnvelope({
+      label: 'contract: summary/save for a missing task',
+      endpoint: 'summary/save',
+      payload: {
+        scopeKind: 'task',
+        scopeId: missingSummaryTaskId,
+        updateId: `roundtrip-missing-${randomUUID()}`,
+        expectedRevision: 0,
+        expectedApplicabilityRevision: 0,
+        expectedSummaryVersionId: null,
+        content: summaryContent('must not be written'),
+      },
+    })
+    assertCheck({
+      id: 'CON-5', group: 'contract',
+      name: 'summary/save for a missing task returns not-found (shared failure-code matrix)',
+      expected: "HTTP 200 + result.ok=false + error.code='not-found'",
+      actual: `HTTP ${String(missingSummarySave.status)} code=${JSON.stringify(failureCodeOf(missingSummarySave.parsed))}`,
+      httpStatus: missingSummarySave.status,
+      ok: missingSummarySave.status === 200 && failureCodeOf(missingSummarySave.parsed) === 'not-found',
+    })
+    const unregisteredSummaryRead = await postEnvelope({
+      label: 'contract: summary/read for an unregistered project',
+      endpoint: 'summary/read',
+      payload: { scopeKind: 'project', scopeId: UNREGISTERED_PROJECT_ID },
+    })
+    assertCheck({
+      id: 'CON-6', group: 'contract',
+      name: 'summary/read for an unregistered projectId returns unknown-project',
+      expected: "HTTP 200 + result.ok=false + error.code='unknown-project'",
+      actual: `HTTP ${String(unregisteredSummaryRead.status)} code=${JSON.stringify(failureCodeOf(unregisteredSummaryRead.parsed))}`,
+      httpStatus: unregisteredSummaryRead.status,
+      ok: unregisteredSummaryRead.status === 200 && failureCodeOf(unregisteredSummaryRead.parsed) === 'unknown-project',
     })
 
     // ---- process-internal registration evidence (separate from HTTP) --

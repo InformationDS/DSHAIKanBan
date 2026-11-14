@@ -1,21 +1,21 @@
 # S1 接线设计与实施规格（切片 A / 切片 B）
 
-> **本文是实施前置规格，不是实现记录，也不是验收记录。** 切片 A **已于 2026-10-22 实施**（含安装到真实 `desktop` profile；2026-11-11 在桌面 DSH 0.2.2-rc.1 真实 GUI 中复核读路径，见[实施记录](s1-wiring-implementation.md) §17）；本页仍只把「已有代码 → 可运行的 S1 接线」的接口、映射、改动面、测试与证据判据写到可直接实施的程度。**2026-11-11 状态**：切片 A 已实现/已安装，真实 GUI 看板读路径成立；**切片 B 已实现**（2026-11-11，提交 `d26dd34`、`e2483f2`、`e93ab9f`、`1502a15`；代码与门禁层，363 用例全绿；2026-11-12 已安装并重启，真实 GUI 已跑通创建/状态/活动；字段编辑/撤销/列内重排/阻塞已有真实 GUI 记录；完成/取消/重开已通过菜单路径在真实 GUI 观察；失败草稿/重启失败草稿、故障注入未验证；拖拽/键盘已补测）；**AT 已开始执行（F01/F02 部分执行，其余待执行）**——A/B 的完成判据、门禁与 GUI 读路径都不等于 F01/F02 验收。决策依据是 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（**已定**：设计经用户确认、工程证据待取证）；用户已拍板 **Q1＝B（当前项目每次显式选择、不持久化）**、**Q2＝A（扩展 wire/BoardController 契约，不在适配层弱化 F02-R04/SAVE-05）**。本文回应独立评审指出的接线类前置条件（B1/B2/H1/H2）；评审原文不在仓库，本文只按任务书转述的范围落规格，不替评审定义编号含义。**2026-11-13 状态**：F03 手动概况/项目总览的代码与门禁层已实现（提交 `79e0fa2`、`973ee67`；462 用例；通道 11 端点），已安装到真实 profile、因 F03 重启三次、完成真实 GUI 的 AT-26（通过）与 AT-44（通过）；R02 保存后卡片不即时刷新缺陷已由 `58c7c69` 修复并复验；其余 AT 待执行/待联合验收。新增 §10 记录该接线扩展（原 §10 参考顺延为 §11），工程侧提交与门禁见[实施记录](s1-wiring-implementation.md) §21。
+> **本文是实施前置规格，不是实现记录，也不是验收记录。** 切片 A **已于 2026-10-22 实施**（含安装到真实 `desktop` profile；2026-11-11 在桌面 DSH 0.2.2-rc.1 真实 GUI 中复核读路径，见[实施记录](s1-wiring-implementation.md) §17）；本页仍只把「已有代码 → 可运行的 S1 接线」的接口、映射、改动面、测试与证据判据写到可直接实施的程度。**2026-11-11 状态**：切片 A 已实现/已安装，真实 GUI 看板读路径成立；**切片 B 已实现**（2026-11-11，提交 `d26dd34`、`e2483f2`、`e93ab9f`、`1502a15`；代码与门禁层，363 用例全绿；2026-11-12 已安装并重启，真实 GUI 已跑通创建/状态/活动；字段编辑/撤销/列内重排/阻塞已有真实 GUI 记录；完成/取消/重开已通过菜单路径在真实 GUI 观察；失败草稿/重启失败草稿、故障注入未验证；拖拽/键盘已补测）；**AT 已开始执行（F01/F02 部分执行，其余待执行）**——A/B 的完成判据、门禁与 GUI 读路径都不等于 F01/F02 验收。决策依据是 [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（**已定**：设计经用户确认、工程证据待取证）；用户已拍板 **Q1＝B（当前项目每次显式选择、不持久化）**、**Q2＝A（扩展 wire/BoardController 契约，不在适配层弱化 F02-R04/SAVE-05）**。本文回应独立评审指出的接线类前置条件（B1/B2/H1/H2）；评审原文不在仓库，本文只按任务书转述的范围落规格，不替评审定义编号含义。**2026-11-13 状态**：F03 手动概况/项目总览的代码与门禁层已实现（提交 `79e0fa2`、`973ee67`；462 用例；通道 11 端点），已安装到真实 profile、因 F03 重启三次、完成真实 GUI 的 AT-26（通过）与 AT-44（通过）；R02 保存后卡片不即时刷新缺陷已由 `58c7c69` 修复并复验；其余 AT 待执行/待联合验收。新增 §10 记录该接线扩展（原 §10 参考顺延为 §11），工程侧提交与门禁见[实施记录](s1-wiring-implementation.md) §21。**2026-11-14 状态**：F04 切片 A 的代码与 UI 已实现（提交 `97d9c78`、`93ab480`、`745bec9`；505 用例；通道 12 端点），未安装、未因 F04 重启、未真实 GUI，AT 全部待执行；新增 §11 记录该接线扩展（原 §11 参考顺延为 §12），工程提交与门禁见[实施记录](s1-wiring-implementation.md) §22。
 >
-> **证据边界**：所有代码引用均来自当前工作区（`main`，HEAD `dce8385` 起点）的真实文件，行号已逐条核对；未能用仓库内材料证实的点标「**未确认**」。**AT 尚未全部执行：F01/F02 已部分执行，其余待执行**：本文与未来切片 A/B 的单元/集成测试都不能当作 F01/F02 的验收证据；验收按[验收执行规则](acceptance-execution.md)与各功能 `verification.md` 执行。
+> **证据边界**：所有代码引用均来自当前工作区（`main`，HEAD `dce8385` 起点；F04 部分更新至 `745bec9`）的真实文件，行号已逐条核对；未能用仓库内材料证实的点标「**未确认**」。**AT 尚未全部执行：F01/F02 已部分执行，其余待执行**：本文与未来切片 A/B 的单元/集成测试都不能当作 F01/F02 的验收证据；验收按[验收执行规则](acceptance-execution.md)与各功能 `verification.md` 执行。
 
 ## 0. 属性
 
 | 信息 | 内容 |
 | --- | --- |
-| 日期 | 2026-10-20（2026-11-11、2026-11-13 状态更新） |
-| 状态 | 实施规格（切片 A 已实施/已安装；切片 B 已实现并已安装（代码/门禁 363 用例；2026-11-12 真实 GUI 复核创建/状态/活动）；F03 代码/门禁已实现（2026-11-13，462 用例、11 端点；已安装/真实 GUI（AT-26 通过，AT-44 通过；R02 已修复））；本文仍是规格） |
+| 日期 | 2026-10-20（2026-11-11、2026-11-13、2026-11-14 状态更新） |
+| 状态 | 实施规格（切片 A 已实施/已安装；切片 B 已实现并已安装（代码/门禁 363 用例；2026-11-12 真实 GUI 复核创建/状态/活动）；F03 代码/门禁已实现（2026-11-13，462 用例、11 端点；已安装/真实 GUI（AT-26 通过，AT-44 通过；R02 已修复））；F04 切片 A 代码/UI 已实现（2026-11-14，505 用例、12 端点；未安装/未真实 GUI/AT 待执行）；本文仍是规格） |
 | 决策依据 | [ADR-007](decisions/ADR-007-s1-wiring-and-current-project.md)（已定）；Q1=B、Q2=A、Q3=允许 test-only 故障注入（[验收执行规则](acceptance-execution.md)第 3 节） |
 | 影响功能 | F01（主）、F02（主）；边界：F03、F04 |
-| 当前缺口 | 切片 A 已接通（2026-10-22）：core 由 host 半打开、`/aikanban` 已注册、浏览器半经真实通道读写；切片 B（`task/create`、`task/fields.update`、`activity/read` 与新建/编辑/活动 UI）代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`+`e93ab9f`+`1502a15`，363 用例）；2026-11-12 已安装并重启，真实 GUI 已跑通创建/两次状态流转/活动记录；当前缺口＝失败草稿/重启失败草稿、故障注入未验证；拖拽/键盘已补测；字段编辑/撤销/列内重排/阻塞、完成/取消/重开已有真实 GUI 观察；AT 已开始执行（F01/F02 部分执行，其余待执行）；F03 的三端点（`summary/read`、`summary/save`、`summary/draft.save`）代码/门禁已实现（2026-11-13，`79e0fa2`+`973ee67`+`58c7c69`，462 用例），已安装/真实 GUI（F03 AT-26、AT-44 通过，其余待执行/待联合验收；R02 已修复） |
+| 当前缺口 | 切片 A 已接通（2026-10-22）：core 由 host 半打开、`/aikanban` 已注册、浏览器半经真实通道读写；切片 B（`task/create`、`task/fields.update`、`activity/read` 与新建/编辑/活动 UI）代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`+`e93ab9f`+`1502a15`，363 用例）；2026-11-12 已安装并重启，真实 GUI 已跑通创建/两次状态流转/活动记录；当前缺口＝失败草稿/重启失败草稿、故障注入未验证；拖拽/键盘已补测；字段编辑/撤销/列内重排/阻塞、完成/取消/重开已有真实 GUI 观察；AT 已开始执行（F01/F02 部分执行，其余待执行）；F03 的三端点（`summary/read`、`summary/save`、`summary/draft.save`）代码/门禁已实现（2026-11-13，`79e0fa2`+`973ee67`+`58c7c69`，462 用例），已安装/真实 GUI（F03 AT-26、AT-44 通过，其余待执行/待联合验收；R02 已修复）；F04 切片 A 的项目/任务新建对话入口、`conversation/link`（12 端点）与 client 状态机/UI 代码已实现（2026-11-14，`97d9c78`+`93ab480`+`745bec9`，505 用例），未安装/未真实 GUI/AT 待执行 |
 | 切片 A 完成判据 | 见 §7；集成测试/探针（2026-10-22）+ 真实 GUI 读路径复核（2026-11-11）；**不等于 F01/F02 验收通过** |
 
-**2026-11-11 状态说明**：切片 A 的实施记录与安装/回滚剧本见[实施记录](s1-wiring-implementation.md)（§14—§17）；插件已装进真实 `desktop` profile（2026-10-22），桌面 DSH 0.2.2-rc.1 的真实 GUI 中看板主面板已渲染、数据通道为 `connection rpc /aikanban`、项目与 5 列快照来自成功的读路径。§8 第 1、2、9 条中「真实 profile/真实 GUI 渲染/页面内读取」部分已复核（页面内读路径成功；原始 HTTP 状态与信封未在页面抓包），**状态写路径已复核（创建/两次状态流转/活动）；字段编辑/撤销/列内重排/阻塞、完成/取消/重开已观察；失败草稿/重启失败草稿、故障注入、非空排序形状仍未验证；拖拽/键盘已补测**；§8 其余条目不受影响。切片 B 的代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`+`e93ab9f`+`1502a15`，363 用例），2026-11-12 已安装并重启，真实 GUI 已跑通创建/状态/活动；AT 已开始执行（F01/F02 部分执行，其余待执行）。详见实施记录 §17—§20；F03 见 §10 与实施记录 §21（2026-11-13：代码/门禁已实现，已安装/真实 GUI；AT-26、AT-44 通过；R02 已修复）。
+**2026-11-11 状态说明**：切片 A 的实施记录与安装/回滚剧本见[实施记录](s1-wiring-implementation.md)（§14—§17）；插件已装进真实 `desktop` profile（2026-10-22），桌面 DSH 0.2.2-rc.1 的真实 GUI 中看板主面板已渲染、数据通道为 `connection rpc /aikanban`、项目与 5 列快照来自成功的读路径。§8 第 1、2、9 条中「真实 profile/真实 GUI 渲染/页面内读取」部分已复核（页面内读路径成功；原始 HTTP 状态与信封未在页面抓包），**状态写路径已复核（创建/两次状态流转/活动）；字段编辑/撤销/列内重排/阻塞、完成/取消/重开已观察；失败草稿/重启失败草稿、故障注入、非空排序形状仍未验证；拖拽/键盘已补测**；§8 其余条目不受影响。切片 B 的代码/门禁已实现（2026-11-11，`d26dd34`+`e2483f2`+`e93ab9f`+`1502a15`，363 用例），2026-11-12 已安装并重启，真实 GUI 已跑通创建/状态/活动；AT 已开始执行（F01/F02 部分执行，其余待执行）。详见实施记录 §17—§20；F03 见 §10 与实施记录 §21（2026-11-13：代码/门禁已实现，已安装/真实 GUI；AT-26、AT-44 通过；R02 已修复）。F04 切片 A 见 §11 与实施记录 §22（2026-11-14：代码/UI 已实现，505 用例、12 端点；未安装/未真实 GUI/AT 全部待执行）。
 
 ## 1. 目标与切片
 
@@ -563,7 +563,45 @@ core 映射：
 - **已安装到真实 profile、因 F03 重启三次、完成真实 GUI 的 AT-26（通过）与 AT-44（通过）**；R02 保存后卡片不即时刷新缺陷已由 `58c7c69` 修复并复验；AT-49 通过（含故障注入，隔离 storage-file-lock）、联合 AT 仍待执行/待联合验收；本节的门禁数字不能写成整体验收通过。
 - F06 记录、F09 结论修正、F10 历史恢复、F13 成果、F18 故障注入不在本切片；联合 AT（AT-27/29/45/49/67）需另行验收。
 
-## 11. 参考
+## 11. F04 新建工作对话入口（2026-11-14 代码/UI 实现）
+
+> 本节记录 S1 之后的 F04 切片 A 接线扩展：只覆盖“项目入口新建未关联对话 / 任务入口新建并固定归属 / 打开”，不是 F04 规格正文，也不是验收记录。功能实现记录见 [F04 implementation](../prd/features/F04-conversation-entry/implementation.md)，工程侧提交与门禁见[实施记录](s1-wiring-implementation.md) §22。F04 **未安装、未因 F04 重启、未真实 GUI**；AT 全部待执行。
+
+### 11.1 端点与契约
+
+| 端点 | 语义 | 方向 | 归属 |
+| --- | --- | --- | --- |
+| `conversation/link` | 把浏览器已创建的会话固定归属到任务（只归属，不创建会话） | 写 | F04 切片 A |
+
+- `BOARD_ENDPOINTS` 由 11 个增至 **12 个**；`BOARD_FAILURE_CODES` 仍为 **9 个**，不新增浏览器失败码；host-only `invalid-payload` 不发给浏览器。
+- 请求 `LinkConversationPayload { taskId: string; conversationId: string; requestId?: string }`；`requestId` 在 wire 上可选，任务入口 controller 每次入口生成并发送，只用于重试/诊断；host 以 `conversationId` 做幂等。
+- 成功值 `LinkConversationValue { taskId; conversationId; linkStatus: 'linked'|'already-linked' }`；`already-linked` 是成功，不重复写。
+- 失败值只有 `{ ok:false, code, message }`，**无结构化 details**；客户端自己保存 `conversationId`/`taskId` 用于重试。
+- 失败映射：缺字段/空值 → `invalid-input`；任务不存在 → `not-found`；所属项目未登记 → `unknown-project`；会话已归属其他任务 → `save-failed`（保留原归属，message 说明）；写入失败 → `save-failed`；结果未知 → `unknown-result`；host 能力未就绪 → `unavailable`。
+- **不存在 `conversation/create`**：会话由浏览器 `uiWorkspace.connectWorkspace(projectId)` 创建/复用，host 不创建 session，也不新增 `sessionController` accessor。
+
+### 11.2 host
+
+- `HostBoardPort` 增 `linkConversation(input, signal?)`；`HostLinkConversationInput/Success/Failure/Outcome` 定义在 `board-channel.ts`；handler 走既有四段式（parse → 校验 → port → 失败映射，永不全抛），解析失败返回 host-only `invalid-payload`。
+- `board-adapter.ts`：先 `workspaceRegistry()`/`deps.core()` 可用性检查，再 `preReadTask`（不存在 → `not-found`，读取异常 → `save-failed`）、任务所属项目登记检查（未登记 → `unknown-project`），最后调 `core.linkConversation`；`linked`/`already-linked`（含 `-outcome` 变体）成功，`rejected/unknown-scope` → `not-found`，`rejected/rebind-forbidden` → `save-failed` 并保留原归属，`rejected/invalid-input` → `invalid-input`，异常 → `unknown-result`/`save-failed`。
+- `delayed-board-port.ts`：host 未就绪时对 `linkConversation` 返回 `unavailable`。
+- 已知缺口：adapter 目前**只校验任务存在与项目登记**，归档/删除任务的拒绝尚未实现；不能把归档/删除任务当作可用。
+
+### 11.3 浏览器侧
+
+- `BoardSource.linkConversation(input)` 经 `channel-source` 调 `conversation/link`；本地校验 id 非空 → `invalid-input`，未知失败码归一为 `save-failed`，成功值/失败值解析失败 → `unknown-result`；无通道返回 `unavailable`，文案明确“会话本身未被创建或修改”。
+- `WorkspacePort { connectWorkspace(projectId): Promise<string>; openSession(conversationId): void }`；`uiWorkspace` 是可选服务，**不声明 `inject`**；`index.tsx` 先 `ctx.reflect?.get('uiWorkspace', false)`、再 `ctx.get?.('uiWorkspace')`（`745bec9` 修复顺序），两方法均为函数才装入 runtime，否则置空并让入口解释不可用，不伪造对话。
+- controller 的 `ConversationEntryState`：`phase`（connecting/linking/opening/opened/failed）、`step`（connect/link/open）、`conversationId`、`requestId`、`linkStatus`、`code`/`error`；项目入口 connect→open（不 link），任务入口 connect→link→open；每 scope 一个 entry，重复入口忽略；重试只补失败步骤；seq + scope 校验丢弃切换项目/关闭详情后的迟到响应；`dismiss` 仅 settled 可用。
+- UI 落点：项目区“新建对话（不关联任务）”（`data-aikanban-new-project-conversation`）、任务详情“新建对话（固定归属当前任务）”（`data-aikanban-task-new-conversation`）；有 entry 时显示进度/错误/重试/会话 id/收起，数据属性 `data-aikanban-conversation` 及 `-phase/-status/-error/-retry/-progress/-id/-dismiss`。文案与 F04-R03 分步补偿一致；失败不显示“已关联/已准备背景”。
+
+### 11.4 门禁与未完成项（2026-11-14 @ `745bec9`）
+
+- 全量测试 **505 passed**（core **80** / plugin-client **231** / plugin **194**）；`build`/`typecheck` `EXIT 0`；`verify-host-import` **11/11**（脚本实测；既有 12/12 口径待核对）；`probe-host` **5/5**。
+- `verify-rpc-roundtrip` 为 **37/37**，但工具的 `CONTRACT_ENDPOINTS` 仍是 **11 端点**（不含 `conversation/link`），因此**不覆盖 F04 新端点**；F04 的 HTTP 层证据来自 host 侧测试，不能写成“12 端点已真实 HTTP 覆盖”。
+- **未安装到真实 `desktop` profile、未因 F04 重启、未真实 GUI**；F04 的 AT-09—12、AT-15、AT-20、AT-36、AT-57、AT-92—94、AT-100、AT-101 全部待执行，联合 AT 需另行联合验收。
+- 本切片不做对话列表/搜索/继续任意既有对话/标题同步/F11 背景/F06 记录/F13 系统整理对话隔离/F17 来源降级；打开后的工作与背景由宿主/F11 承担。
+
+## 12. 参考
 
 - 产品规则：[F01 PRD](../prd/features/F01-project-and-tasks/prd.md)、[F02 PRD](../prd/features/F02-task-status-and-cards/prd.md)；现状盘点：[F01 implementation](../prd/features/F01-project-and-tasks/implementation.md)、[F02 implementation](../prd/features/F02-task-status-and-cards/implementation.md)
 - core 契约：[packages/core/README.md](../../packages/core/README.md)（F01 契约 `:177`、F02 契约 `:276`、PRD 对照 `:338-353`）

@@ -2,7 +2,7 @@
 
 > **性质**：本文是 F03「手动维护任务概况与项目总览」在 S1 的**实现记录**，不是验收记录。它记录实际提交的契约、落点、门禁与仍未验证项；任何 AT 结论以未来 `verification.md` 的真实证据为准。
 >
-> **证据边界（2026-11-13，HEAD `58c7c69`）**：F03 的代码与门禁层已实现，提交为 `79e0fa2`（core/wire/host）、`973ee67`（client UI）与 `58c7c69`（R02 即时刷新修复），全量测试 462 passed（core 80 / plugin-client 205 / plugin 177），`typecheck`/`build` `EXIT 0`，`verify-host-import` 12/12，`probe-host` 5/5；`verify-rpc-roundtrip` 28/28 但**只覆盖 8 端点/9 码，不覆盖 F03**。F03 **已于 2026-11-13 安装到真实 `desktop` profile 并因 F03 重启三次**；真实 GUI 已执行 AT-26（任务概况保存/版本/重启保留，通过）与 AT-44（项目总览保存/版本/重启保留，部分执行）；R02 保存后卡片/详情不即时刷新的缺陷已修复并复验；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收。逐条结论见 [verification.md](verification.md)，[交付状态](../../../delivery/status.md)记 F03「进行中 / 部分执行」。F01/F02 仍为部分执行，本文不借用其未执行 AT 作为 F03 结论。
+> **证据边界（2026-11-13，HEAD `58c7c69`）**：F03 的代码与门禁层已实现，提交为 `79e0fa2`（core/wire/host）、`973ee67`（client UI）与 `58c7c69`（R02 即时刷新修复），全量测试 462 passed（core 80 / plugin-client 205 / plugin 177），`typecheck`/`build` `EXIT 0`，`verify-host-import` 12/12，`probe-host` 5/5；`verify-rpc-roundtrip` **37/37**，覆盖 **11 端点/9 码**（含 F03 三端点）。F03 **已于 2026-11-13 安装到真实 `desktop` profile 并因 F03 重启三次**；真实 GUI 已执行 AT-26（任务概况保存/版本/重启保留，通过）与 AT-44（2026-11-14 在空项目 `GroupAssignment-integration` 保存第 1 版项目总览，通过）；R02 保存后卡片/详情不即时刷新的缺陷已修复并复验；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收。逐条结论见 [verification.md](verification.md)，[交付状态](../../../delivery/status.md)记 F03「进行中 / 部分执行」。F01/F02 仍为部分执行，本文不借用其未执行 AT 作为 F03 结论。
 >
 > **与计划初稿的关系**：本文在 2026-11-13 早先有一版设计/实施计划初稿；现按实际提交改写为实现记录。主要差异是：UI 没有采用计划中的「进展/决策/问题/下一步」多段表单，而是使用**单 section 文本**（`id: 'manual'`，标题「任务概况」/「项目总览」）；wire 端点、结果形状与 client 状态以实际代码为准，见 §2.1。
 
@@ -237,7 +237,7 @@ F03 相关测试文件：`packages/core/test/f03-manual-summary.test.ts`、`pack
 ## 8. 仍未验证与风险
 
 - **安装与真实 GUI**：2026-11-13 已用 `tools/install-to-profile.mjs` 安装 F03 构建（首次 client SHA256 `15DC8705…`、82541 B），并三次完全退出/重开 DSH（前两次为首次安装与保存验证，第三次为 R02 修复后复验）；R02 修复后以 client SHA256 `48661F59…`、83372 B 第三次安装/重启复验。AT-26/44 已在真实 GUI 执行；R02 即时刷新已复验。安装后未再出现 web-boot 崩溃，回滚包在 `C:\Users\InformationDS\aikanban-profile-backup-20261113` 与 `...-2`。
-- **AT 仅部分执行**：AT-26 S1 通过、AT-44 部分执行；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收；逐条见 [verification.md](verification.md)。不得把本文或 §7 的测试/门禁写成验收通过。
+- **AT 仅部分执行**：AT-26 S1、AT-44 通过；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收；逐条见 [verification.md](verification.md)。不得把本文或 §7 的测试/门禁写成验收通过。
 - **联合场景未实现**：F06 记录、F09 结论修正、F10 历史恢复、F13 成果、F18 故障注入均不在本切片；AT-27/29/45/67 需联合验收；AT-49 需关闭 AI 并具备已登记的失败注入开关，当前未执行。
 - **R02 即时刷新缺陷（已修复）**：曾出现保存任务概况成功后任务卡/详情顶部仍显示旧内容、切换项目或重启后才更新；storage/版本历史正确。2026-11-13 由 `58c7c69` 在 controller 保存成功路径回写 `summaryProgress` 修复；真实 GUI 第三次重启后保存第 2 版，未切项目、未重启即更新；证据 `docs/evidence/2026-11-13-f03/at26-r02-immediate.png` 与 `at26-r02-immediate-state.txt`。
 - **草稿生命周期缺口**：无自动保存/debounce、关闭丢弃内存输入、无放弃草稿入口；这与 F03-R07「离开/重启恢复可用草稿」仍有距离，需在真实 GUI 与后续实现中核实/补齐。

@@ -1,0 +1,19 @@
+AT-44 empty project overview evidence
+capturedAt=2026-11-14T08:09:51.873Z
+projectKey=scope1_project_0c29208a-2d-6fb6-2d-4712-2d-b79c-2d-b57721c72886
+projectId=0c29208a-6fb6-4712-b79c-b57721c72886
+projectTitle=GroupAssignment-integration
+projectPath=D:\BaiduSyncdisk\UNSW\INFS5706\GroupAssignment-integration
+taskCount=0
+projectRecordKeys=0
+projectOverviewCurrent=v1_projectOverview_0c29208a-2d-6fb6-2d-4712-2d-b79c-2d-b57721c72886_op-2d-mwg4k1g9-2d-1
+versionId=v1_projectOverview_0c29208a-2d-6fb6-2d-4712-2d-b79c-2d-b57721c72886_op-2d-mwg4k1g9-2d-1
+seq=1
+origin=user
+generator=manual
+changeKind=created
+confirmedAt=11/14/2026 08:09:51
+contentLines=AT-44 空项目项目总览（2026-11-14）。 | 目标：在首个任务完成前保存项目总览。 | 约定：不生成任务记录、成果或虚构进度。
+activity=project-registered,summary-saved
+linksConversations=0
+linksOutcomeTasks=0

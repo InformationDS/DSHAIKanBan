@@ -1,0 +1,7 @@
+ControlType.Text | 项目总览 | 2943,258 61x21
+ControlType.Edit | 项目总览 | 2943,308 1420x127
+ControlType.Button | 保存草稿 | 2943,449 86x29
+ControlType.Text | 概况保存结果未知：EPERM: operation not permitted, rename 'C:\Users\InformationDS\.dsh\storages\.79d798b0-2a03-4c3e-8a1c-072dbfc68980.tmp' -> 'C:\Users\InformationDS\.dsh\storages\aikanban_core.json'；请先核对当前正式状态，不要重复提交。 | 2943,520 1413x45
+ControlType.Button | 收起项目总览 | 2943,628 120x29
+ControlType.Text | 概况保存结果未知：EPERM: operation not permitted, rename 'C:\Users\InformationDS\.dsh\storages\.79d798b0-2a03-4c3e-8a1c-072dbfc68980.tmp' -> 'C:\Users\InformationDS\.dsh\storages\aikanban_core.json'；请先核对当前正式状态，不要重复提交。 | 2943,822 1089x51
+ControlType.Button | 重试 | 3683,847 53x29

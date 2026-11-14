@@ -239,7 +239,7 @@ git -C $BOX checkout --detach <commit-or-branch>
 
 **更新（2026-11-12 GUI 反馈修复 @ `1502a15`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **363 passed**（`packages/core` **66** / `packages/plugin-client` **152** / `packages/plugin` **145**）；client bundle 58.23 kB。修复活动历史按钮重复（同级 key 冲突）与空列/拖放（drop 目标移到整列、空 body minHeight、drag ref + dataTransfer）。**该修复版已于 2026-11-12 安装并重启到真实 profile**；profile `client.js`（58231B，SHA256 `5B108FE9…`）与 p6c 构建一致。真实 GUI 已验证创建/两次状态流转/活动/字段编辑/撤销/列内重排/阻塞/完成/取消/重开；失败草稿/重启、拖拽、键盘、故障注入仍未验证。
 
-**更新（2026-11-13 F03 手动概况/项目总览 @ `79e0fa2` + `973ee67` + `58c7c69`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **462 passed**（`packages/core` **80** / `packages/plugin-client` **205** / `packages/plugin` **177**）；`verify-host-import` **12/12**、`probe-host` **5/5**，`verify-rpc-roundtrip` 为 **37/37**，覆盖 **11 端点/9 码**（含 `summary/read`、`summary/save`、`summary/draft.save`）。F03 已安装到真实 profile、因 F03 重启三次，真实 GUI 的 AT-26（通过）与 AT-44（2026-11-14 空项目补测，通过）；R02 保存后卡片不即时刷新缺陷已由 `58c7c69` 修复并复验；AT-49、联合 AT 待执行/待联合验收，不能写成已验收。
+**更新（2026-11-13 F03 手动概况/项目总览 @ `79e0fa2` + `973ee67` + `58c7c69`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **462 passed**（`packages/core` **80** / `packages/plugin-client` **205** / `packages/plugin` **177**）；`verify-host-import` **12/12**、`probe-host` **5/5**，`verify-rpc-roundtrip` 为 **37/37**，覆盖 **11 端点/9 码**（含 `summary/read`、`summary/save`、`summary/draft.save`）。F03 已安装到真实 profile、因 F03 重启三次，真实 GUI 的 AT-26（通过）与 AT-44（2026-11-14 空项目补测，通过）；R02 保存后卡片不即时刷新缺陷已由 `58c7c69` 修复并复验；AT-49 部分执行（探索性失败观察，非隔离注入不计通过）、联合 AT 待执行/待联合验收，不能写成已验收。
 
 ### 10.4 仍然禁止 / 仍然需要人
 

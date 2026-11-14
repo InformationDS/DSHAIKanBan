@@ -1,0 +1,49 @@
+{
+  "fileSHA256": "E98BA205F84E48FC4694F4970243C7ACB5E66F97FC32965A0AE9E0E323505CB2",
+  "revision": 2,
+  "versionCount": 2,
+  "versions": [
+    {
+      "seq": 1,
+      "versionId": "v1_projectOverview_0c29208a-2d-6fb6-2d-4712-2d-b79c-2d-b57721c72886_op-2d-mwg4k1g9-2d-1",
+      "changeKind": "created",
+      "origin": "user",
+      "generator": "manual",
+      "confirmedAt": "2026-11-14T08:09:51.873Z",
+      "body": "AT-44 空项目项目总览（2026-11-14）。\n目标：在首个任务完成前保存项目总览。\n约定：不生成任务记录、成果或虚构进度。"
+    },
+    {
+      "seq": 2,
+      "versionId": "v1_projectOverview_0c29208a-2d-6fb6-2d-4712-2d-b79c-2d-b57721c72886_op-2d-mwg5fezf-2d-4",
+      "changeKind": "modified",
+      "origin": "user",
+      "generator": "manual",
+      "confirmedAt": "2026-11-14T08:34:06.506Z",
+      "body": "AT-49 故障注入验收：保存失败后输入保留，重试只产生一次版本。\n基线：2026-11-14 空项目总览。"
+    }
+  ],
+  "summarySavedActivities": [
+    {
+      "activityId": "2026-11-14T08:09:51.873Z#2",
+      "at": "2026-11-14T08:09:51.873Z",
+      "details": {
+        "updateId": "op-mwg4k1g9-1",
+        "versionId": "v1_projectOverview_0c29208a-2d-6fb6-2d-4712-2d-b79c-2d-b57721c72886_op-2d-mwg4k1g9-2d-1",
+        "revision": "1",
+        "changeKind": "created",
+        "generator": "manual"
+      }
+    },
+    {
+      "activityId": "2026-11-14T08:34:06.506Z#3",
+      "at": "2026-11-14T08:34:06.506Z",
+      "details": {
+        "updateId": "op-mwg5fezf-4",
+        "versionId": "v1_projectOverview_0c29208a-2d-6fb6-2d-4712-2d-b79c-2d-b57721c72886_op-2d-mwg5fezf-2d-4",
+        "revision": "2",
+        "changeKind": "modified",
+        "generator": "manual"
+      }
+    }
+  ]
+}

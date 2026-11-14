@@ -4193,7 +4193,7 @@ node tools/install-to-profile.mjs --restore-latest
 
 - HEAD `973ee67 feat(f03): add task summary and project overview UI`；前一提交 `79e0fa2 feat(f03): add manual summary core, wire and host API`；再前 `53a7732 docs(acceptance): record post-restart F01/F02 AT evidence`。工作区代码干净，仅有一份未跟踪的 F03 文档初稿（本次已改写为功能实现记录）。
 - `79e0fa2` 覆盖 core（类型、`readSummary`/`saveManualSummary`）、wire（三端点）与 host（适配器、channel、延迟端口）；`973ee67` 覆盖 client（source/channel-source/controller/model/board UI）与对应测试；`58c7c69` 修复保存后卡片/详情即时刷新。
-- **边界**：F03 的代码与门禁层已实现（`79e0fa2` + `973ee67` + `58c7c69`）；2026-11-13 已安装到真实 `desktop` profile，并因 F03 三次完全退出/重开 DSH。真实 GUI 已执行 AT-26 S1（任务概况编辑/预览/保存/版本/重启保留，**通过（真实操作）**）与 AT-44（空项目总览保存/版本保留，**通过（真实操作）**，2026-11-14 补测）；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收。逐条见 `docs/prd/features/F03-manual-summaries/verification.md`；F01/F02 仍是部分执行，本文不改其口径。
+- **边界**：F03 的代码与门禁层已实现（`79e0fa2` + `973ee67` + `58c7c69`）；2026-11-13 已安装到真实 `desktop` profile，并因 F03 三次完全退出/重开 DSH。真实 GUI 已执行 AT-26 S1（任务概况编辑/预览/保存/版本/重启保留，**通过（真实操作）**）与 AT-44（空项目总览保存/版本保留，**通过（真实操作）**，2026-11-14 补测）；AT-49 部分执行（探索性失败观察，非隔离注入不计通过）；AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收。逐条见 `docs/prd/features/F03-manual-summaries/verification.md`；F01/F02 仍是部分执行，本文不改其口径。
 - **安装事实**：备份 `C:\Users\InformationDS\aikanban-profile-backup-20261113`，preflight verify-host-import 11/11、probe-host 5/5，安装/稳定负载 `lib/client.js` SHA256 `15DC8705360FF2C18E0A5DE7253256FAD909F35C77402C3966C7DF7F8177AF30`（82541 B）；首次 GUI `http://127.0.0.1:3640`（activation `mwe9oozd-1`），第二次 `http://127.0.0.1:1120`（activation `mwecj5mu-1`），R02 修复后第三次 `http://127.0.0.1:14721`（activation `mwedgglm-1`）；安装后无 web-boot/宿主崩溃。R02 修复构建 `lib/client.js` SHA256 `48661F59…`、83372 B，备份 `...-20261113-2`。
 
 ### 21.2 core 契约与实现
@@ -4243,7 +4243,7 @@ F03 相关测试：`packages/core/test/f03-manual-summary.test.ts`、`packages/p
 ### 21.7 真实 GUI、未验证与风险
 
 - **已安装/已重启/真实 GUI 已执行**：2026-11-13 已安装 F03 构建并重启三次（首次 `15DC8705…`；R02 修复后 `48661F59…`、83372 B）；真实 GUI 已出现「项目总览」「编辑概况」，AT-26 S1、AT-44 通过；R02 即时刷新已复验。
-- **AT 仅部分执行**：AT-26 S1、AT-44 通过；AT-49、AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收；逐条见 F03 `verification.md`；不得把 §21.6 写成验收通过。
+- **AT 仅部分执行**：AT-26 S1、AT-44 通过；AT-49 部分执行（探索性失败观察，非隔离注入不计通过）；AT-26 联合、AT-27/29/45/67 仍待执行/待联合验收；逐条见 F03 `verification.md`；不得把 §21.6 写成验收通过。
 - **联合场景未实现**：F06 记录、F09 结论修正、F10 历史恢复、F13 成果、F18 故障注入不在本切片；联合 AT 需另行验收。
 - **R02 即时刷新缺陷（已修复）**：曾出现保存任务概况成功后任务卡与详情顶部仍显示旧 `summaryProgress`、切换项目/重启后才恢复；storage/版本历史正确。2026-11-13 由 `58c7c69` 在 controller 保存成功路径回写 `summaryProgress` 修复；真实 GUI 第三次重启后保存第 2 版，未切项目、未重启即更新。
 - **草稿生命周期缺口**：无自动保存、关闭丢内存输入、无放弃草稿入口，与 F03-R07 的“离开/重启恢复可用草稿”仍有距离，需真实 GUI 与后续实现核实。

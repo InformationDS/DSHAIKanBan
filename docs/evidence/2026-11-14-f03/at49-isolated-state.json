@@ -1,0 +1,148 @@
+{
+  "unit": {
+    "name": "aikanban_core",
+    "version": 1
+  },
+  "global": null,
+  "tables": {
+    "scope_state": {
+      "scope1_project_4929e3fa-2d-c830-2d-4895-2d-9447-2d-2f2f62731d0c": {
+        "schemaVersion": 1,
+        "scope": {
+          "kind": "project",
+          "id": "4929e3fa-c830-4895-9447-2f2f62731d0c"
+        },
+        "revision": 1,
+        "applicabilityRevision": 0,
+        "lastCommittedUpdateId": "op-mwg67gu8-2",
+        "lastConfirmedAt": "2026-11-14T08:55:46.177Z",
+        "links": {
+          "conversations": {},
+          "outcomeTasks": {}
+        },
+        "current": {
+          "taskRecord": {},
+          "taskSummary": {},
+          "projectRecord": {},
+          "projectOverview": {
+            "4929e3fa-c830-4895-9447-2f2f62731d0c": "v1_projectOverview_4929e3fa-2d-c830-2d-4895-2d-9447-2d-2f2f62731d0c_op-2d-mwg67gu8-2d-2"
+          }
+        },
+        "chains": {
+          "taskRecord": {},
+          "taskSummary": {},
+          "projectRecord": {},
+          "projectOverview": {
+            "4929e3fa-c830-4895-9447-2f2f62731d0c": [
+              {
+                "versionId": "v1_projectOverview_4929e3fa-2d-c830-2d-4895-2d-9447-2d-2f2f62731d0c_op-2d-mwg67gu8-2d-2",
+                "objectKind": "projectOverview",
+                "objectId": "4929e3fa-c830-4895-9447-2f2f62731d0c",
+                "scopeKind": "project",
+                "scopeId": "4929e3fa-c830-4895-9447-2f2f62731d0c",
+                "seq": 1,
+                "updateId": "op-mwg67gu8-2",
+                "confirmedAt": "2026-11-14T08:55:46.177Z",
+                "previousVersionId": null,
+                "origin": "user",
+                "source": {
+                  "generator": "manual",
+                  "projectId": "4929e3fa-c830-4895-9447-2f2f62731d0c"
+                },
+                "readSourceVersionIds": [],
+                "coveredStage": null,
+                "aiDraft": null,
+                "userResult": null,
+                "changeKind": "created",
+                "content": {
+                  "sections": [
+                    {
+                      "id": "manual",
+                      "title": "项目总览",
+                      "body": "AT-49 隔离故障注入验收：保存失败后输入保留，重试只产生一次版本。\n基线：2026-11-14 隔离空项目。"
+                    }
+                  ],
+                  "conclusions": []
+                },
+                "revision": 1,
+                "applicabilityRevision": 0,
+                "restoredFrom": null
+              }
+            ]
+          }
+        },
+        "amendments": [],
+        "recheck": {
+          "taskSummary": {
+            "pending": false,
+            "reasons": [],
+            "markedAt": null
+          },
+          "projectOverview": {
+            "pending": false,
+            "reasons": [],
+            "markedAt": null
+          }
+        },
+        "activity": [
+          {
+            "activityId": "2026-11-14T08:53:12.153Z#1",
+            "at": "2026-11-14T08:53:12.153Z",
+            "scopeKind": "project",
+            "scopeId": "4929e3fa-c830-4895-9447-2f2f62731d0c",
+            "code": "project-registered",
+            "summary": "项目已登记：at49-workspace",
+            "details": {
+              "projectId": "4929e3fa-c830-4895-9447-2f2f62731d0c",
+              "path": "C:\\Users\\InformationDS\\aikanban-evidence\\at49-workspace",
+              "title": "at49-workspace"
+            }
+          },
+          {
+            "activityId": "2026-11-14T08:55:46.177Z#2",
+            "at": "2026-11-14T08:55:46.177Z",
+            "scopeKind": "project",
+            "scopeId": "4929e3fa-c830-4895-9447-2f2f62731d0c",
+            "code": "summary-saved",
+            "summary": "已保存手动项目总览（第 1 次提交）",
+            "details": {
+              "updateId": "op-mwg67gu8-2",
+              "versionId": "v1_projectOverview_4929e3fa-2d-c830-2d-4895-2d-9447-2d-2f2f62731d0c_op-2d-mwg67gu8-2d-2",
+              "revision": "1",
+              "changeKind": "created",
+              "generator": "manual"
+            }
+          }
+        ],
+        "task": null,
+        "project": {
+          "title": "at49-workspace",
+          "path": "C:\\Users\\InformationDS\\aikanban-evidence\\at49-workspace",
+          "workScope": {
+            "availability": "unknown",
+            "detail": null,
+            "observedAt": null
+          },
+          "position": {
+            "selectedTaskId": null,
+            "view": null,
+            "updatedAt": null
+          },
+          "boardOrder": {
+            "todo": [],
+            "doing": [],
+            "blocked": [],
+            "done": [],
+            "cancelled": []
+          },
+          "orderRevision": 0,
+          "createdAt": "2026-11-14T08:53:12.153Z",
+          "updatedAt": "2026-11-14T08:53:12.153Z"
+        },
+        "createdAt": "2026-11-14T08:53:12.153Z",
+        "updatedAt": "2026-11-14T08:55:46.177Z"
+      }
+    },
+    "drafts": {}
+  }
+}

@@ -1,0 +1,35 @@
+AT-49 isolated failure-injection run (2026-11-14)
+
+Environment
+- Isolated DSH_HOME: C:\Users\InformationDS\aikanban-evidence\at49-dsh-home
+- Isolated profile: at49
+- Isolated web port: 19099
+- Browser: headful Chrome, CDP port 9224
+- AI provider: no API key configured (onboarding "稍后配置"); no AI call made
+- Project: at49-workspace (id 4929e3fa-c830-4895-9447-2f2f62731d0c)
+- Storage: C:\Users\InformationDS\aikanban-evidence\at49-dsh-home\storages\aikanban_core.json
+- Injection hook: storage-file-lock (manual, test-only, default off)
+  - PowerShell process opened the storage file with FileShare.None and held it.
+  - The lock was released before retry.
+
+Failure
+- Clicked "确认保存" while the storage file was exclusively locked.
+- UI message: "概况保存结果未知：EPERM: operation not permitted, rename 'C:\Users\InformationDS\aikanban-evidence\at49-dsh-home\storages\.f21d4078-1314-4428-ac8f-b986196a3958.tmp' -> 'C:\Users\InformationDS\aikanban-evidence\at49-dsh-home\storages\aikanban_core.json'；请先核对当前正式状态，不要重复提交。"
+- The two-line editor input remained unchanged after the failure.
+- Storage remained at revision 0; no projectOverview version; activity count 1 (project-registered only).
+
+Retry
+- Clicked "重试": UI message "已重新读取概况基线，未保存的输入已保留。" and did not auto-save.
+- Clicked "预览修改" then "确认保存" after releasing the lock.
+- Success message: "概况已保存（第 1 版）".
+- versionId: v1_projectOverview_4929e3fa-2d-c830-2d-4895-2d-9447-2d-2f2f62731d0c_op-2d-mwg67gu8-2d-2
+- seq: 1; origin: user; source.generator: manual; changeKind: created
+- confirmedAt: 2026-11-14T08:55:46.177Z
+- revision: 1; lastCommittedUpdateId: op-mwg67gu8-2
+- activity count 2: project-registered + one summary-saved (updateId op-mwg67gu8-2, revision 1)
+- versionCount: 1; no duplicate version, no half-written state.
+
+Evidence
+- at49-isolated-failure.png
+- at49-isolated-retry-success.png
+- at49-isolated-state.json (post-retry storage)

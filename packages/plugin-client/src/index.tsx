@@ -328,7 +328,7 @@ export function apply(ctx: ClientContext): () => void {
     // The workspace service is optional: probe it, never declare it. The port is
     // installed on the runtime so the controller can inject it; when absent the
     // conversation entry fails with one readable sentence and creates nothing.
-    const workspace = ctx.get?.('uiWorkspace') ?? ctx.reflect?.get('uiWorkspace', false)
+    const workspace = ctx.reflect?.get('uiWorkspace', false) ?? ctx.get?.('uiWorkspace')
     if (isWorkspaceLike(workspace)) {
       setWorkspacePort({
         connectWorkspace: (projectId) => workspace.connectWorkspace(projectId),

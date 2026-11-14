@@ -20,6 +20,7 @@
  */
 
 import { createBoardController, type BoardController, type WorkspacePort } from './controller.js'
+import { CONVERSATION_UNAVAILABLE_TEXT } from './model.js'
 import { createUnavailableBoardSource, type BoardSource } from './source.js'
 
 /** Reason shown when the plugin never found the connection service. */
@@ -29,6 +30,48 @@ let currentSource: BoardSource = createUnavailableBoardSource(NO_CONNECTION_DETA
 let currentController: BoardController | null = null
 /** The optional browser workspace service (`uiWorkspace`), when present. */
 let currentWorkspace: WorkspacePort | null = null
+/** A late-bound resolver for `uiWorkspace`; probed on use, never only at apply(). */
+let currentWorkspaceResolver: (() => WorkspacePort | null) | null = null
+
+/**
+ * Resolve the workspace port now. A resolver is deliberately consulted on every
+ * use: `uiWorkspace` is a client service that can be bound after this plugin's
+ * `apply()` runs, so a one-shot probe would pin the conversation entry to
+ * "unavailable" for the rest of the session.
+ *
+ * @returns the current port, or null when no service is reachable yet.
+ */
+function resolveWorkspacePort(): WorkspacePort | null {
+  const resolved = currentWorkspaceResolver?.()
+  if (resolved !== null && resolved !== undefined) {
+    currentWorkspace = resolved
+    return resolved
+  }
+  return currentWorkspace
+}
+
+/**
+ * Build a port whose two calls resolve the service at call time. This keeps the
+ * controller's existing `workspace === null` check meaningful for a genuinely
+ * unavailable composition while allowing a late-bound service to start working
+ * without recreating the panel.
+ *
+ * @returns a call-time workspace port.
+ */
+function createLazyWorkspacePort(): WorkspacePort {
+  return {
+    connectWorkspace(projectId) {
+      const workspace = resolveWorkspacePort()
+      if (workspace === null) return Promise.reject(new Error(CONVERSATION_UNAVAILABLE_TEXT))
+      return workspace.connectWorkspace(projectId)
+    },
+    openSession(conversationId) {
+      const workspace = resolveWorkspacePort()
+      if (workspace === null) throw new Error(CONVERSATION_UNAVAILABLE_TEXT)
+      workspace.openSession(conversationId)
+    },
+  }
+}
 
 /**
  * Install the data source. Drops the controller so the next panel mount reads
@@ -59,6 +102,21 @@ export function getBoardSource(): BoardSource {
  */
 export function setWorkspacePort(workspace: WorkspacePort | null): void {
   currentWorkspace = workspace
+  currentWorkspaceResolver = null
+  currentController = null
+}
+
+/**
+ * Install a late-bound workspace resolver. Unlike {@link setWorkspacePort}, the
+ * callback is invoked on every conversation-entry use, so a service bound after
+ * `apply()` still becomes reachable. Passing null stops resolving and drops the
+ * controller.
+ *
+ * @param resolver - the resolver, or null to clear it.
+ */
+export function setWorkspaceResolver(resolver: (() => WorkspacePort | null) | null): void {
+  currentWorkspaceResolver = resolver
+  currentWorkspace = null
   currentController = null
 }
 
@@ -68,7 +126,7 @@ export function setWorkspacePort(workspace: WorkspacePort | null): void {
  * @returns the port, or null.
  */
 export function getWorkspacePort(): WorkspacePort | null {
-  return currentWorkspace
+  return resolveWorkspacePort()
 }
 
 /**
@@ -82,7 +140,8 @@ export function getWorkspacePort(): WorkspacePort | null {
  * @returns the controller bound to the installed source.
  */
 export function getBoardController(): BoardController {
-  currentController ??= createBoardController({ source: currentSource, workspace: currentWorkspace })
+  const workspace = currentWorkspaceResolver === null ? currentWorkspace : createLazyWorkspacePort()
+  currentController ??= createBoardController({ source: currentSource, workspace })
   return currentController
 }
 
@@ -103,4 +162,5 @@ export function resetBoardRuntime(): void {
   currentSource = createUnavailableBoardSource(NO_CONNECTION_DETAIL)
   currentController = null
   currentWorkspace = null
+  currentWorkspaceResolver = null
 }

@@ -65,7 +65,7 @@ import { createElement, type ReactNode } from 'react'
 
 import { boardPanel } from './board.js'
 import { createChannelBoardSource, isConnectionLike } from './channel-source.js'
-import { NO_CONNECTION_DETAIL, setBoardSource, setWorkspacePort } from './runtime.js'
+import { NO_CONNECTION_DETAIL, setBoardSource, setWorkspaceResolver } from './runtime.js'
 import { createUnavailableBoardSource } from './source.js'
 import { BOARD_CHANNEL } from './wire.js'
 
@@ -155,6 +155,26 @@ export function isWorkspaceLike(value: unknown): value is UiWorkspaceLike {
   if (typeof value !== 'object' || value === null) return false
   const candidate = value as { connectWorkspace?: unknown; openSession?: unknown }
   return typeof candidate.connectWorkspace === 'function' && typeof candidate.openSession === 'function'
+}
+
+/**
+ * Probe the optional `uiWorkspace` service at call time.
+ *
+ * The service is bound by the client shell and can arrive after this plugin's
+ * `apply()` has run. Probing once at apply pins the conversation entry to
+ * "unavailable" even though the service later exists, so the runtime keeps a
+ * resolver and calls this on every entry instead.
+ *
+ * @param ctx - the browser plugin context.
+ * @returns the service, or null when it is not reachable yet.
+ */
+export function probeWorkspace(ctx: ClientContext): UiWorkspaceLike | null {
+  try {
+    const workspace = ctx.reflect?.get('uiWorkspace', false) ?? ctx.get?.('uiWorkspace')
+    return isWorkspaceLike(workspace) ? workspace : null
+  } catch {
+    return null
+  }
 }
 
 /** The browser context surface this plugin touches. */
@@ -325,20 +345,24 @@ export function apply(ctx: ClientContext): () => void {
       ctx.logger?.info(`[aikanban] active (client half) transport=unavailable (${NO_CONNECTION_DETAIL})`)
     }
 
-    // The workspace service is optional: probe it, never declare it. The port is
-    // installed on the runtime so the controller can inject it; when absent the
-    // conversation entry fails with one readable sentence and creates nothing.
-    const workspace = ctx.reflect?.get('uiWorkspace', false) ?? ctx.get?.('uiWorkspace')
-    if (isWorkspaceLike(workspace)) {
-      setWorkspacePort({
+    // The workspace service is optional and can be bound after apply(): keep a
+    // resolver instead of a one-shot port. Each conversation entry probes again,
+    // so a late service becomes usable without remounting the panel; a genuinely
+    // absent service still fails visibly and creates nothing.
+    let announcedWorkspace = false
+    setWorkspaceResolver(() => {
+      const workspace = probeWorkspace(ctx)
+      if (workspace === null) return null
+      if (!announcedWorkspace) {
+        announcedWorkspace = true
+        ctx.logger?.info('[aikanban] uiWorkspace available: conversation entry enabled')
+      }
+      return {
         connectWorkspace: (projectId) => workspace.connectWorkspace(projectId),
         openSession: (conversationId) => workspace.openSession(conversationId),
-      })
-      ctx.logger?.info('[aikanban] uiWorkspace available: conversation entry enabled')
-    } else {
-      setWorkspacePort(null)
-      ctx.logger?.info('[aikanban] uiWorkspace unavailable: conversation entry explains itself')
-    }
+      }
+    })
+    ctx.logger?.info('[aikanban] uiWorkspace probe deferred: conversation entry resolves on use')
 
     const dispose = registerSlots(ctx)
     ctx.logger?.info(

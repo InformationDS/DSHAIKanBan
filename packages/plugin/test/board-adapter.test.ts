@@ -2472,3 +2472,165 @@ describe('summary/draft.save: the manual candidate never becomes a version (F03-
     expect(failureOf(result).code).toBe('unavailable')
   })
 })
+
+describe('F04 conversation/link attribution', () => {
+  it('attributes the browser conversation to a task and reports it as linked', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+
+    const result = successOf(await harness.handler('conversation/link', { taskId, conversationId: 'conv-1' }, SIGNAL))
+
+    expect(result).toEqual({ taskId, conversationId: 'conv-1', linkStatus: 'linked' })
+  })
+
+  it('treats a retry with the same conversation as already-linked, not a second conversation', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+
+    await harness.handler('conversation/link', { taskId, conversationId: 'conv-1' }, SIGNAL)
+    const retry = successOf(await harness.handler('conversation/link', { taskId, conversationId: 'conv-1' }, SIGNAL))
+
+    expect(retry).toEqual({ taskId, conversationId: 'conv-1', linkStatus: 'already-linked' })
+  })
+
+  it('refuses a conversation already owned by another task with save-failed and keeps the old owner', async () => {
+    const harness = createHarness()
+    const first = await seedProjectAndTask(harness, 'Task A', 'create-1')
+    const second = await seedTask(harness, 'create-2', 'Task B')
+    await harness.core.linkConversation({ taskId: first, conversationId: 'conv-shared' })
+
+    const failure = failureOf(
+      await harness.handler('conversation/link', { taskId: second, conversationId: 'conv-shared' }, SIGNAL),
+    )
+
+    expect(failure.code).toBe('save-failed')
+    expect(failure.message).toContain('原归属')
+    // The first owner still holds the conversation: a retry must not rebind it.
+    const retry = successOf(
+      await harness.handler('conversation/link', { taskId: first, conversationId: 'conv-shared' }, SIGNAL),
+    )
+    expect(retry).toEqual({ taskId: first, conversationId: 'conv-shared', linkStatus: 'already-linked' })
+  })
+
+  it('reports an unknown task as not-found and never writes attribution', async () => {
+    const harness = createHarness()
+    await seedProjectAndTask(harness)
+
+    const failure = failureOf(
+      await harness.handler('conversation/link', { taskId: 'task-missing', conversationId: 'conv-1' }, SIGNAL),
+    )
+
+    expect(failure.code).toBe('not-found')
+  })
+
+  it('reports a task whose project is no longer registered as unknown-project', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    harness.registry.remove('ws-1')
+
+    const failure = failureOf(await harness.handler('conversation/link', { taskId, conversationId: 'conv-1' }, SIGNAL))
+
+    expect(failure.code).toBe('unknown-project')
+  })
+
+  it('answers unavailable when the workspace registry service is missing', async () => {
+    const harness = createHarness({ registry: false })
+    const taskId = await seedProjectAndTask(harness)
+
+    const failure = failureOf(await harness.handler('conversation/link', { taskId, conversationId: 'conv-1' }, SIGNAL))
+
+    expect(failure.code).toBe('unavailable')
+    expect(failure.message).toContain('workspaceRegistry')
+  })
+
+  it('maps a throwing task pre-read to save-failed, without inventing a link', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const throwingRead = new Proxy(harness.core, {
+      get(target, property, receiver) {
+        if (property === 'readTask') {
+          return () => {
+            throw new Error('injected pre-read failure')
+          }
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const handler = createBoardChannelHandler(
+      createHostBoardPort({ core: () => throwingRead, workspaceRegistry: () => harness.registry.registry }),
+    )
+
+    const failure = failureOf(await handler('conversation/link', { taskId, conversationId: 'conv-1' }, SIGNAL))
+
+    expect(failure.code).toBe('save-failed')
+  })
+
+  it('maps a throwing core.linkConversation to unknown-result (verify before retrying)', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const throwingLink = new Proxy(harness.core, {
+      get(target, property, receiver) {
+        if (property === 'linkConversation') {
+          return async () => {
+            throw new Error('injected link failure')
+          }
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const handler = createBoardChannelHandler(
+      createHostBoardPort({ core: () => throwingLink, workspaceRegistry: () => harness.registry.registry }),
+    )
+
+    const failure = failureOf(await handler('conversation/link', { taskId, conversationId: 'conv-1' }, SIGNAL))
+
+    expect(failure.code).toBe('unknown-result')
+    expect(failure.message).toContain('不要重新创建会话')
+  })
+
+  it('maps a core unknown-scope race to not-found, and invalid-input to invalid-input', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+    const raced = new Proxy(harness.core, {
+      get(target, property, receiver) {
+        if (property === 'linkConversation') {
+          return async () => ({ status: 'rejected' as const, code: 'unknown-scope' as const, message: 'task vanished' })
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const racedHandler = createBoardChannelHandler(
+      createHostBoardPort({ core: () => raced, workspaceRegistry: () => harness.registry.registry }),
+    )
+    const missing = failureOf(await racedHandler('conversation/link', { taskId, conversationId: 'conv-1' }, SIGNAL))
+    expect(missing.code).toBe('not-found')
+
+    const refusing = new Proxy(harness.core, {
+      get(target, property, receiver) {
+        if (property === 'linkConversation') {
+          return async () => ({ status: 'rejected' as const, code: 'invalid-input' as const, message: 'bad address' })
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const refusingHandler = createBoardChannelHandler(
+      createHostBoardPort({ core: () => refusing, workspaceRegistry: () => harness.registry.registry }),
+    )
+    const refused = failureOf(await refusingHandler('conversation/link', { taskId, conversationId: 'conv-1' }, SIGNAL))
+    expect(refused.code).toBe('invalid-input')
+  })
+
+  it('refuses a malformed payload before the data layer and names the endpoint in unsupported calls', async () => {
+    const harness = createHarness()
+    const taskId = await seedProjectAndTask(harness)
+
+    const missingConversation = await harness.handler('conversation/link', { taskId }, SIGNAL)
+    expect(failureOf(missingConversation).code).toBe('invalid-payload')
+
+    const blankTask = await harness.handler('conversation/link', { taskId: '', conversationId: 'conv-1' }, SIGNAL)
+    expect(failureOf(blankTask).code).toBe('invalid-payload')
+
+    const supported = await harness.handler('board/nope', {}, SIGNAL)
+    expect(failureOf(supported).message).toContain('conversation/link')
+  })
+})

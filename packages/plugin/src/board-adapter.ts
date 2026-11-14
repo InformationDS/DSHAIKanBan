@@ -104,6 +104,8 @@ import type {
   HostBoardPort,
   HostCreateTaskInput,
   HostCreateTaskOutcome,
+  HostLinkConversationInput,
+  HostLinkConversationOutcome,
   HostProjectListOutcome,
   HostReadOutcome,
   HostReorderInput,
@@ -1430,6 +1432,102 @@ export function createHostBoardPort(deps: HostBoardAdapterDeps): HostBoardPort {
         }
       } catch (error) {
         return unknownResult(`撤销结果未知：${messageOf(error)}`)
+      }
+    },
+
+    /**
+     * Attribute an existing conversation to one task (F04-R01/R02/R03).
+     *
+     * The browser has already created or reused the blank conversation through
+     * the host's `uiWorkspace` client service; this path only writes the fixed
+     * task attribution. The task must exist (`not-found`) and its project must
+     * still be registered (`unknown-project`) before core sees the link, so a
+     * stale board can never attribute a conversation to a disappeared task.
+     *
+     * Idempotency comes from `conversationId`: a re-link of the same pair
+     * answers `already-linked` (a success), while a conversation already owned
+     * by another task is refused (`save-failed`) and keeps that attribution.
+     * Core owns the rebind prohibition; this adapter never rewrites links itself.
+     */
+    async linkConversation(input: HostLinkConversationInput): Promise<HostLinkConversationOutcome> {
+      try {
+        const registry = deps.workspaceRegistry()
+        if (registry === undefined) {
+          return {
+            ok: false,
+            code: 'unavailable',
+            message: '会话归属不可用：宿主的 workspaceRegistry 服务未绑定；未写入任何归属。',
+          }
+        }
+        const core = deps.core()
+        if (core === null) {
+          return { ok: false, code: 'unavailable', message: '数据层尚未就绪，任务归属未写入；会话本身未被创建或修改。' }
+        }
+        const pre = preReadTask(core, input.taskId)
+        if (!pre.ok) {
+          // A missing task is not-found; a read explosion is save-failed. Either
+          // way no attribution is written and no session is involved.
+          if (pre.outcome.ok) {
+            return { ok: false, code: 'save-failed', message: '读取任务状态失败；本次归属未写入，请先核对任务。' }
+          }
+          return { ok: false, code: pre.outcome.code, message: pre.outcome.message }
+        }
+        if (registry.get(pre.task.projectId) === undefined) {
+          return { ok: false, code: 'unknown-project', message: `任务 '${input.taskId}' 所属项目未登记；任务归属未写入。` }
+        }
+
+        let outcome: Awaited<ReturnType<KanbanCore['linkConversation']>>
+        try {
+          outcome = await core.linkConversation({ taskId: input.taskId, conversationId: input.conversationId })
+        } catch (error) {
+          return {
+            ok: false,
+            code: 'unknown-result',
+            message: `任务归属结果未知：${messageOf(error)}；请先核对会话归属，不要重新创建会话。`,
+          }
+        }
+
+        switch (outcome.status) {
+          case 'linked':
+            return { ok: true, taskId: input.taskId, conversationId: input.conversationId, linkStatus: 'linked' }
+          case 'already-linked':
+            return { ok: true, taskId: input.taskId, conversationId: input.conversationId, linkStatus: 'already-linked' }
+          case 'linked-outcome':
+            return { ok: true, taskId: input.taskId, conversationId: input.conversationId, linkStatus: 'linked' }
+          case 'already-linked-outcome':
+            return {
+              ok: true,
+              taskId: input.taskId,
+              conversationId: input.conversationId,
+              linkStatus: 'already-linked',
+            }
+          case 'rejected':
+            switch (outcome.code) {
+              case 'unknown-scope':
+                return { ok: false, code: 'not-found', message: `任务 '${input.taskId}' 不存在；任务归属未写入。` }
+              case 'rebind-forbidden':
+                return {
+                  ok: false,
+                  code: 'save-failed',
+                  message: `会话 '${input.conversationId}' 已归属其他任务，本次归属未写入；原归属保持不变。`,
+                }
+              case 'invalid-input':
+                return { ok: false, code: 'invalid-input', message: `任务归属被拒绝：${outcome.message}；未写入任何归属。` }
+            }
+            return { ok: false, code: 'save-failed', message: '任务归属被数据层拒绝；未写入任何归属。' }
+          default:
+            return {
+              ok: false,
+              code: 'unknown-result',
+              message: '任务归属结果未知；请先核对会话归属，不要重新创建会话。',
+            }
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'unknown-result',
+          message: `任务归属结果未知：${messageOf(error)}；请先核对会话归属，不要重新创建会话。`,
+        }
       }
     },
   }

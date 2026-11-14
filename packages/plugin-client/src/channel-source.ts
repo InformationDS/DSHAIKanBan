@@ -36,6 +36,8 @@ import type {
   CreateTaskInput,
   CreateTaskResult,
   FormalStatusValue,
+  LinkConversationInput,
+  LinkConversationResult,
   ManualSummaryDraftSaveInput,
   ManualSummarySaveInput,
   ProjectListResult,
@@ -60,6 +62,7 @@ import {
   parseCreateTaskFailureDetails,
   parseCreateTaskValue,
   parseFormalStatusValue,
+  parseLinkConversationValue,
   parseProjectListValue,
   parseSummaryDraftSaveValue,
   parseSummaryReadValue,
@@ -69,6 +72,7 @@ import {
   parseUpdateFieldsValue,
   type ActivityPayload,
   type CreateTaskPayload,
+  type LinkConversationPayload,
   type ProjectListPayload,
   type ReadBoardPayload,
   type ReorderPayload,
@@ -309,6 +313,56 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
       return { ok: false, code: 'unknown-result', message: `${MALFORMED_RESPONSE_MESSAGE}请先核对当前正式状态，不要重复提交。` }
     }
     return { ok: true, task: value.task, outcome: value.outcome, snapshot: value.snapshot }
+  }
+
+  /**
+   * Attribute a conversation the browser already created/reused to one task
+   * (F04-R02/R03).
+   *
+   * No session is created here: an empty task or conversation id is a caller
+   * bug and is refused locally. A host refusal is a known failure (the
+   * conversation itself still exists), while a malformed success value is
+   * `unknown-result` — the attribution must be verified before any retry, and
+   * the retry must never create a second conversation.
+   */
+  const linkConversation = async (input: LinkConversationInput): Promise<LinkConversationResult> => {
+    if (typeof input.taskId !== 'string' || input.taskId.length === 0) {
+      return { ok: false, code: 'invalid-input', message: '任务归属被拒绝：缺少任务 id；未写入任何归属。' }
+    }
+    if (typeof input.conversationId !== 'string' || input.conversationId.length === 0) {
+      return { ok: false, code: 'invalid-input', message: '任务归属被拒绝：缺少会话 id；未写入任何归属。' }
+    }
+    const payload: LinkConversationPayload = {
+      taskId: input.taskId,
+      conversationId: input.conversationId,
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+    }
+    let result: ConnectionRpcResultLike
+    try {
+      result = await call(BOARD_ENDPOINTS.conversationLink, payload)
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'unknown-result',
+        message: `任务归属结果未知，请先核对会话归属，不要重新创建会话。（${messageOf(error)}）`,
+      }
+    }
+    if (!result.ok) {
+      return {
+        ok: false,
+        code: isBoardFailureCode(result.error.code) ? result.error.code : 'save-failed',
+        message: result.error.message,
+      }
+    }
+    const value = parseLinkConversationValue(result.value)
+    if (value === null) {
+      return {
+        ok: false,
+        code: 'unknown-result',
+        message: `${MALFORMED_RESPONSE_MESSAGE}请先核对会话归属，不要重新创建会话。`,
+      }
+    }
+    return { ok: true, taskId: value.taskId, conversationId: value.conversationId, linkStatus: value.linkStatus }
   }
 
   /**
@@ -598,6 +652,7 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
       return write(BOARD_ENDPOINTS.undoStatusChange, payload)
     },
     createTask,
+    linkConversation,
     updateTaskFields,
     loadActivity,
     readSummary,

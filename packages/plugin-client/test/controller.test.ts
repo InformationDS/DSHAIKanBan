@@ -25,6 +25,8 @@ import type {
   CreateTaskInput,
   CreateTaskResult,
   FormalStatusValue,
+  LinkConversationInput,
+  LinkConversationResult,
   ManualSummaryDraftSaveInput,
   ManualSummarySaveInput,
   ProjectListResult,
@@ -179,6 +181,7 @@ interface FakeSource extends BoardSource {
   reorderCalls: ReorderInput[]
   undoCalls: UndoInput[]
   createCalls: CreateTaskInput[]
+  linkCalls: LinkConversationInput[]
   updateCalls: UpdateFieldsInput[]
   activityCalls: ActivityInput[]
   summaryReadCalls: SummaryScopeInput[]
@@ -187,6 +190,7 @@ interface FakeSource extends BoardSource {
   nextRead: BoardReadResult
   nextWrite: WriteResult
   nextCreate: CreateTaskResult
+  nextLink: LinkConversationResult
   nextUpdate: UpdateFieldsResult
   nextActivity: ActivityResult
   /** The next answer to `readSummary`; `null` lets the fake derive a view. */
@@ -215,6 +219,7 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
     reorderCalls: [],
     undoCalls: [],
     createCalls: [],
+    linkCalls: [],
     updateCalls: [],
     activityCalls: [],
     summaryReadCalls: [],
@@ -227,6 +232,12 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
       outcome: 'created',
       task: task('t3', 'todo', 0) as never,
       snapshot: snapshot() as never,
+    },
+    nextLink: {
+      ok: true,
+      taskId: 't1',
+      conversationId: 'conv-1',
+      linkStatus: 'linked',
     },
     nextUpdate: {
       ok: true,
@@ -298,6 +309,10 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
     async createTask(input) {
       source.createCalls.push(input)
       return source.nextCreate
+    },
+    async linkConversation(input) {
+      source.linkCalls.push(input)
+      return source.nextLink
     },
     async updateTaskFields(input) {
       source.updateCalls.push(input)

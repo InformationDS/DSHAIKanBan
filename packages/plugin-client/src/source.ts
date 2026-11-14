@@ -121,6 +121,27 @@ export interface CreateTaskInput {
 }
 
 /**
+ * One conversation entry (F04-R01/R02/R03).
+ *
+ * The browser creates or reuses the blank conversation through the host's
+ * `uiWorkspace` client service first; this input only asks for the fixed task
+ * attribution. `requestId` is the identity of the original entry intent (a
+ * double click reuses it), while idempotency of the attribution itself comes
+ * from `conversationId`: a re-link answers "already linked", never a second
+ * attribution (F04-R03).
+ *
+ * The project entry (no task) never sends this input — it only opens the blank
+ * conversation and must not create an implicit task attribution (F04-R01).
+ */
+export interface LinkConversationInput {
+  readonly taskId: string
+  /** The conversation the browser just created or reused. */
+  readonly conversationId: string
+  /** Identity of the conversation-entry intent; reused by a retry. */
+  readonly requestId?: string
+}
+
+/**
  * One substantive title/goal save (F01-R05/R06).
  *
  * Both baselines are required: the SAVE-05 rule is "save exactly the version the
@@ -276,6 +297,37 @@ export interface CreateTaskFailure {
 
 /** Result of creating one task. */
 export type CreateTaskResult = CreateTaskSuccess | CreateTaskFailure
+
+/**
+ * A conversation entry that completed its attribution (F04-R02).
+ *
+ * `already-linked` is the retry/double-click path and is a success: the same
+ * conversation points at this task, no second attribution was written.
+ */
+export interface LinkConversationSuccess {
+  readonly ok: true
+  readonly taskId: string
+  readonly conversationId: string
+  readonly linkStatus: 'linked' | 'already-linked'
+}
+
+/**
+ * A conversation entry whose task attribution did not land.
+ *
+ * The conversation itself may still exist (the browser creates it first); the
+ * failure therefore never claims "no conversation". The source reports the
+ * exact refusal: a missing task is `not-found`, a conversation owned by another
+ * task is `save-failed` (the old attribution is preserved), and an unknown
+ * result means "verify the attribution first, do not create a second session".
+ */
+export interface LinkConversationFailure {
+  readonly ok: false
+  readonly code: BoardFailureCode
+  readonly message: string
+}
+
+/** Result of attributing one conversation to a task. */
+export type LinkConversationResult = LinkConversationSuccess | LinkConversationFailure
 
 /**
  * A field save whose result is **known** (`saved` / `no-change` /
@@ -534,6 +586,18 @@ export interface BoardSource {
   createTask(input: CreateTaskInput): Promise<CreateTaskResult>
 
   /**
+   * Attribute a conversation the browser already created/reused to one task
+   * (F04-R02/R03).
+   *
+   * The host never creates a session here: the browser calls
+   * `uiWorkspace.connectWorkspace(projectId)` for the blank conversation, then
+   * this attribution, then `uiWorkspace.openSession(conversationId)`. A retry
+   * re-sends the same `conversationId` and succeeds as `already-linked`; a
+   * conversation owned by another task is refused and that attribution stays.
+   */
+  linkConversation(input: LinkConversationInput): Promise<LinkConversationResult>
+
+  /**
    * Save a task's title and/or goal under both SAVE-05 baselines
    * (F01-R05/R06). Never merges silently: a stale baseline is a failure with
    * the expected/actual baselines and the formal current status.
@@ -601,6 +665,9 @@ export const NO_CHANNEL_SUMMARY_SAVE_MESSAGE = '看板数据通道未接通：�
 /** Text shown when a manual draft save cannot be sent because no channel exists. */
 export const NO_CHANNEL_SUMMARY_DRAFT_MESSAGE = '看板数据通道未接通：无法保存概况草稿，正式内容未改变。'
 
+/** Text shown when a conversation attribution cannot be sent because no channel exists. */
+export const NO_CHANNEL_LINK_MESSAGE = '看板数据通道未接通：无法写入任务归属，会话本身未被创建或修改。'
+
 /**
  * A port with no transport behind it.
  *
@@ -621,6 +688,7 @@ export function createUnavailableBoardSource(detail: string): BoardSource {
     reorder: () => Promise.resolve(failure()),
     undoStatusChange: () => Promise.resolve(failure()),
     createTask: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_CREATE_MESSAGE }),
+    linkConversation: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_LINK_MESSAGE }),
     updateTaskFields: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_FIELDS_MESSAGE }),
     loadActivity: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_ACTIVITY_MESSAGE }),
     readSummary: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_SUMMARY_READ_MESSAGE }),

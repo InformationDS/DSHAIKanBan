@@ -50,6 +50,7 @@ import {
   parseActivityPayload,
   parseCreateTaskPayload,
   parseFieldsVersion,
+  parseLinkConversationPayload,
   parseProjectListPayload,
   parseReadBoardPayload,
   parseReorderPayload,
@@ -370,6 +371,38 @@ export interface HostSummaryDraftSaveFailure {
 /** Result of a host-side manual draft save. */
 export type HostSummaryDraftSaveOutcome = HostSummaryDraftSaveSuccess | HostSummaryDraftSaveFailure
 
+/** A `conversation/link` input after the handler validated its address. */
+export interface HostLinkConversationInput {
+  readonly taskId: string
+  readonly conversationId: string
+  /** Identity of the browser-side entry intent (diagnostics/retry correlation only). */
+  readonly requestId?: string
+}
+
+/**
+ * The conversation now points at this task. `linked` is this call's write;
+ * `already-linked` is the idempotent retry path — both are successes.
+ */
+export interface HostLinkConversationSuccess {
+  readonly ok: true
+  readonly taskId: string
+  readonly conversationId: string
+  readonly linkStatus: 'linked' | 'already-linked'
+}
+
+/**
+ * The attribution was refused or failed. This endpoint never creates a session,
+ * so a failure here leaves the browser-created conversation untouched.
+ */
+export interface HostLinkConversationFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+}
+
+/** Result of a host-side conversation attribution. */
+export type HostLinkConversationOutcome = HostLinkConversationSuccess | HostLinkConversationFailure
+
 /**
  * What the host half needs from the data layer. The core adapter implements it;
  * the payloads arrive already validated **and with the `ver1:` baseline decoded**
@@ -426,6 +459,17 @@ export interface HostBoardPort {
    * draft is consumed only by a later committed save.
    */
   saveSummaryDraft(input: HostSummaryDraftSaveInput, signal?: AbortSignal): Promise<HostSummaryDraftSaveOutcome>
+  /**
+   * Attribute an existing conversation to one task (F04-R01/R02/R03).
+   *
+   * This never creates a session: the browser half creates or reuses the blank
+   * conversation through the host's `uiWorkspace` client service, then asks the
+   * host for the fixed attribution only. The call is idempotent by
+   * `conversationId` (a re-link answers `already-linked`); a conversation
+   * already owned by a different task is refused and the existing attribution
+   * stays untouched.
+   */
+  linkConversation(input: HostLinkConversationInput, signal?: AbortSignal): Promise<HostLinkConversationOutcome>
 }
 
 /* ------------------------------------------------------------------ *
@@ -538,6 +582,31 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
         return success({ outcome: outcome.outcome, task: outcome.task, snapshot: outcome.snapshot })
       } catch (error) {
         return failure('unknown-result', `创建结果未知：${messageOf(error)}；请先核对当前正式状态，不要重复提交。`)
+      }
+    }
+
+    if (endpoint === BOARD_ENDPOINTS.conversationLink) {
+      const input = parseLinkConversationPayload(payload)
+      if (input === null) {
+        return failure('invalid-payload', 'conversation/link payload must carry a non-empty taskId and conversationId; an optional requestId must be non-empty too. No conversation was created.')
+      }
+      try {
+        const outcome = await port.linkConversation(
+          {
+            taskId: input.taskId,
+            conversationId: input.conversationId,
+            ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+          },
+          signal,
+        )
+        if (!outcome.ok) {
+          return failure(outcome.code, outcome.message)
+        }
+        // The success value names the exact attribution, so the browser can
+        // verify it before opening the conversation (F04-R03 unknown-result rule).
+        return success({ taskId: outcome.taskId, conversationId: outcome.conversationId, linkStatus: outcome.linkStatus })
+      } catch (error) {
+        return failure('unknown-result', `任务归属结果未知：${messageOf(error)}；请先核对会话归属，不要重新创建会话。`)
       }
     }
 

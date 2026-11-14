@@ -302,6 +302,10 @@ describe('F02 channel: protocol round trip (built client bundle ↔ built host h
           snapshot: snapshot([{ ...TODO_TASK, fieldsRevision: 0 }, DOING_TASK]),
         }
       },
+      linkConversation: async (input: unknown) => {
+        calls.push({ port: 'linkConversation', input })
+        return { ok: true as const, taskId: TODO_TASK.taskId, conversationId: 'conv-1', linkStatus: 'linked' as const }
+      },
       updateTaskFields: async (input: unknown) => {
         calls.push({ port: 'updateFields', input })
         return {
@@ -661,6 +665,118 @@ describe('F02 channel: protocol round trip (built client bundle ↔ built host h
     if (refused.ok) throw new Error('a refused creation was reported as success')
     expect(refused.code).toBe('invalid-input')
     expect(refused.keptInput).toEqual(rejection)
+  })
+
+  it('attributes a conversation through the real bundle without creating a session', async () => {
+    const { source, transport, calls } = await wire()
+
+    const result = await source.linkConversation({ taskId: 'task-1', conversationId: 'conv-9', requestId: 'op-conv-1' })
+
+    expect(transport.sent[0]?.endpoint).toBe('conversation/link')
+    // No session is ever created by this endpoint: the payload only names the
+    // task and the conversation the browser already opened.
+    expect(transport.sent[0]?.envelope.payload).toEqual({
+      taskId: 'task-1',
+      conversationId: 'conv-9',
+      requestId: 'op-conv-1',
+    })
+    expect(calls).toEqual([
+      { port: 'linkConversation', input: { taskId: 'task-1', conversationId: 'conv-9', requestId: 'op-conv-1' } },
+    ])
+    expect(result).toEqual({ ok: true, taskId: 'task-1', conversationId: 'conv-1', linkStatus: 'linked' })
+  })
+
+  it('treats a repeat attribution as already-linked success, never a second conversation', async () => {
+    const { source, transport } = await wire({
+      linkConversation: async () => ({
+        ok: true as const,
+        taskId: 'task-1',
+        conversationId: 'conv-9',
+        linkStatus: 'already-linked' as const,
+      }),
+    })
+
+    const result = await source.linkConversation({ taskId: 'task-1', conversationId: 'conv-9' })
+
+    expect(transport.sent).toHaveLength(1)
+    expect(result).toEqual({ ok: true, taskId: 'task-1', conversationId: 'conv-9', linkStatus: 'already-linked' })
+  })
+
+  it('refuses a conversation already owned by another task with save-failed', async () => {
+    const { source } = await wire({
+      linkConversation: async () => ({
+        ok: false as const,
+        code: 'save-failed' as const,
+        message: '会话已归属其他任务，本次归属未写入。',
+      }),
+    })
+
+    const result = await source.linkConversation({ taskId: 'task-2', conversationId: 'conv-9' })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('a refused rebind was reported as success')
+    expect(result.code).toBe('save-failed')
+    expect(result.message).toContain('其他任务')
+  })
+
+  it('surfaces an unknown task as not-found and never echoes a session', async () => {
+    const { source } = await wire({
+      linkConversation: async () => ({
+        ok: false as const,
+        code: 'not-found' as const,
+        message: "任务 'task-404' 不存在；任务归属未写入。",
+      }),
+    })
+
+    const result = await source.linkConversation({ taskId: 'task-404', conversationId: 'conv-9' })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('an unknown task was reported as linked')
+    expect(result.code).toBe('not-found')
+  })
+
+  it('refuses a malformed conversation/link payload before the data layer', async () => {
+    const { handler, calls } = await wire()
+    const result = (await handler(
+      'conversation/link',
+      { taskId: '', conversationId: 'conv-9' },
+      new AbortController().signal,
+    )) as RpcFailure
+
+    expect(result.ok).toBe(false)
+    expect(result.error.code).toBe('invalid-payload')
+    // A retry that cannot name both ids cannot be attributed to anything.
+    expect(result.error.message).toContain('No conversation was created')
+    expect(calls).toEqual([])
+  })
+
+  it('never fabricates a link result from a malformed success value', async () => {
+    const { source } = await wire({
+      linkConversation: async () => ({ ok: true as const, taskId: 'task-1', conversationId: 'conv-9' }),
+    })
+
+    const result = await source.linkConversation({ taskId: 'task-1', conversationId: 'conv-9' })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('a malformed attribution produced a linked conversation')
+    expect(result.code).toBe('unknown-result')
+    expect(result.message).toContain('不要重新创建会话')
+  })
+
+  it('rejects a conversation/link request with empty local ids without touching the channel', async () => {
+    const { source, transport } = await wire()
+
+    const missingTask = await source.linkConversation({ taskId: '', conversationId: 'conv-9' })
+    const missingConversation = await source.linkConversation({ taskId: 'task-1', conversationId: '' })
+
+    expect(missingTask.ok).toBe(false)
+    expect(missingConversation.ok).toBe(false)
+    if (missingTask.ok || missingConversation.ok) throw new Error('an empty id was sent to the channel')
+    expect(missingTask.code).toBe('invalid-input')
+    expect(missingConversation.code).toBe('invalid-input')
+    // The browser half creates the session before linking; a link call without
+    // ids must never reach the host at all.
+    expect(transport.sent).toHaveLength(0)
   })
 
   it('decodes both fver1/ver1 baselines before the data layer on task/fields.update', async () => {

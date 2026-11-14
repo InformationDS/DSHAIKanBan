@@ -27,6 +27,7 @@ import type {
   HostActivityOutcome,
   HostBoardPort,
   HostCreateTaskOutcome,
+  HostLinkConversationOutcome,
   HostProjectListOutcome,
   HostReadOutcome,
   HostSummaryDraftSaveOutcome,
@@ -124,6 +125,16 @@ export function createDelayedBoardPort(state: DelayedPortState, readyPort: HostB
     message: `数据层尚未就绪，概况草稿未保存${reasonSuffix()}；正式内容未改变。`,
   })
 
+  /**
+   * Attribution is a write decided by the data layer. This endpoint never
+   * creates a session, so "unavailable" only means no attribution was written.
+   */
+  const unavailableLinkConversation = (): HostLinkConversationOutcome => ({
+    ok: false,
+    code: 'unavailable',
+    message: `数据层尚未就绪，任务归属未写入${reasonSuffix()}；会话本身未被创建或修改。`,
+  })
+
   return {
     async readBoard(input, signal) {
       return state.coreReady() ? readyPort.readBoard(input, signal) : unavailableRead()
@@ -142,6 +153,9 @@ export function createDelayedBoardPort(state: DelayedPortState, readyPort: HostB
     },
     async createTask(input, signal) {
       return state.coreReady() ? readyPort.createTask(input, signal) : unavailableCreate()
+    },
+    async linkConversation(input, signal) {
+      return state.coreReady() ? readyPort.linkConversation(input, signal) : unavailableLinkConversation()
     },
     async updateTaskFields(input, signal) {
       return state.coreReady() ? readyPort.updateTaskFields(input, signal) : unavailableFields()

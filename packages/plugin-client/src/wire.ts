@@ -147,6 +147,17 @@ export const BOARD_ENDPOINTS = {
    * version; the editor restores it later and confirms explicitly.
    */
   summaryDraftSave: 'summary/draft.save',
+  /**
+   * Attribute one existing conversation to one task, idempotently (F04-R01/R02/R03).
+   *
+   * This endpoint never creates a session: the browser creates/reuses the blank
+   * conversation through the host's `uiWorkspace` client service first, then
+   * asks the host to write the fixed task attribution here. A retry reuses the
+   * same `conversationId`, so an already-linked conversation is a success, not a
+   * second attribution (F04-R03). The project entry (no `taskId`) never calls
+   * this endpoint at all.
+   */
+  conversationLink: 'conversation/link',
 } as const
 
 /** One endpoint name. */
@@ -252,6 +263,26 @@ export interface CreateTaskPayload {
   readonly initialStatus?: string
   /** Required by core when `initialStatus === 'blocked'` (F02-R02). */
   readonly blockedReason?: string
+}
+
+/**
+ * `conversation/link` payload.
+ *
+ * The browser has already created or reused the blank conversation through the
+ * host's `uiWorkspace` client service; this payload only asks the host to write
+ * the fixed task attribution. `taskId` and `conversationId` are the complete
+ * address — an empty either way is refused with `invalid-payload`, because the
+ * host never guesses a task and never mints a conversation id.
+ *
+ * `requestId` is the identity of the original conversation-entry intent, kept
+ * for retry correlation and diagnostics only: idempotency comes from
+ * `conversationId`, not from it (F04-R03).
+ */
+export interface LinkConversationPayload {
+  readonly taskId: string
+  readonly conversationId: string
+  /** Identity of the conversation-entry intent; reused by a retry (optional). */
+  readonly requestId?: string
 }
 
 /**
@@ -526,6 +557,21 @@ export interface CreateTaskValue {
   readonly task: BoardTask
   /** The post-write board read, or `null` when it failed (view not refreshed). */
   readonly snapshot: BoardSnapshotValue | null
+}
+
+/**
+ * `conversation/link` success value.
+ *
+ * `linked` is the new attribution this call wrote; `already-linked` means the
+ * conversation already pointed at this same task (the retry path — success, not
+ * a second write). A conversation already owned by a *different* task is never
+ * rebased: the host refuses it as `save-failed` and the existing attribution
+ * stays untouched (F04-R02/R03).
+ */
+export interface LinkConversationValue {
+  readonly taskId: string
+  readonly conversationId: string
+  readonly linkStatus: 'linked' | 'already-linked'
 }
 
 /**
@@ -1097,6 +1143,28 @@ export function parseCreateTaskValue(value: unknown): CreateTaskValue | null {
 }
 
 /**
+ * Parse a `conversation/link` success value.
+ *
+ * Both statuses are successes: `linked` is this call's write, `already-linked`
+ * is the F04-R03 retry path. A response that names a different task or a
+ * different conversation than the request is a protocol violation and is
+ * refused here rather than trusted as an attribution.
+ *
+ * @param value - untrusted value.
+ * @returns the value, or null when malformed.
+ */
+export function parseLinkConversationValue(value: unknown): LinkConversationValue | null {
+  if (!isRecord(value)) return null
+  const taskId = value['taskId']
+  const conversationId = value['conversationId']
+  const linkStatus = value['linkStatus']
+  if (!isString(taskId) || taskId.length === 0) return null
+  if (!isString(conversationId) || conversationId.length === 0) return null
+  if (linkStatus !== 'linked' && linkStatus !== 'already-linked') return null
+  return { taskId, conversationId, linkStatus }
+}
+
+/**
  * Parse a `task/fields.update` success value.
  *
  * @param value - untrusted value.
@@ -1419,6 +1487,32 @@ export function parseCreateTaskPayload(value: unknown): CreateTaskPayload | null
     ...(goal === undefined ? {} : { goal }),
     ...(initialStatus === undefined ? {} : { initialStatus }),
     ...(blockedReason === undefined ? {} : { blockedReason }),
+  }
+}
+
+/**
+ * Parse a `conversation/link` payload.
+ *
+ * Shape-level only: the host insists on a usable task address and a usable
+ * conversation id (both non-empty strings); whether the task exists and whether
+ * the conversation is still free for attribution are core's decisions, reported
+ * as `not-found` / `save-failed` with the existing attribution preserved.
+ *
+ * @param value - untrusted payload.
+ * @returns the payload, or null when malformed.
+ */
+export function parseLinkConversationPayload(value: unknown): LinkConversationPayload | null {
+  if (!isRecord(value)) return null
+  const taskId = value['taskId']
+  const conversationId = value['conversationId']
+  if (!isString(taskId) || taskId.length === 0) return null
+  if (!isString(conversationId) || conversationId.length === 0) return null
+  const requestId = value['requestId']
+  if (requestId !== undefined && (!isString(requestId) || requestId.length === 0)) return null
+  return {
+    taskId,
+    conversationId,
+    ...(requestId === undefined ? {} : { requestId }),
   }
 }
 

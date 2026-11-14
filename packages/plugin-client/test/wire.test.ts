@@ -29,6 +29,8 @@ import {
   parseFieldsVersion,
   parseKeptFieldInput,
   parseKeptTaskInput,
+  parseLinkConversationPayload,
+  parseLinkConversationValue,
   parseProjectListPayload,
   parseProjectListValue,
   parseReadBoardPayload,
@@ -646,8 +648,8 @@ describe('F03 summary endpoints and payload guards', () => {
     for (const endpoint of Object.values(BOARD_ENDPOINTS)) {
       expect(BOARD_ENDPOINT_LIST).toContain(endpoint)
     }
-    // Eleven endpoint names; the failure-code table is unchanged at nine.
-    expect(BOARD_ENDPOINT_LIST).toHaveLength(11)
+    // Twelve endpoint names; the failure-code table is unchanged at nine.
+    expect(BOARD_ENDPOINT_LIST).toHaveLength(12)
     expect(BOARD_FAILURE_CODES).toHaveLength(9)
   })
 
@@ -919,6 +921,74 @@ describe('F03 manual draft save (summary/draft.save)', () => {
     ]
     for (const value of malformed) {
       expect(parseSummaryDraftSaveValue(value), `accepted ${JSON.stringify(value)}`).toBeNull()
+    }
+  })
+})
+
+describe('F04 conversation attribution (conversation/link)', () => {
+  it('publishes conversation/link without touching the nine failure codes', () => {
+    expect(BOARD_ENDPOINTS.conversationLink).toBe('conversation/link')
+    expect(BOARD_ENDPOINT_LIST).toContain('conversation/link')
+    expect(BOARD_ENDPOINT_LIST).toHaveLength(12)
+    expect(BOARD_FAILURE_CODES).toHaveLength(9)
+  })
+
+  it('parses a link payload only when both ids are non-empty', () => {
+    expect(parseLinkConversationPayload({ taskId: 'task-1', conversationId: 'conv-1' })).toEqual({
+      taskId: 'task-1',
+      conversationId: 'conv-1',
+    })
+    expect(parseLinkConversationPayload({ taskId: 'task-1', conversationId: 'conv-1', requestId: 'op-1' })).toEqual({
+      taskId: 'task-1',
+      conversationId: 'conv-1',
+      requestId: 'op-1',
+    })
+    const malformed: unknown[] = [
+      null,
+      undefined,
+      [],
+      {},
+      { conversationId: 'conv-1' },
+      { taskId: 'task-1' },
+      { taskId: '', conversationId: 'conv-1' },
+      { taskId: 'task-1', conversationId: '' },
+      { taskId: 7, conversationId: 'conv-1' },
+      { taskId: 'task-1', conversationId: null },
+      { taskId: 'task-1', conversationId: 'conv-1', requestId: '' },
+      { taskId: 'task-1', conversationId: 'conv-1', requestId: 7 },
+    ]
+    for (const value of malformed) {
+      expect(parseLinkConversationPayload(value), `accepted ${JSON.stringify(value)}`).toBeNull()
+    }
+  })
+
+  it('accepts linked and already-linked as success values and nothing else', () => {
+    expect(parseLinkConversationValue({ taskId: 'task-1', conversationId: 'conv-1', linkStatus: 'linked' })).toEqual({
+      taskId: 'task-1',
+      conversationId: 'conv-1',
+      linkStatus: 'linked',
+    })
+    expect(
+      parseLinkConversationValue({ taskId: 'task-1', conversationId: 'conv-1', linkStatus: 'already-linked' }),
+    ).toEqual({
+      taskId: 'task-1',
+      conversationId: 'conv-1',
+      linkStatus: 'already-linked',
+    })
+    const malformed: unknown[] = [
+      null,
+      undefined,
+      [],
+      {},
+      { conversationId: 'conv-1', linkStatus: 'linked' },
+      { taskId: 'task-1', linkStatus: 'linked' },
+      { taskId: '', conversationId: 'conv-1', linkStatus: 'linked' },
+      { taskId: 'task-1', conversationId: '', linkStatus: 'linked' },
+      { taskId: 'task-1', conversationId: 'conv-1', linkStatus: 'created' },
+      { taskId: 'task-1', conversationId: 'conv-1' },
+    ]
+    for (const value of malformed) {
+      expect(parseLinkConversationValue(value), `accepted ${JSON.stringify(value)}`).toBeNull()
     }
   })
 })

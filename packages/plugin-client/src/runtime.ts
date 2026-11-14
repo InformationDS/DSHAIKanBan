@@ -19,7 +19,7 @@
  * @module @aikanban/plugin-client/runtime
  */
 
-import { createBoardController, type BoardController } from './controller.js'
+import { createBoardController, type BoardController, type WorkspacePort } from './controller.js'
 import { createUnavailableBoardSource, type BoardSource } from './source.js'
 
 /** Reason shown when the plugin never found the connection service. */
@@ -27,6 +27,8 @@ export const NO_CONNECTION_DETAIL = "未找到 ctx.connection（该组合未挂�
 
 let currentSource: BoardSource = createUnavailableBoardSource(NO_CONNECTION_DETAIL)
 let currentController: BoardController | null = null
+/** The optional browser workspace service (`uiWorkspace`), when present. */
+let currentWorkspace: WorkspacePort | null = null
 
 /**
  * Install the data source. Drops the controller so the next panel mount reads
@@ -49,6 +51,27 @@ export function getBoardSource(): BoardSource {
 }
 
 /**
+ * Install the optional browser workspace service. Drops the controller so the
+ * next mount injects the new port (the conversation entry is an optional
+ * capability, not a hard dependency).
+ *
+ * @param workspace - the workspace port, or null when the composition has none.
+ */
+export function setWorkspacePort(workspace: WorkspacePort | null): void {
+  currentWorkspace = workspace
+  currentController = null
+}
+
+/**
+ * The workspace port currently installed, or null.
+ *
+ * @returns the port, or null.
+ */
+export function getWorkspacePort(): WorkspacePort | null {
+  return currentWorkspace
+}
+
+/**
  * The panel's controller, created on first use.
  *
  * A new controller starts on the explicit `selection-required` state and with no
@@ -59,7 +82,7 @@ export function getBoardSource(): BoardSource {
  * @returns the controller bound to the installed source.
  */
 export function getBoardController(): BoardController {
-  currentController ??= createBoardController({ source: currentSource })
+  currentController ??= createBoardController({ source: currentSource, workspace: currentWorkspace })
   return currentController
 }
 
@@ -79,4 +102,5 @@ export function setBoardController(controller: BoardController | null): void {
 export function resetBoardRuntime(): void {
   currentSource = createUnavailableBoardSource(NO_CONNECTION_DETAIL)
   currentController = null
+  currentWorkspace = null
 }

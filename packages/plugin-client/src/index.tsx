@@ -65,7 +65,7 @@ import { createElement, type ReactNode } from 'react'
 
 import { boardPanel } from './board.js'
 import { createChannelBoardSource, isConnectionLike } from './channel-source.js'
-import { NO_CONNECTION_DETAIL, setBoardSource } from './runtime.js'
+import { NO_CONNECTION_DETAIL, setBoardSource, setWorkspacePort } from './runtime.js'
 import { createUnavailableBoardSource } from './source.js'
 import { BOARD_CHANNEL } from './wire.js'
 
@@ -132,6 +132,29 @@ export type SlotDisposer = () => void
 /** The layout service: panel navigation. */
 export interface LayoutLike {
   selectPanel(panelId: string | null): void
+}
+
+/**
+ * Structural view of the optional `uiWorkspace` service. F04 needs exactly two
+ * calls: create/reuse a blank conversation in a workspace, and open it. Both are
+ * probed rather than declared in `inject`: a composition without the service
+ * must still mount the board, with the conversation entry explaining itself.
+ */
+export interface UiWorkspaceLike {
+  connectWorkspace(projectId: string): Promise<string>
+  openSession(conversationId: string): void
+}
+
+/**
+ * Narrow an unknown service to {@link UiWorkspaceLike}.
+ *
+ * @param value - the probed service.
+ * @returns whether both required calls are functions.
+ */
+export function isWorkspaceLike(value: unknown): value is UiWorkspaceLike {
+  if (typeof value !== 'object' || value === null) return false
+  const candidate = value as { connectWorkspace?: unknown; openSession?: unknown }
+  return typeof candidate.connectWorkspace === 'function' && typeof candidate.openSession === 'function'
 }
 
 /** The browser context surface this plugin touches. */
@@ -300,6 +323,21 @@ export function apply(ctx: ClientContext): () => void {
     } else {
       setBoardSource(createUnavailableBoardSource(NO_CONNECTION_DETAIL))
       ctx.logger?.info(`[aikanban] active (client half) transport=unavailable (${NO_CONNECTION_DETAIL})`)
+    }
+
+    // The workspace service is optional: probe it, never declare it. The port is
+    // installed on the runtime so the controller can inject it; when absent the
+    // conversation entry fails with one readable sentence and creates nothing.
+    const workspace = ctx.get?.('uiWorkspace') ?? ctx.reflect?.get('uiWorkspace', false)
+    if (isWorkspaceLike(workspace)) {
+      setWorkspacePort({
+        connectWorkspace: (projectId) => workspace.connectWorkspace(projectId),
+        openSession: (conversationId) => workspace.openSession(conversationId),
+      })
+      ctx.logger?.info('[aikanban] uiWorkspace available: conversation entry enabled')
+    } else {
+      setWorkspacePort(null)
+      ctx.logger?.info('[aikanban] uiWorkspace unavailable: conversation entry explains itself')
     }
 
     const dispose = registerSlots(ctx)

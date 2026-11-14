@@ -30,6 +30,7 @@
  * @module @aikanban/plugin-client/model
  */
 
+import type { BoardFailureCode } from './source.js'
 import type {
   SummaryBaselineWire,
   SummaryConclusionWire,
@@ -1222,4 +1223,120 @@ export function summaryVersionEntry(version: SummaryVersionValue): SummaryVersio
 export function summaryHistoryEntries(view: SummaryViewValue | null): SummaryVersionEntry[] {
   if (view === null) return []
   return view.history.map((version) => summaryVersionEntry(version))
+}
+
+/* ------------------------------------------------------------------ *
+ * F04: conversation entry (browser-owned session, host-owned attribution)
+ * ------------------------------------------------------------------ */
+
+/** Where a conversation entry was started from. */
+export type ConversationScopeKind = 'project' | 'task'
+
+/** One step of the connect → link → open flow. */
+export type ConversationEntryStep = 'connect' | 'link' | 'open'
+
+/** The phase of one conversation entry. */
+export type ConversationEntryPhase = 'connecting' | 'linking' | 'opening' | 'opened' | 'failed'
+
+/**
+ * The state of one conversation entry.
+ *
+ * The browser owns the session (`uiWorkspace`), the host owns the task
+ * attribution (`linkConversation`). `conversationId` survives a failed link or
+ * open so a retry never creates a second conversation; `requestId` is minted
+ * once per entry and reused by every link attempt (idempotency).
+ */
+export interface ConversationEntryState {
+  readonly scopeKind: ConversationScopeKind
+  readonly scopeId: string
+  /** The task id for a task entry; `null` for a project entry (never linked). */
+  readonly taskId: string | null
+  readonly phase: ConversationEntryPhase
+  readonly step: ConversationEntryStep
+  readonly conversationId: string | null
+  readonly requestId: string
+  readonly linkStatus: 'linked' | 'already-linked' | null
+  readonly error: string | null
+  readonly code: BoardFailureCode | null
+}
+
+/** Project entry label (unlinked conversation). */
+export const CONVERSATION_PROJECT_ENTRY_TEXT = '新建对话（不关联任务）'
+
+/** Task entry label (the conversation is attributed to the open task). */
+export const CONVERSATION_TASK_ENTRY_TEXT = '新建对话（固定归属当前任务）'
+
+/** Shown when the composition has no `uiWorkspace` service. */
+export const CONVERSATION_UNAVAILABLE_TEXT = '未找到 uiWorkspace 服务：无法创建或打开工作对话，未创建任何会话。'
+
+/** Progress texts for the three steps. */
+export const CONVERSATION_CONNECTING_TEXT = '正在创建或复用空白对话…'
+export const CONVERSATION_LINKING_TEXT = '对话已就绪，正在写入任务归属…'
+export const CONVERSATION_OPENING_TEXT = '归属已写入，正在打开对话…'
+
+/** Success texts. */
+export const CONVERSATION_PROJECT_OPENED_TEXT = '已打开未关联任务的工作对话。'
+export const CONVERSATION_TASK_OPENED_TEXT = '已创建并打开对话，并固定归属当前任务。'
+export const CONVERSATION_ALREADY_LINKED_TEXT = '该对话此前已归属当前任务，已打开。'
+
+/** Step-specific failure headlines (used when the transport sent no message). */
+export const CONVERSATION_CONNECT_FAILED_TEXT = '创建或复用对话失败，未打开任何会话。'
+export const CONVERSATION_LINK_FAILED_TEXT = '对话已创建，但写入任务归属失败；会话本身保留。'
+export const CONVERSATION_OPEN_FAILED_TEXT = '对话已创建，但打开失败；会话本身保留。'
+
+/** Retry labels, one per step. */
+export const CONVERSATION_RETRY_CONNECT_TEXT = '重试创建对话'
+export const CONVERSATION_RETRY_LINK_TEXT = '重试归属'
+export const CONVERSATION_RETRY_OPEN_TEXT = '重试打开'
+
+/** Dismiss label for the entry status area. */
+export const CONVERSATION_DISMISS_TEXT = '收起'
+
+/** Whether the entry is between steps (a second click is ignored). */
+export function conversationBusy(entry: ConversationEntryState): boolean {
+  return entry.phase === 'connecting' || entry.phase === 'linking' || entry.phase === 'opening'
+}
+
+/** Whether a failed entry can retry from its recorded step. */
+export function conversationCanRetry(entry: ConversationEntryState): boolean {
+  return entry.phase === 'failed'
+}
+
+/** The success sentence for an opened entry. */
+export function conversationOpenedText(entry: ConversationEntryState): string {
+  if (entry.scopeKind === 'project') return CONVERSATION_PROJECT_OPENED_TEXT
+  return entry.linkStatus === 'already-linked' ? CONVERSATION_ALREADY_LINKED_TEXT : CONVERSATION_TASK_OPENED_TEXT
+}
+
+/** The failure sentence: the transport's message when present, otherwise the step headline. */
+export function conversationFailureText(entry: ConversationEntryState): string {
+  if (entry.error !== null && entry.error.trim().length > 0) return entry.error
+  switch (entry.step) {
+    case 'connect': return CONVERSATION_CONNECT_FAILED_TEXT
+    case 'link': return CONVERSATION_LINK_FAILED_TEXT
+    case 'open': return CONVERSATION_OPEN_FAILED_TEXT
+    default: return CONVERSATION_CONNECT_FAILED_TEXT
+  }
+}
+
+/** The status sentence: progress while in flight, success when opened, failure when failed. */
+export function conversationProgressText(entry: ConversationEntryState): string {
+  switch (entry.phase) {
+    case 'connecting': return CONVERSATION_CONNECTING_TEXT
+    case 'linking': return CONVERSATION_LINKING_TEXT
+    case 'opening': return CONVERSATION_OPENING_TEXT
+    case 'opened': return conversationOpenedText(entry)
+    case 'failed': return conversationFailureText(entry)
+    default: return ''
+  }
+}
+
+/** The retry label for a failed entry's recorded step. */
+export function conversationRetryText(entry: ConversationEntryState): string {
+  switch (entry.step) {
+    case 'connect': return CONVERSATION_RETRY_CONNECT_TEXT
+    case 'link': return CONVERSATION_RETRY_LINK_TEXT
+    case 'open': return CONVERSATION_RETRY_OPEN_TEXT
+    default: return CONVERSATION_RETRY_CONNECT_TEXT
+  }
 }

@@ -15,6 +15,18 @@ import {
   BLOCKED_REASON_REQUIRED_MESSAGE,
   BLOCKED_STATUS_ID,
   COLLAPSED_BY_DEFAULT_STATUS_ID,
+  CONVERSATION_ALREADY_LINKED_TEXT,
+  CONVERSATION_CONNECTING_TEXT,
+  CONVERSATION_CONNECT_FAILED_TEXT,
+  CONVERSATION_LINKING_TEXT,
+  CONVERSATION_LINK_FAILED_TEXT,
+  CONVERSATION_OPENING_TEXT,
+  CONVERSATION_OPEN_FAILED_TEXT,
+  CONVERSATION_PROJECT_OPENED_TEXT,
+  CONVERSATION_RETRY_CONNECT_TEXT,
+  CONVERSATION_RETRY_LINK_TEXT,
+  CONVERSATION_RETRY_OPEN_TEXT,
+  CONVERSATION_TASK_OPENED_TEXT,
   DETAIL_PLACEHOLDERS,
   FIELD_TITLE_REQUIRED_MESSAGE,
   FIELDS_ALREADY_APPLIED_TEXT,
@@ -27,6 +39,12 @@ import {
   VIEW_STALE_ALREADY_CREATED_TEXT,
   VIEW_STALE_CREATE_TEXT,
   buildBoardView,
+  conversationBusy,
+  conversationCanRetry,
+  conversationFailureText,
+  conversationOpenedText,
+  conversationProgressText,
+  conversationRetryText,
   createdStaleViewText,
   createdTaskText,
   creationStatusChoices,
@@ -71,6 +89,7 @@ import {
   validateCreateDraft,
   validateFieldDraft,
   type BoardTask,
+  type ConversationEntryState,
 } from '../src/model.js'
 import type {
   SummaryBaselineWire,
@@ -645,5 +664,83 @@ describe('manual summary view model (F03-R01/R02/R04/R07)', () => {
     expect(entries.every((entry) => entry.origin === 'user')).toBe(true)
     expect(entries[0]?.meta).toContain('用户手动')
     expect(entries[0]?.meta).not.toContain('AI')
+  })
+})
+
+/** A conversation entry with everything the model reads. */
+function conversation(overrides: Partial<ConversationEntryState> = {}): ConversationEntryState {
+  return {
+    scopeKind: 'project',
+    scopeId: 'ws-1',
+    taskId: null,
+    phase: 'connecting',
+    step: 'connect',
+    conversationId: null,
+    requestId: 'op-1',
+    linkStatus: null,
+    error: null,
+    code: null,
+    ...overrides,
+  }
+}
+
+describe('conversation entry view model (F04-R01/R02/R03)', () => {
+  it('treats only in-flight phases as busy', () => {
+    expect(conversationBusy(conversation({ phase: 'connecting' }))).toBe(true)
+    expect(conversationBusy(conversation({ phase: 'linking', step: 'link' }))).toBe(true)
+    expect(conversationBusy(conversation({ phase: 'opening', step: 'open' }))).toBe(true)
+    expect(conversationBusy(conversation({ phase: 'opened', step: 'open' }))).toBe(false)
+    expect(conversationBusy(conversation({ phase: 'failed', step: 'link' }))).toBe(false)
+  })
+
+  it('offers a retry only after a failure', () => {
+    expect(conversationCanRetry(conversation({ phase: 'failed', step: 'link' }))).toBe(true)
+    expect(conversationCanRetry(conversation({ phase: 'opened', step: 'open' }))).toBe(false)
+    expect(conversationCanRetry(conversation({ phase: 'connecting' }))).toBe(false)
+  })
+
+  it('names the outcome without claiming an attribution the project entry never wrote', () => {
+    expect(conversationOpenedText(conversation({ scopeKind: 'project', phase: 'opened', step: 'open' })))
+      .toBe(CONVERSATION_PROJECT_OPENED_TEXT)
+    expect(conversationOpenedText(conversation({ scopeKind: 'task', taskId: 't1', phase: 'opened', step: 'open' })))
+      .toBe(CONVERSATION_TASK_OPENED_TEXT)
+    expect(conversationOpenedText(conversation({
+      scopeKind: 'task',
+      taskId: 't1',
+      phase: 'opened',
+      step: 'open',
+      linkStatus: 'already-linked',
+    }))).toBe(CONVERSATION_ALREADY_LINKED_TEXT)
+  })
+
+  it('shows a readable failure per step, with the data-layer message when present', () => {
+    expect(conversationFailureText(conversation({ phase: 'failed', step: 'connect' })))
+      .toBe(CONVERSATION_CONNECT_FAILED_TEXT)
+    expect(conversationFailureText(conversation({ phase: 'failed', step: 'link' })))
+      .toBe(CONVERSATION_LINK_FAILED_TEXT)
+    expect(conversationFailureText(conversation({ phase: 'failed', step: 'open' })))
+      .toBe(CONVERSATION_OPEN_FAILED_TEXT)
+    expect(conversationFailureText(conversation({ phase: 'failed', step: 'link', error: '归属失败' })))
+      .toBe('归属失败')
+  })
+
+  it('progresses from connect to link to open and reports the opened state', () => {
+    expect(conversationProgressText(conversation({ phase: 'connecting', step: 'connect' })))
+      .toBe(CONVERSATION_CONNECTING_TEXT)
+    expect(conversationProgressText(conversation({ scopeKind: 'task', taskId: 't1', phase: 'linking', step: 'link' })))
+      .toBe(CONVERSATION_LINKING_TEXT)
+    expect(conversationProgressText(conversation({ phase: 'opening', step: 'open' })))
+      .toBe(CONVERSATION_OPENING_TEXT)
+    expect(conversationProgressText(conversation({ scopeKind: 'project', phase: 'opened', step: 'open' })))
+      .toBe(CONVERSATION_PROJECT_OPENED_TEXT)
+  })
+
+  it('offers the retry that matches the failed step', () => {
+    expect(conversationRetryText(conversation({ phase: 'failed', step: 'connect' })))
+      .toBe(CONVERSATION_RETRY_CONNECT_TEXT)
+    expect(conversationRetryText(conversation({ phase: 'failed', step: 'link' })))
+      .toBe(CONVERSATION_RETRY_LINK_TEXT)
+    expect(conversationRetryText(conversation({ phase: 'failed', step: 'open' })))
+      .toBe(CONVERSATION_RETRY_OPEN_TEXT)
   })
 })

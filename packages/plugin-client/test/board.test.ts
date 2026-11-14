@@ -24,6 +24,12 @@ import {
   ACTIVITY_LOADING_TEXT,
   ACTIVITY_RETRY_TEXT,
   ACTIVITY_TASK_TITLE,
+  CONVERSATION_CONNECTING_TEXT,
+  CONVERSATION_PROJECT_ENTRY_TEXT,
+  CONVERSATION_PROJECT_OPENED_TEXT,
+  CONVERSATION_RETRY_LINK_TEXT,
+  CONVERSATION_TASK_ENTRY_TEXT,
+  CONVERSATION_TASK_OPENED_TEXT,
   SUMMARY_BACK_TO_EDIT_TEXT,
   SUMMARY_CANCEL_EDIT_TEXT,
   SUMMARY_CONFIRM_SAVE_TEXT,
@@ -46,6 +52,7 @@ import {
   type ActivityEntryView,
   type BoardTask,
   type BoardView,
+  type ConversationEntryState,
   type SummaryEditorState,
 } from '../src/model.js'
 import type {
@@ -220,6 +227,8 @@ function state(overrides: Partial<BoardState> = {}): BoardState {
     projectActivity: { kind: 'idle' },
     taskSummary: null,
     projectSummary: null,
+    projectConversation: null,
+    taskConversation: null,
     feedback: null,
     busy: null,
     ...overrides,
@@ -289,6 +298,10 @@ function recordingActions(): RecordingActions {
     onSummaryBack: (scopeKind) => { calls.push(`summary-back:${scopeKind}`) },
     onSummaryCancel: (scopeKind) => { calls.push(`summary-cancel:${scopeKind}`) },
     onSummarySave: (scopeKind) => { calls.push(`summary-save:${scopeKind}`) },
+    onNewProjectConversation: () => { calls.push('new-project-conversation') },
+    onNewTaskConversation: () => { calls.push('new-task-conversation') },
+    onConversationRetry: (scopeKind) => { calls.push(`conversation-retry:${scopeKind}`) },
+    onConversationDismiss: (scopeKind) => { calls.push(`conversation-dismiss:${scopeKind}`) },
   }
 }
 
@@ -961,5 +974,116 @@ describe('manual summary UI (F03-R01/R02/R04/R07)', () => {
     const notice = elementsWith(tree, 'data-aikanban-summary-notice')
     expect(notice).toHaveLength(1)
     expect(textOf(notice[0] as TestElement)).toBe(SUMMARY_SAVED_STALE_TEXT)
+  })
+})
+
+/** A conversation entry with everything the panel reads. */
+function conversationEntry(overrides: Partial<ConversationEntryState> = {}): ConversationEntryState {
+  return {
+    scopeKind: 'project',
+    scopeId: 'ws-1',
+    taskId: null,
+    phase: 'opened',
+    step: 'open',
+    conversationId: 'conv-1',
+    requestId: 'op-1',
+    linkStatus: null,
+    error: null,
+    code: null,
+    ...overrides,
+  }
+}
+
+describe('conversation entry UI (F04-R01/R02/R03)', () => {
+  it('offers the unlinked project entry on a ready board and asks for it explicitly', () => {
+    const actions = recordingActions()
+    const tree = renderBoard(readyState(), actions)
+
+    const buttons = elementsWith(tree, 'data-aikanban-new-project-conversation')
+    expect(buttons).toHaveLength(1)
+    expect(textOf(buttons[0] as TestElement)).toBe(CONVERSATION_PROJECT_ENTRY_TEXT)
+    click(buttons[0] as TestElement)
+    expect(actions.calls).toEqual(['new-project-conversation'])
+    // The project entry never claims an attribution it does not write.
+    expect(textOf(tree)).not.toContain('归属')
+  })
+
+  it('offers the task entry in the detail and asks for it explicitly', () => {
+    const actions = recordingActions()
+    const tree = renderBoard(readyState({ openTaskId: 't1', detail: deriveTaskDetail(TASK) }), actions)
+
+    const buttons = elementsWith(tree, 'data-aikanban-task-new-conversation')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]?.props['data-aikanban-task-new-conversation']).toBe('t1')
+    expect(textOf(buttons[0] as TestElement)).toBe(CONVERSATION_TASK_ENTRY_TEXT)
+    click(buttons[0] as TestElement)
+    expect(actions.calls).toEqual(['new-task-conversation'])
+  })
+
+  it('renders the opened project entry as data, not as a new button', () => {
+    const actions = recordingActions()
+    const tree = renderBoard(readyState({ projectConversation: conversationEntry() }), actions)
+
+    expect(elementsWith(tree, 'data-aikanban-new-project-conversation')).toHaveLength(0)
+    const area = elementsWith(tree, 'data-aikanban-conversation')[0] as TestElement
+    expect(area.props['data-aikanban-conversation']).toBe('project')
+    expect(area.props['data-aikanban-conversation-phase']).toBe('opened')
+    expect(textOf(area)).toContain(CONVERSATION_PROJECT_OPENED_TEXT)
+    expect(textOf(area)).toContain('conv-1')
+    const dismiss = elementsWith(tree, 'data-aikanban-conversation-dismiss')[0] as TestElement
+    click(dismiss)
+    expect(actions.calls).toEqual(['conversation-dismiss:project'])
+  })
+
+  it('shows a failed task link with its message and a step-specific retry', () => {
+    const actions = recordingActions()
+    const tree = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      taskConversation: conversationEntry({
+        scopeKind: 'task',
+        scopeId: 't1',
+        taskId: 't1',
+        phase: 'failed',
+        step: 'link',
+        conversationId: 'conv-1',
+        linkStatus: null,
+        error: '对话已创建，但写入任务归属失败；会话本身保留。（归属失败）',
+        code: 'save-failed',
+      }),
+    }), actions)
+
+    const error = elementsWith(tree, 'data-aikanban-conversation-error')[0] as TestElement
+    expect(textOf(error)).toContain('归属失败')
+    const retry = elementsWith(tree, 'data-aikanban-conversation-retry')[0] as TestElement
+    expect(textOf(retry)).toBe(CONVERSATION_RETRY_LINK_TEXT)
+    click(retry)
+    expect(actions.calls).toEqual(['conversation-retry:task'])
+  })
+
+  it('shows the connecting step and disables dismissal while the flow is in flight', () => {
+    const tree = renderBoard(readyState({
+      projectConversation: conversationEntry({ phase: 'connecting', step: 'connect', conversationId: null }),
+    }), recordingActions())
+
+    const area = elementsWith(tree, 'data-aikanban-conversation')[0] as TestElement
+    expect(textOf(area)).toContain(CONVERSATION_CONNECTING_TEXT)
+    const dismiss = elementsWith(tree, 'data-aikanban-conversation-dismiss')[0] as TestElement
+    expect(dismiss.props['disabled']).toBe(true)
+    expect(elementsWith(tree, 'data-aikanban-conversation-retry')).toHaveLength(0)
+  })
+
+  it('keeps sibling keys unique when both conversation areas are open', () => {
+    const tree = renderBoard(readyState({
+      openTaskId: 't1',
+      detail: deriveTaskDetail(TASK),
+      projectConversation: conversationEntry(),
+      taskConversation: conversationEntry({ scopeKind: 'task', scopeId: 't1', taskId: 't1', linkStatus: 'linked' }),
+    }), recordingActions())
+
+    expect(duplicateSiblingKeys(tree)).toEqual([])
+    const areas = elementsWith(tree, 'data-aikanban-conversation')
+    expect(areas.map((area) => area.props['data-aikanban-conversation'])).toEqual(['project', 'task'])
+    expect(textOf(areas[1] as TestElement)).toContain(CONVERSATION_TASK_OPENED_TEXT)
   })
 })

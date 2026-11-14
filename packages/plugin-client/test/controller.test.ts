@@ -15,6 +15,7 @@ import {
   createBoardController,
   type BoardController,
   type BoardState,
+  type WorkspacePort,
 } from '../src/controller.js'
 import type {
   ActivityInput,
@@ -50,6 +51,10 @@ import type {
 } from '../src/wire.js'
 import {
   BLOCKED_REASON_REQUIRED_MESSAGE,
+  CONVERSATION_CONNECT_FAILED_TEXT,
+  CONVERSATION_LINK_FAILED_TEXT,
+  CONVERSATION_OPEN_FAILED_TEXT,
+  CONVERSATION_UNAVAILABLE_TEXT,
   FIELD_TITLE_REQUIRED_MESSAGE,
   FIELDS_BASELINE_MISSING_MESSAGE,
   NO_FIELD_CHANGE_MESSAGE,
@@ -343,11 +348,51 @@ function fakeSource(options: { read?: BoardReadResult; write?: WriteResult; capa
   return source
 }
 
+/** A scripted browser workspace port (`uiWorkspace`), with call logs. */
+interface FakeWorkspace extends WorkspacePort {
+  connectCalls: string[]
+  openCalls: string[]
+  nextConnect: string | Error
+  nextOpen: Error | null
+  /** When true, `connectWorkspace` stays pending until `release()` is called. */
+  holdConnect: boolean
+  release(): void
+}
+
+/**
+ * A scripted workspace port.
+ *
+ * @param options - the first connect answer and whether opening throws.
+ * @returns the port plus its call log and a connect latch.
+ */
+function fakeWorkspace(options: { connect?: string | Error; open?: Error | null } = {}): FakeWorkspace {
+  const workspace: FakeWorkspace = {
+    connectCalls: [],
+    openCalls: [],
+    nextConnect: options.connect ?? 'conv-1',
+    nextOpen: options.open ?? null,
+    holdConnect: false,
+    release: () => undefined,
+    async connectWorkspace(projectId) {
+      workspace.connectCalls.push(projectId)
+      if (workspace.holdConnect) await new Promise<void>((resolve) => { workspace.release = resolve })
+      if (workspace.nextConnect instanceof Error) throw workspace.nextConnect
+      return workspace.nextConnect
+    },
+    openSession(conversationId) {
+      workspace.openCalls.push(conversationId)
+      if (workspace.nextOpen !== null) throw workspace.nextOpen
+    },
+  }
+  return workspace
+}
+
 /** A controller with deterministic operation ids, starting on `selection-required`. */
-function controllerFor(source: BoardSource): BoardController {
+function controllerFor(source: BoardSource, workspace?: WorkspacePort | null): BoardController {
   let counter = 0
   return createBoardController({
     source,
+    workspace: workspace ?? null,
     newOperationId: () => `op-${++counter}`,
   })
 }
@@ -360,8 +405,12 @@ function controllerFor(source: BoardSource): BoardController {
  * @param projectId - the project to select.
  * @returns the loaded controller.
  */
-async function loadedController(source: BoardSource, projectId = 'ws-1'): Promise<BoardController> {
-  const controller = controllerFor(source)
+async function loadedController(
+  source: BoardSource,
+  projectId = 'ws-1',
+  workspace?: WorkspacePort | null,
+): Promise<BoardController> {
+  const controller = controllerFor(source, workspace)
   await controller.selectProject(projectId)
   return controller
 }
@@ -2316,5 +2365,246 @@ describe('manual summary (F03-R01/R02/R04/R07: read, edit, draft, preview, save)
     await flush()
 
     expect(controller.getState().taskSummary).toBeNull()
+  })
+})
+
+describe('conversation entry (F04-R01/R02/R03: browser session, host attribution)', () => {
+  it('creates/reuses and opens an unlinked project conversation without writing attribution', async () => {
+    const source = fakeSource()
+    const workspace = fakeWorkspace()
+    const controller = await loadedController(source, 'ws-1', workspace)
+
+    await controller.newProjectConversation()
+
+    expect(workspace.connectCalls).toEqual(['ws-1'])
+    expect(workspace.openCalls).toEqual(['conv-1'])
+    expect(source.linkCalls).toHaveLength(0)
+    const state = controller.getState()
+    expect(state.projectConversation).toMatchObject({
+      scopeKind: 'project',
+      scopeId: 'ws-1',
+      taskId: null,
+      phase: 'opened',
+      step: 'open',
+      conversationId: 'conv-1',
+    })
+    expect(state.taskConversation).toBeNull()
+    expect(state.feedback).toBeNull()
+  })
+
+  it('links a task conversation to the open task before opening it', async () => {
+    const source = fakeSource()
+    const workspace = fakeWorkspace()
+    const controller = await loadedController(source, 'ws-1', workspace)
+    controller.openDetail('t1')
+    await flush()
+
+    await controller.newTaskConversation()
+
+    expect(workspace.connectCalls).toEqual(['ws-1'])
+    expect(source.linkCalls).toHaveLength(1)
+    expect(source.linkCalls[0]).toMatchObject({ taskId: 't1', conversationId: 'conv-1' })
+    expect(workspace.openCalls).toEqual(['conv-1'])
+    const state = controller.getState()
+    expect(state.taskConversation).toMatchObject({
+      scopeKind: 'task',
+      scopeId: 't1',
+      taskId: 't1',
+      phase: 'opened',
+      step: 'open',
+      conversationId: 'conv-1',
+      linkStatus: 'linked',
+    })
+    expect(state.projectConversation).toBeNull()
+  })
+
+  it('ignores a second click while the first entry is still connecting', async () => {
+    const source = fakeSource()
+    const workspace = fakeWorkspace()
+    workspace.holdConnect = true
+    const controller = await loadedController(source, 'ws-1', workspace)
+
+    const first = controller.newProjectConversation()
+    const second = controller.newProjectConversation()
+    workspace.release()
+    await Promise.all([first, second])
+
+    expect(workspace.connectCalls).toHaveLength(1)
+    expect(controller.getState().projectConversation?.phase).toBe('opened')
+  })
+
+  it('reports a connect failure in one readable sentence and retries the connect', async () => {
+    const source = fakeSource()
+    const workspace = fakeWorkspace({ connect: new Error('host down') })
+    const controller = await loadedController(source, 'ws-1', workspace)
+
+    await controller.newProjectConversation()
+
+    let state = controller.getState()
+    expect(state.projectConversation?.phase).toBe('failed')
+    expect(state.projectConversation?.step).toBe('connect')
+    expect(state.projectConversation?.conversationId).toBeNull()
+    expect(state.projectConversation?.error).toContain(CONVERSATION_CONNECT_FAILED_TEXT)
+    expect(state.projectConversation?.error).toContain('host down')
+
+    workspace.nextConnect = 'conv-2'
+    await controller.retryConversation('project')
+
+    state = controller.getState()
+    expect(workspace.connectCalls).toEqual(['ws-1', 'ws-1'])
+    expect(state.projectConversation).toMatchObject({ phase: 'opened', conversationId: 'conv-2' })
+    expect(workspace.openCalls).toEqual(['conv-2'])
+  })
+
+  it('keeps the conversation id after a link failure and retries only the link', async () => {
+    const source = fakeSource()
+    const workspace = fakeWorkspace()
+    const controller = await loadedController(source, 'ws-1', workspace)
+    controller.openDetail('t1')
+    await flush()
+    source.nextLink = { ok: false, code: 'save-failed', message: '归属失败' }
+
+    await controller.newTaskConversation()
+
+    let state = controller.getState()
+    expect(state.taskConversation?.phase).toBe('failed')
+    expect(state.taskConversation?.step).toBe('link')
+    expect(state.taskConversation?.conversationId).toBe('conv-1')
+    expect(state.taskConversation?.error).toContain(CONVERSATION_LINK_FAILED_TEXT)
+    expect(state.taskConversation?.error).toContain('归属失败')
+    expect(workspace.openCalls).toHaveLength(0)
+    const requestId = source.linkCalls[0]?.requestId
+
+    source.nextLink = { ok: true, taskId: 't1', conversationId: 'conv-1', linkStatus: 'linked' }
+    await controller.retryConversation('task')
+
+    state = controller.getState()
+    expect(source.linkCalls).toHaveLength(2)
+    expect(source.linkCalls[1]?.requestId).toBe(requestId)
+    expect(workspace.connectCalls).toHaveLength(1)
+    expect(workspace.openCalls).toEqual(['conv-1'])
+    expect(state.taskConversation).toMatchObject({ phase: 'opened', conversationId: 'conv-1' })
+  })
+
+  it('retries only the open after an open failure, never a second session', async () => {
+    const source = fakeSource()
+    const workspace = fakeWorkspace({ open: new Error('navigation blocked') })
+    const controller = await loadedController(source, 'ws-1', workspace)
+
+    await controller.newProjectConversation()
+
+    let state = controller.getState()
+    expect(state.projectConversation?.phase).toBe('failed')
+    expect(state.projectConversation?.step).toBe('open')
+    expect(state.projectConversation?.conversationId).toBe('conv-1')
+    expect(state.projectConversation?.error).toContain(CONVERSATION_OPEN_FAILED_TEXT)
+
+    workspace.nextOpen = null
+    await controller.retryConversation('project')
+
+    state = controller.getState()
+    expect(workspace.connectCalls).toHaveLength(1)
+    expect(workspace.openCalls).toEqual(['conv-1', 'conv-1'])
+    expect(state.projectConversation?.phase).toBe('opened')
+  })
+
+  it('records an already-linked attribution without pretending it was new', async () => {
+    const source = fakeSource()
+    const workspace = fakeWorkspace()
+    const controller = await loadedController(source, 'ws-1', workspace)
+    controller.openDetail('t1')
+    await flush()
+    source.nextLink = { ok: true, taskId: 't1', conversationId: 'conv-1', linkStatus: 'already-linked' }
+
+    await controller.newTaskConversation()
+
+    expect(controller.getState().taskConversation).toMatchObject({
+      phase: 'opened',
+      linkStatus: 'already-linked',
+    })
+  })
+
+  it('fails visibly without a workspace port and creates nothing', async () => {
+    const source = fakeSource()
+    const controller = await loadedController(source, 'ws-1', null)
+
+    await controller.newProjectConversation()
+
+    let state = controller.getState()
+    expect(state.projectConversation).toMatchObject({
+      phase: 'failed',
+      step: 'connect',
+      conversationId: null,
+      code: 'unavailable',
+      error: CONVERSATION_UNAVAILABLE_TEXT,
+    })
+
+    controller.openDetail('t1')
+    await flush()
+    await controller.newTaskConversation()
+
+    state = controller.getState()
+    expect(state.taskConversation).toMatchObject({
+      phase: 'failed',
+      step: 'connect',
+      conversationId: null,
+      code: 'unavailable',
+    })
+    expect(source.linkCalls).toHaveLength(0)
+  })
+
+  it('drops a late project connect after the selection changed and never opens it', async () => {
+    const source = fakeSource()
+    const workspace = fakeWorkspace()
+    workspace.holdConnect = true
+    const controller = await loadedController(source, 'ws-1', workspace)
+
+    const pending = controller.newProjectConversation()
+    source.nextRead = {
+      ok: true,
+      snapshot: snapshot({ project: { ...PROJECT, projectId: 'ws-2' } }) as never,
+    }
+    await controller.selectProject('ws-2')
+    workspace.release()
+    await pending
+    await flush()
+
+    expect(controller.getState().projectConversation).toBeNull()
+    expect(workspace.openCalls).toHaveLength(0)
+  })
+
+  it('drops a late task connect after the detail closed and never links it', async () => {
+    const source = fakeSource()
+    const workspace = fakeWorkspace()
+    workspace.holdConnect = true
+    const controller = await loadedController(source, 'ws-1', workspace)
+    controller.openDetail('t1')
+    await flush()
+
+    const pending = controller.newTaskConversation()
+    controller.closeDetail()
+    workspace.release()
+    await pending
+    await flush()
+
+    expect(controller.getState().taskConversation).toBeNull()
+    expect(source.linkCalls).toHaveLength(0)
+    expect(workspace.openCalls).toHaveLength(0)
+  })
+
+  it('dismisses a settled entry but refuses to hide one that is still working', async () => {
+    const source = fakeSource()
+    const workspace = fakeWorkspace()
+    workspace.holdConnect = true
+    const controller = await loadedController(source, 'ws-1', workspace)
+
+    const pending = controller.newProjectConversation()
+    controller.dismissConversation('project')
+    expect(controller.getState().projectConversation?.phase).toBe('connecting')
+
+    workspace.release()
+    await pending
+    controller.dismissConversation('project')
+    expect(controller.getState().projectConversation).toBeNull()
   })
 })

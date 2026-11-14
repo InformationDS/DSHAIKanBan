@@ -37,6 +37,9 @@ import {
   ACTIVITY_RETRY_TEXT,
   ACTIVITY_TASK_TITLE,
   BLOCKED_STATUS_ID,
+  CONVERSATION_DISMISS_TEXT,
+  CONVERSATION_PROJECT_ENTRY_TEXT,
+  CONVERSATION_TASK_ENTRY_TEXT,
   SUMMARY_BACK_TO_EDIT_TEXT,
   SUMMARY_CANCEL_EDIT_TEXT,
   SUMMARY_CONFIRM_SAVE_TEXT,
@@ -64,9 +67,15 @@ import {
   summarySectionTitle,
   summaryVersionLabel,
   summaryVersionMeta,
+  conversationBusy,
+  conversationFailureText,
+  conversationProgressText,
+  conversationRetryText,
   type ActivityEntryView,
   type BoardTask,
   type BoardView,
+  type ConversationEntryState,
+  type ConversationScopeKind,
   type SummaryEditorState,
   type SummaryScopeKind,
   type TaskDetailView,
@@ -178,6 +187,17 @@ export interface BoardActions {
   onSummaryBack(scopeKind: SummaryScopeKind): void
   onSummaryCancel(scopeKind: SummaryScopeKind): void
   onSummarySave(scopeKind: SummaryScopeKind): void
+
+  /* ----- F04: conversation entry ----- */
+
+  /** Create/reuse a blank conversation for the selected project (unlinked). */
+  onNewProjectConversation(): void
+  /** Create/reuse a blank conversation and attribute it to the open task. */
+  onNewTaskConversation(): void
+  /** Retry the failed step of one entry (connect, link, or open). */
+  onConversationRetry(scopeKind: ConversationScopeKind): void
+  /** Hide a settled entry; the entry owns the flow until then. */
+  onConversationDismiss(scopeKind: ConversationScopeKind): void
 }
 
 /** One status a menu may offer: the id that travels, the label that is shown. */
@@ -915,6 +935,89 @@ function renderSummaryArea(
 }
 
 /**
+ * One conversation entry (F04).
+ *
+ * The entry owns a browser session the shell created; this panel only drives
+ * connect → (link) → open and reports each step honestly. A failed step keeps
+ * the conversation id, so the retry button retries that step and never creates a
+ * second session. No message is sent and no history is copied here.
+ *
+ * @param scopeKind - which entry this is (project is deliberately unlinked).
+ * @param entry - the entry state; the caller renders the button when null.
+ * @param actions - the panel's actions.
+ * @returns the entry node.
+ */
+function renderConversationArea(
+  scopeKind: ConversationScopeKind,
+  entry: ConversationEntryState,
+  actions: BoardActions,
+): ReactNode {
+  const children: ReactNode[] = [
+    createElement(
+      'div',
+      { key: 'title', style: { fontWeight: 600, fontSize: '12px' } },
+      scopeKind === 'project' ? '项目对话（不关联任务）' : '任务对话（归属当前任务）',
+    ),
+  ]
+  if (entry.phase === 'failed') {
+    children.push(createElement(
+      'div',
+      { key: 'error', role: 'alert', 'data-aikanban-conversation-error': scopeKind, style: { fontSize: '12px', marginTop: '2px' } },
+      conversationFailureText(entry),
+    ))
+    children.push(createElement(
+      'button',
+      {
+        key: 'retry',
+        type: 'button',
+        'data-aikanban-conversation-retry': scopeKind,
+        onClick: () => { actions.onConversationRetry(scopeKind) },
+        disabled: conversationBusy(entry),
+        style: { marginTop: '4px' },
+      },
+      conversationRetryText(entry),
+    ))
+  } else {
+    children.push(createElement(
+      'div',
+      { key: 'progress', 'data-aikanban-conversation-progress': scopeKind, style: { fontSize: '12px', marginTop: '2px' } },
+      conversationProgressText(entry),
+    ))
+  }
+  if (entry.conversationId !== null) {
+    // The id is data-layer truth, not decoration: it is what a retry reuses.
+    children.push(createElement(
+      'div',
+      { key: 'conversation-id', 'data-aikanban-conversation-id': scopeKind, style: MUTED },
+      `会话：${entry.conversationId}`,
+    ))
+  }
+  children.push(createElement(
+    'button',
+    {
+      key: 'dismiss',
+      type: 'button',
+      'data-aikanban-conversation-dismiss': scopeKind,
+      onClick: () => { actions.onConversationDismiss(scopeKind) },
+      disabled: conversationBusy(entry),
+      style: { marginTop: '4px' },
+    },
+    CONVERSATION_DISMISS_TEXT,
+  ))
+  return createElement(
+    'section',
+    {
+      key: `conversation-${scopeKind}`,
+      'data-aikanban-conversation': scopeKind,
+      'data-aikanban-conversation-phase': entry.phase,
+      'data-aikanban-conversation-status': scopeKind,
+      style: { ...CARD_STYLE, marginTop: '8px' },
+    },
+    children,
+  )
+}
+
+/**
  * The task detail skeleton (F02-R07).
  *
  * @param detail - the detail view.
@@ -926,6 +1029,7 @@ function renderSummaryArea(
  * @param taskActivity - the task-scope activity state.
  * @param taskSummary - the task-scope summary editor state.
  * @param summarySaving - whether a summary save is in flight.
+ * @param taskConversation - the task-scope conversation entry, if any.
  * @returns the detail node.
  */
 function renderDetail(
@@ -938,7 +1042,9 @@ function renderDetail(
   taskActivity: ActivityState,
   taskSummary: SummaryEditorState | null,
   summarySaving: boolean,
+  taskConversation: ConversationEntryState | null | undefined,
 ): ReactNode {
+  const conversation = taskConversation ?? null
   return createElement(
     'section',
     { key: 'detail', 'data-aikanban-detail': detail.taskId, style: { ...CARD_STYLE, marginTop: '10px' } },
@@ -955,6 +1061,20 @@ function renderDetail(
     // F03: the manual summary lives in the detail; it is read when the detail
     // opens and only ever shows data-layer content.
     renderSummaryArea('task', taskSummary, summarySaving, actions),
+    // F04: the task entry is linked to this task; the project entry never is.
+    conversation === null
+      ? createElement(
+        'button',
+        {
+          key: 'task-new-conversation',
+          type: 'button',
+          'data-aikanban-task-new-conversation': detail.taskId,
+          onClick: actions.onNewTaskConversation,
+          style: { marginTop: '8px' },
+        },
+        CONVERSATION_TASK_ENTRY_TEXT,
+      )
+      : renderConversationArea('task', conversation, actions),
     detail.blockedReason !== null
       ? createElement('div', { key: 'blocked', style: { fontSize: '12px' } }, `阻塞原因：${detail.blockedReason}`)
       : null,
@@ -1351,6 +1471,22 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
           '项目总览',
         )
         : renderSummaryArea('project', state.projectSummary, state.busy?.kind === 'summary', actions))
+      // F04: the project entry is unlinked — it creates/reuses a blank
+      // conversation and opens it, with no attribution request.
+      const projectConversation = state.projectConversation ?? null
+      children.push(projectConversation === null
+        ? createElement(
+          'button',
+          {
+            key: 'project-conversation-button',
+            type: 'button',
+            'data-aikanban-new-project-conversation': 'true',
+            onClick: actions.onNewProjectConversation,
+            style: { marginBottom: '8px', marginLeft: '6px' },
+          },
+          CONVERSATION_PROJECT_ENTRY_TEXT,
+        )
+        : renderConversationArea('project', projectConversation, actions))
     }
 
     children.push(createElement(
@@ -1382,6 +1518,7 @@ export function renderBoard(state: BoardState, actions: BoardActions): ReactNode
       state.taskActivity,
       state.taskSummary,
       state.busy?.kind === 'summary',
+      state.taskConversation,
     ))
   }
   // On the selection screen the selector renders the (only possible) listing
@@ -1473,6 +1610,10 @@ export function BoardPanel(props: { readonly controller: BoardController }): Rea
     onSummaryBack: (scopeKind) => { controller.cancelSummaryPreview(scopeKind) },
     onSummaryCancel: (scopeKind) => { controller.closeSummaryEditor(scopeKind) },
     onSummarySave: (scopeKind) => { void controller.saveSummary(scopeKind) },
+    onNewProjectConversation: () => { void controller.newProjectConversation() },
+    onNewTaskConversation: () => { void controller.newTaskConversation() },
+    onConversationRetry: (scopeKind) => { void controller.retryConversation(scopeKind) },
+    onConversationDismiss: (scopeKind) => { controller.dismissConversation(scopeKind) },
   }
   return renderBoard(state, actions)
 }

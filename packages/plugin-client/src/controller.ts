@@ -39,6 +39,10 @@ import {
   BLOCKED_REASON_REQUIRED_MESSAGE,
   BLOCKED_STATUS_ID,
   buildBoardView,
+  CONVERSATION_CONNECT_FAILED_TEXT,
+  CONVERSATION_LINK_FAILED_TEXT,
+  CONVERSATION_OPEN_FAILED_TEXT,
+  CONVERSATION_UNAVAILABLE_TEXT,
   createdStaleViewText,
   createdTaskText,
   defaultInitialStatus,
@@ -78,6 +82,8 @@ import {
   type BoardCapabilities,
   type BoardTask,
   type BoardView,
+  type ConversationEntryState,
+  type ConversationScopeKind,
   type StatusId,
   type SummaryEditorState,
   type SummaryScopeKind,
@@ -94,6 +100,7 @@ import {
   type CreateTaskInput,
   type CreateTaskResult,
   type FormalStatusValue,
+  type LinkConversationResult,
   type ManualSummarySaveInput,
   type ProjectChoice,
   type ReorderInput,
@@ -314,6 +321,10 @@ export interface BoardState {
   readonly taskSummary: SummaryEditorState | null
   /** The project overview editor, or `null` while the area is closed. */
   readonly projectSummary: SummaryEditorState | null
+  /** The project-scope conversation entry (unlinked), or `null` while closed. */
+  readonly projectConversation: ConversationEntryState | null
+  /** The open task's conversation entry (linked), or `null` while closed. */
+  readonly taskConversation: ConversationEntryState | null
   readonly feedback: BoardFeedback | null
   readonly busy: BoardBusy | null
 }
@@ -393,9 +404,25 @@ export function writeFailedText(code: BoardFailureCode): string {
  * Controller
  * ------------------------------------------------------------------ */
 
+/**
+ * The optional browser workspace service (`uiWorkspace`), narrowed to the two
+ * calls F04 needs. `runtime` installs it after `apply()` probes the service.
+ */
+export interface WorkspacePort {
+  /** Create or reuse one blank conversation in the project's workspace. */
+  connectWorkspace(projectId: string): Promise<string>
+  /** Open one conversation in the shell (navigation only). */
+  openSession(conversationId: string): void
+}
+
 /** Construction options. */
 export interface BoardControllerOptions {
   readonly source: BoardSource
+  /**
+   * The optional browser workspace service (`uiWorkspace`). When absent, a
+   * conversation entry fails with one readable sentence and creates nothing.
+   */
+  readonly workspace?: WorkspacePort | null
   /** Operation-id minter; injectable so tests are deterministic. */
   readonly newOperationId?: () => string
   /** Change listener (React `useSyncExternalStore` shape). */
@@ -403,8 +430,7 @@ export interface BoardControllerOptions {
 }
 
 /** The panel's only write entry point. */
-export interface BoardController {
-  getState(): BoardState
+export interface BoardController {  getState(): BoardState
   subscribe(listener: () => void): () => void
 
   /**
@@ -562,6 +588,24 @@ export interface BoardController {
    * this intent, so a double click or retry cannot create two versions.
    */
   saveSummary(scopeKind: SummaryScopeKind): Promise<void>
+
+  /* ----- slice F04: conversation entry ----- */
+
+  /**
+   * Create/reuse a blank conversation for the selected project and open it. No
+   * task attribution is sent: the project entry is deliberately unlinked.
+   */
+  newProjectConversation(): Promise<void>
+  /**
+   * Create/reuse a blank conversation, attribute it to the open task, then open
+   * it. The conversation id survives a failed attribution/open so a retry never
+   * creates a second conversation.
+   */
+  newTaskConversation(): Promise<void>
+  /** Retry a failed entry from its recorded step (never re-creates the session). */
+  retryConversation(scopeKind: ConversationScopeKind): Promise<void>
+  /** Hide the entry status area; a late answer is dropped, not applied. */
+  dismissConversation(scopeKind: ConversationScopeKind): void
 }
 
 /**
@@ -572,10 +616,14 @@ export interface BoardController {
  */
 export function createBoardController(options: BoardControllerOptions): BoardController {
   const source = options.source
+  const workspace = options.workspace ?? null
   const mintOperationId = options.newOperationId ?? nextOperationId
   const listeners = new Set<() => void>()
   /** Monotone read generation: an answer may only land for the newest read. */
   let readSeq = 0
+  /** Conversation-entry generations: a late connect/link/open may not land. */
+  let projectConversationSeq = 0
+  let taskConversationSeq = 0
 
   /** Per-task kept reason input, so a cancelled or invalid dialog loses nothing. */
   const keptReasons = new Map<string, string>()
@@ -597,6 +645,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     projectActivity: { kind: 'idle' },
     taskSummary: null,
     projectSummary: null,
+    projectConversation: null,
+    taskConversation: null,
     feedback: null,
     busy: null,
   }
@@ -630,6 +680,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
    */
   const resetSelectionState = (): void => {
     keptReasons.clear()
+    projectConversationSeq += 1
+    taskConversationSeq += 1
     setState({
       selectedProjectId: null,
       read: selectionRequired(),
@@ -645,6 +697,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       projectActivity: { kind: 'idle' },
       taskSummary: null,
       projectSummary: null,
+      projectConversation: null,
+      taskConversation: null,
       feedback: null,
       busy: null,
     })
@@ -716,6 +770,10 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     // it instead of showing the previous task's overview under a new detail.
     const taskSummaryReset = state.taskSummary !== null
       && (task === undefined || state.taskSummary.scopeId !== openTaskId)
+    // A conversation entry belongs to exactly one scope too: a task that left
+    // the board closes its entry instead of leaving a stale success behind.
+    const taskConversationReset = state.taskConversation !== null && task === undefined
+    if (taskConversationReset) taskConversationSeq += 1
     setState({
       read: {
         kind: 'ready',
@@ -731,6 +789,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       ...(nextEdit === edit ? {} : { fieldEdit: nextEdit }),
       ...(taskActivityReset ? { taskActivity: { kind: 'idle' as const } } : {}),
       ...(taskSummaryReset ? { taskSummary: null } : {}),
+      ...(taskConversationReset ? { taskConversation: null } : {}),
     })
   }
 
@@ -1523,6 +1582,225 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     await runSummarySave(input)
   }
 
+  /* ------------------------------------------------------------------ *
+   * F04: conversation entry (browser-owned session, host-owned attribution)
+   * ------------------------------------------------------------------ */
+
+  const conversationStateOf = (scopeKind: ConversationScopeKind): ConversationEntryState | null =>
+    scopeKind === 'project' ? state.projectConversation : state.taskConversation
+
+  const setConversationState = (scopeKind: ConversationScopeKind, entry: ConversationEntryState | null): void => {
+    setState(scopeKind === 'project' ? { projectConversation: entry } : { taskConversation: entry })
+  }
+
+  const conversationSeqOf = (scopeKind: ConversationScopeKind): number =>
+    scopeKind === 'project' ? projectConversationSeq : taskConversationSeq
+
+  /**
+   * A late step may only land while its generation is the newest and its scope
+   * is still on screen. This is what keeps a switch from opening the previous
+   * project's conversation.
+   */
+  const conversationStillCurrent = (entry: ConversationEntryState, seq: number): boolean => {
+    if (seq !== conversationSeqOf(entry.scopeKind)) return false
+    if (entry.scopeKind === 'project') return state.selectedProjectId === entry.scopeId
+    return state.openTaskId === entry.taskId
+  }
+
+  const conversationFailure = (headline: string, error: unknown): string => {
+    const message = error instanceof Error ? error.message : String(error)
+    return message.trim().length === 0 ? headline : `${headline}（${message}）`
+  }
+
+  /** Open the conversation. Keeps the id on failure so a retry opens the same one. */
+  const openConversationStep = (entry: ConversationEntryState, seq: number): void => {
+    if (entry.conversationId === null) return
+    if (!conversationStillCurrent(entry, seq)) return
+    if (workspace === null) {
+      setConversationState(entry.scopeKind, {
+        ...entry,
+        phase: 'failed',
+        step: 'open',
+        error: CONVERSATION_UNAVAILABLE_TEXT,
+        code: 'unavailable',
+      })
+      return
+    }
+    try {
+      workspace.openSession(entry.conversationId)
+    } catch (error) {
+      if (!conversationStillCurrent(entry, seq)) return
+      setConversationState(entry.scopeKind, {
+        ...entry,
+        phase: 'failed',
+        step: 'open',
+        error: conversationFailure(CONVERSATION_OPEN_FAILED_TEXT, error),
+      })
+      return
+    }
+    if (!conversationStillCurrent(entry, seq)) return
+    setConversationState(entry.scopeKind, { ...entry, phase: 'opened', step: 'open', error: null, code: null })
+  }
+
+  /** Attribute the already-created conversation to the task, then open it. */
+  const linkConversationStep = async (entry: ConversationEntryState, seq: number): Promise<void> => {
+    if (entry.conversationId === null || entry.taskId === null) return
+    let result: LinkConversationResult
+    try {
+      result = await source.linkConversation({
+        taskId: entry.taskId,
+        conversationId: entry.conversationId,
+        requestId: entry.requestId,
+      })
+    } catch (error) {
+      if (!conversationStillCurrent(entry, seq)) return
+      setConversationState(entry.scopeKind, {
+        ...entry,
+        phase: 'failed',
+        step: 'link',
+        error: conversationFailure(CONVERSATION_LINK_FAILED_TEXT, error),
+        code: 'unknown-result',
+      })
+      return
+    }
+    if (!conversationStillCurrent(entry, seq)) return
+    if (!result.ok) {
+      setConversationState(entry.scopeKind, {
+        ...entry,
+        phase: 'failed',
+        step: 'link',
+        error: result.message.trim().length > 0
+          ? `${CONVERSATION_LINK_FAILED_TEXT}（${result.message}）`
+          : CONVERSATION_LINK_FAILED_TEXT,
+        code: result.code,
+      })
+      return
+    }
+    const opening: ConversationEntryState = {
+      ...entry,
+      phase: 'opening',
+      step: 'open',
+      linkStatus: result.linkStatus,
+      error: null,
+      code: null,
+    }
+    setConversationState(entry.scopeKind, opening)
+    openConversationStep(opening, seq)
+  }
+
+  /** Create/reuse the blank session, then link (task) or open (project). */
+  const connectConversationStep = async (entry: ConversationEntryState, seq: number): Promise<void> => {
+    if (workspace === null) {
+      if (!conversationStillCurrent(entry, seq)) return
+      setConversationState(entry.scopeKind, {
+        ...entry,
+        phase: 'failed',
+        step: 'connect',
+        error: CONVERSATION_UNAVAILABLE_TEXT,
+        code: 'unavailable',
+      })
+      return
+    }
+    let conversationId: string
+    try {
+      // The workspace is the selected project's workspace, even for a task
+      // entry: the task only contributes the attribution, not the workspace.
+      const projectId = state.selectedProjectId ?? entry.scopeId
+      conversationId = await workspace.connectWorkspace(projectId)
+    } catch (error) {
+      if (!conversationStillCurrent(entry, seq)) return
+      setConversationState(entry.scopeKind, {
+        ...entry,
+        phase: 'failed',
+        step: 'connect',
+        error: conversationFailure(CONVERSATION_CONNECT_FAILED_TEXT, error),
+      })
+      return
+    }
+    if (!conversationStillCurrent(entry, seq)) return
+    if (entry.scopeKind === 'project') {
+      // F04-R02: the project entry is deliberately unlinked — no attribution
+      // request is sent for it.
+      const opening: ConversationEntryState = {
+        ...entry,
+        phase: 'opening',
+        step: 'open',
+        conversationId,
+        error: null,
+        code: null,
+      }
+      setConversationState('project', opening)
+      openConversationStep(opening, seq)
+      return
+    }
+    const linking: ConversationEntryState = {
+      ...entry,
+      phase: 'linking',
+      step: 'link',
+      conversationId,
+      error: null,
+      code: null,
+    }
+    setConversationState('task', linking)
+    await linkConversationStep(linking, seq)
+  }
+
+  const startConversation = async (scopeKind: ConversationScopeKind): Promise<void> => {
+    const scopeId = scopeKind === 'project' ? state.selectedProjectId : state.openTaskId
+    if (scopeId === null) return
+    // One entry at a time, per scope: a double click while connecting/linking/
+    // opening is ignored rather than starting a second session.
+    if (conversationStateOf(scopeKind) !== null) return
+    const seq = scopeKind === 'project' ? ++projectConversationSeq : ++taskConversationSeq
+    const entry: ConversationEntryState = {
+      scopeKind,
+      scopeId,
+      taskId: scopeKind === 'task' ? scopeId : null,
+      phase: 'connecting',
+      step: 'connect',
+      conversationId: null,
+      requestId: mintOperationId(),
+      linkStatus: null,
+      error: null,
+      code: null,
+    }
+    setConversationState(scopeKind, entry)
+    await connectConversationStep(entry, seq)
+  }
+
+  /** Retry only the failed step: connect, or link/open with the same conversation. */
+  const retryConversationEntry = async (scopeKind: ConversationScopeKind): Promise<void> => {
+    const current = conversationStateOf(scopeKind)
+    if (current === null || current.phase !== 'failed') return
+    const seq = scopeKind === 'project' ? ++projectConversationSeq : ++taskConversationSeq
+    if (current.step === 'connect') {
+      const entry: ConversationEntryState = { ...current, phase: 'connecting', error: null, code: null }
+      setConversationState(scopeKind, entry)
+      await connectConversationStep(entry, seq)
+      return
+    }
+    if (current.step === 'link') {
+      const entry: ConversationEntryState = { ...current, phase: 'linking', error: null, code: null }
+      setConversationState(scopeKind, entry)
+      await linkConversationStep(entry, seq)
+      return
+    }
+    const entry: ConversationEntryState = { ...current, phase: 'opening', error: null, code: null }
+    setConversationState(scopeKind, entry)
+    openConversationStep(entry, seq)
+  }
+
+  const dismissConversationEntry = (scopeKind: ConversationScopeKind): void => {
+    const current = conversationStateOf(scopeKind)
+    if (current === null) return
+    // The entry owns the flow until it settles; hiding it mid-flight would lose
+    // the only place the retry lives.
+    if (current.phase === 'connecting' || current.phase === 'linking' || current.phase === 'opening') return
+    if (scopeKind === 'project') projectConversationSeq += 1
+    else taskConversationSeq += 1
+    setConversationState(scopeKind, null)
+  }
+
   return {
     getState: () => state,
 
@@ -1638,6 +1916,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       // Clearing the view first is deliberate: the previous project's cards must
       // never render under the new project's header.
       keptReasons.clear()
+      projectConversationSeq += 1
+      taskConversationSeq += 1
       setState({
         selectedProjectId: projectId,
         read: { kind: 'idle' },
@@ -1650,6 +1930,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         projectActivity: { kind: 'idle' },
         taskSummary: null,
         projectSummary: null,
+        projectConversation: null,
+        taskConversation: null,
         feedback: null,
         busy: null,
       })
@@ -1670,11 +1952,12 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       // A different task is a different scope: the previous editor and activity
       // list never carry over to it.
       const switched = state.openTaskId !== taskId
+      if (switched) taskConversationSeq += 1
       setState({
         openTaskId: taskId,
         detail: deriveTaskDetail(task),
         ...(switched
-          ? { fieldEdit: null, taskActivity: { kind: 'idle' as const }, taskSummary: null }
+          ? { fieldEdit: null, taskActivity: { kind: 'idle' as const }, taskSummary: null, taskConversation: null }
           : {}),
       })
       // Opening a task is the explicit moment its summary is read (F03-R01);
@@ -1683,12 +1966,14 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     },
 
     closeDetail() {
+      taskConversationSeq += 1
       setState({
         openTaskId: null,
         detail: null,
         fieldEdit: null,
         taskActivity: { kind: 'idle' },
         taskSummary: null,
+        taskConversation: null,
       })
     },
 
@@ -2112,6 +2397,26 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
 
     async saveSummary(scopeKind) {
       await commitSummary(scopeKind)
+    },
+
+    /* ---------------------------------------------------------------- *
+     * F04: conversation entry
+     * ---------------------------------------------------------------- */
+
+    async newProjectConversation() {
+      await startConversation('project')
+    },
+
+    async newTaskConversation() {
+      await startConversation('task')
+    },
+
+    async retryConversation(scopeKind) {
+      await retryConversationEntry(scopeKind)
+    },
+
+    dismissConversation(scopeKind) {
+      dismissConversationEntry(scopeKind)
     },
   }
 }

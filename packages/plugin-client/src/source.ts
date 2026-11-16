@@ -121,6 +121,36 @@ export interface CreateTaskInput {
 }
 
 /**
+ * One fresh conversation entry (F04).
+ *
+ * Unlike the browser-side `uiWorkspace.connectWorkspace`, this asks the host to
+ * create a genuinely new blank Session through `sessionController`. The id is
+ * returned to the caller and no task attribution is implied; a task entry links
+ * it explicitly afterwards.
+ */
+export interface CreateConversationInput {
+  readonly projectId: string
+  /** Identity of the entry intent; a duplicate request in one host process reuses the session. */
+  readonly requestId: string
+}
+
+/** The host created a fresh blank conversation. */
+export interface CreateConversationSuccess {
+  readonly ok: true
+  readonly conversationId: string
+}
+
+/** The fresh conversation could not be created; nothing is attributed. */
+export interface CreateConversationFailure {
+  readonly ok: false
+  readonly code: BoardFailureCode
+  readonly message: string
+}
+
+/** Result of a host-side fresh conversation creation. */
+export type CreateConversationResult = CreateConversationSuccess | CreateConversationFailure
+
+/**
  * One conversation entry (F04-R01/R02/R03).
  *
  * The browser creates or reuses the blank conversation through the host's
@@ -586,6 +616,15 @@ export interface BoardSource {
   createTask(input: CreateTaskInput): Promise<CreateTaskResult>
 
   /**
+   * Create a fresh blank conversation in one project's workspace (F04).
+   *
+   * The host uses `sessionController.create`, not `uiWorkspace.connectWorkspace`;
+   * this avoids reusing a blank session that is already attributed to a task.
+   * No task attribution is written here; call {@link linkConversation} explicitly.
+   */
+  createConversation(input: CreateConversationInput): Promise<CreateConversationResult>
+
+  /**
    * Attribute a conversation the browser already created/reused to one task
    * (F04-R02/R03).
    *
@@ -668,6 +707,10 @@ export const NO_CHANNEL_SUMMARY_DRAFT_MESSAGE = '看板数据通道未接通：�
 /** Text shown when a conversation attribution cannot be sent because no channel exists. */
 export const NO_CHANNEL_LINK_MESSAGE = '看板数据通道未接通：无法写入任务归属，会话本身未被创建或修改。'
 
+/** Text shown when a fresh conversation cannot be created because no channel exists. */
+export const NO_CHANNEL_CREATE_CONVERSATION_MESSAGE =
+  '看板数据通道未接通：无法创建新会话，未产生任何会话或任务归属。'
+
 /**
  * A port with no transport behind it.
  *
@@ -688,6 +731,8 @@ export function createUnavailableBoardSource(detail: string): BoardSource {
     reorder: () => Promise.resolve(failure()),
     undoStatusChange: () => Promise.resolve(failure()),
     createTask: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_CREATE_MESSAGE }),
+    createConversation: () =>
+      Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_CREATE_CONVERSATION_MESSAGE }),
     linkConversation: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_LINK_MESSAGE }),
     updateTaskFields: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_FIELDS_MESSAGE }),
     loadActivity: () => Promise.resolve({ ok: false, code: 'unavailable', message: NO_CHANNEL_ACTIVITY_MESSAGE }),

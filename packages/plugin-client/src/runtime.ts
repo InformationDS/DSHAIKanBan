@@ -70,6 +70,9 @@ function createLazyWorkspacePort(): WorkspacePort {
       if (workspace === null) throw new Error(CONVERSATION_UNAVAILABLE_TEXT)
       workspace.openSession(conversationId)
     },
+    isAvailable() {
+      return resolveWorkspacePort() !== null
+    },
   }
 }
 

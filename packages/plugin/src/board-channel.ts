@@ -48,6 +48,7 @@ import {
   BOARD_ENDPOINTS,
   isBlockedReasonValid,
   parseActivityPayload,
+  parseCreateConversationPayload,
   parseCreateTaskPayload,
   parseFieldsVersion,
   parseLinkConversationPayload,
@@ -371,6 +372,28 @@ export interface HostSummaryDraftSaveFailure {
 /** Result of a host-side manual draft save. */
 export type HostSummaryDraftSaveOutcome = HostSummaryDraftSaveSuccess | HostSummaryDraftSaveFailure
 
+/** A `conversation/create` input after the handler validated its address. */
+export interface HostCreateConversationInput {
+  readonly projectId: string
+  readonly requestId: string
+}
+
+/** A fresh blank conversation was created in the project's workspace. */
+export interface HostCreateConversationSuccess {
+  readonly ok: true
+  readonly conversationId: string
+}
+
+/** The fresh conversation could not be created; no task attribution was written. */
+export interface HostCreateConversationFailure {
+  readonly ok: false
+  readonly code: BoardFailureCodeWire
+  readonly message: string
+}
+
+/** Result of a host-side fresh conversation creation. */
+export type HostCreateConversationOutcome = HostCreateConversationSuccess | HostCreateConversationFailure
+
 /** A `conversation/link` input after the handler validated its address. */
 export interface HostLinkConversationInput {
   readonly taskId: string
@@ -459,6 +482,12 @@ export interface HostBoardPort {
    * draft is consumed only by a later committed save.
    */
   saveSummaryDraft(input: HostSummaryDraftSaveInput, signal?: AbortSignal): Promise<HostSummaryDraftSaveOutcome>
+  /**
+   * Create one genuinely fresh blank conversation in a project's workspace
+   * (F04). This is the host-owned creation path: it must not reuse an existing
+   * blank session that may already be linked to a task.
+   */
+  createConversation(input: HostCreateConversationInput, signal?: AbortSignal): Promise<HostCreateConversationOutcome>
   /**
    * Attribute an existing conversation to one task (F04-R01/R02/R03).
    *
@@ -582,6 +611,21 @@ export function createBoardChannelHandler(port: HostBoardPort): BoardRpcHandler 
         return success({ outcome: outcome.outcome, task: outcome.task, snapshot: outcome.snapshot })
       } catch (error) {
         return failure('unknown-result', `创建结果未知：${messageOf(error)}；请先核对当前正式状态，不要重复提交。`)
+      }
+    }
+
+    if (endpoint === BOARD_ENDPOINTS.conversationCreate) {
+      const input = parseCreateConversationPayload(payload)
+      if (input === null) {
+        return failure('invalid-payload', 'conversation/create payload must carry a non-empty projectId and requestId. No conversation was created.')
+      }
+      try {
+        const outcome = await port.createConversation(input, signal)
+        return outcome.ok ? success({ conversationId: outcome.conversationId }) : failure(outcome.code, outcome.message)
+      } catch (error) {
+        // The host may have created the Session before the exception surfaced;
+        // never invite a blind retry, and never claim "no conversation".
+        return failure('unknown-result', `会话创建结果未知：${messageOf(error)}；请先核对会话列表，不要直接重试创建。`)
       }
     }
 

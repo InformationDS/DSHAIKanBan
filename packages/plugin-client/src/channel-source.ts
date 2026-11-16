@@ -33,6 +33,8 @@ import type {
   BoardReadResult,
   BoardSnapshot,
   BoardSource,
+  CreateConversationInput,
+  CreateConversationResult,
   CreateTaskInput,
   CreateTaskResult,
   FormalStatusValue,
@@ -61,6 +63,7 @@ import {
   parseBoardWriteValue,
   parseCreateTaskFailureDetails,
   parseCreateTaskValue,
+  parseCreateConversationValue,
   parseFormalStatusValue,
   parseLinkConversationValue,
   parseProjectListValue,
@@ -71,6 +74,7 @@ import {
   parseUpdateFieldsFailureDetails,
   parseUpdateFieldsValue,
   type ActivityPayload,
+  type CreateConversationPayload,
   type CreateTaskPayload,
   type LinkConversationPayload,
   type ProjectListPayload,
@@ -313,6 +317,50 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
       return { ok: false, code: 'unknown-result', message: `${MALFORMED_RESPONSE_MESSAGE}请先核对当前正式状态，不要重复提交。` }
     }
     return { ok: true, task: value.task, outcome: value.outcome, snapshot: value.snapshot }
+  }
+
+  /**
+   * Create a fresh blank conversation through the host (F04).
+   *
+   * The browser cannot force `uiWorkspace.connectWorkspace` to create a new
+   * session while a linked blank session exists, so this is a host write. An
+   * empty project/request id is refused locally; a transport explosion is
+   * `unknown-result` because the host may already have created the session.
+   */
+  const createConversation = async (input: CreateConversationInput): Promise<CreateConversationResult> => {
+    if (typeof input.projectId !== 'string' || input.projectId.length === 0) {
+      return { ok: false, code: 'invalid-input', message: '会话创建被拒绝：缺少项目 id；未创建任何会话。' }
+    }
+    if (typeof input.requestId !== 'string' || input.requestId.length === 0) {
+      return { ok: false, code: 'invalid-input', message: '会话创建被拒绝：缺少请求 id；未创建任何会话。' }
+    }
+    const payload: CreateConversationPayload = { projectId: input.projectId, requestId: input.requestId }
+    let result: ConnectionRpcResultLike
+    try {
+      result = await call(BOARD_ENDPOINTS.conversationCreate, payload)
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'unknown-result',
+        message: `会话创建结果未知，请先核对会话列表，不要直接重复创建。（${messageOf(error)}）`,
+      }
+    }
+    if (!result.ok) {
+      return {
+        ok: false,
+        code: isBoardFailureCode(result.error.code) ? result.error.code : 'save-failed',
+        message: result.error.message,
+      }
+    }
+    const value = parseCreateConversationValue(result.value)
+    if (value === null) {
+      return {
+        ok: false,
+        code: 'unknown-result',
+        message: `${MALFORMED_RESPONSE_MESSAGE}请先核对会话列表，不要直接重复创建。`,
+      }
+    }
+    return { ok: true, conversationId: value.conversationId }
   }
 
   /**
@@ -652,6 +700,7 @@ export function createChannelBoardSource(connection: ConnectionLike, options: Ch
       return write(BOARD_ENDPOINTS.undoStatusChange, payload)
     },
     createTask,
+    createConversation,
     linkConversation,
     updateTaskFields,
     loadActivity,

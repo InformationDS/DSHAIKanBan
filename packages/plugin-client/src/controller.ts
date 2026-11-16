@@ -413,6 +413,8 @@ export interface WorkspacePort {
   connectWorkspace(projectId: string): Promise<string>
   /** Open one conversation in the shell (navigation only). */
   openSession(conversationId: string): void
+  /** Optional synchronous capability check used before creating a session. */
+  isAvailable?(): boolean
 }
 
 /** Construction options. */
@@ -1688,9 +1690,9 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     openConversationStep(opening, seq)
   }
 
-  /** Create/reuse the blank session, then link (task) or open (project). */
+  /** Create a fresh session (host) or fall back to the browser's blank session. */
   const connectConversationStep = async (entry: ConversationEntryState, seq: number): Promise<void> => {
-    if (workspace === null) {
+    if (workspace === null || workspace.isAvailable?.() === false) {
       if (!conversationStillCurrent(entry, seq)) return
       setConversationState(entry.scopeKind, {
         ...entry,
@@ -1701,12 +1703,32 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       })
       return
     }
+    const projectId = state.selectedProjectId ?? entry.scopeId
     let conversationId: string
     try {
-      // The workspace is the selected project's workspace, even for a task
-      // entry: the task only contributes the attribution, not the workspace.
-      const projectId = state.selectedProjectId ?? entry.scopeId
-      conversationId = await workspace.connectWorkspace(projectId)
+      // The host must create a genuinely new session: `uiWorkspace.connectWorkspace`
+      // reuses any blank session, including one already attributed to another task.
+      if (typeof source.createConversation === 'function') {
+        const created = await source.createConversation({ projectId, requestId: entry.requestId })
+        if (!conversationStillCurrent(entry, seq)) return
+        if (!created.ok) {
+          setConversationState(entry.scopeKind, {
+            ...entry,
+            phase: 'failed',
+            step: 'connect',
+            error: created.message.trim().length > 0
+              ? `${CONVERSATION_CONNECT_FAILED_TEXT}（${created.message}）`
+              : CONVERSATION_CONNECT_FAILED_TEXT,
+            code: created.code,
+          })
+          return
+        }
+        conversationId = created.conversationId
+      } else {
+        // Compatibility for injected test sources; the production source always
+        // exposes the host-created path above.
+        conversationId = await workspace.connectWorkspace(projectId)
+      }
     } catch (error) {
       if (!conversationStillCurrent(entry, seq)) return
       setConversationState(entry.scopeKind, {

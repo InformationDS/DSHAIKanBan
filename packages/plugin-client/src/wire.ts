@@ -148,6 +148,16 @@ export const BOARD_ENDPOINTS = {
    */
   summaryDraftSave: 'summary/draft.save',
   /**
+   * Create one fresh blank conversation in a project's workspace (F04).
+   *
+   * The browser cannot force `uiWorkspace.connectWorkspace` to create a new
+   * session when a linked blank session already exists, so the host creates the
+   * session through its `sessionController` and returns the exact id. This
+   * endpoint never writes a task attribution; `conversation/link` follows for a
+   * task entry.
+   */
+  conversationCreate: 'conversation/create',
+  /**
    * Attribute one existing conversation to one task, idempotently (F04-R01/R02/R03).
    *
    * This endpoint never creates a session: the browser creates/reuses the blank
@@ -283,6 +293,19 @@ export interface LinkConversationPayload {
   readonly conversationId: string
   /** Identity of the conversation-entry intent; reused by a retry (optional). */
   readonly requestId?: string
+}
+
+/**
+ * `conversation/create` payload.
+ *
+ * The host creates a genuinely fresh blank Session through its
+ * `sessionController`; it never reuses an existing blank session. `requestId`
+ * identifies this entry intent and lets the host return the same session when a
+ * duplicate request arrives in the same process.
+ */
+export interface CreateConversationPayload {
+  readonly projectId: string
+  readonly requestId: string
 }
 
 /**
@@ -572,6 +595,16 @@ export interface LinkConversationValue {
   readonly taskId: string
   readonly conversationId: string
   readonly linkStatus: 'linked' | 'already-linked'
+}
+
+/**
+ * `conversation/create` success value.
+ *
+ * The host has created a fresh blank Session; no task attribution is implied.
+ * The id is the exact Session id the browser should open.
+ */
+export interface CreateConversationValue {
+  readonly conversationId: string
 }
 
 /**
@@ -1165,6 +1198,23 @@ export function parseLinkConversationValue(value: unknown): LinkConversationValu
 }
 
 /**
+ * Parse a `conversation/create` success value.
+ *
+ * The host must return the exact fresh Session id it created. An empty or
+ * malformed id is a protocol violation; the caller reports an unknown result
+ * and must not guess a conversation.
+ *
+ * @param value - untrusted value.
+ * @returns the value, or null when malformed.
+ */
+export function parseCreateConversationValue(value: unknown): CreateConversationValue | null {
+  if (!isRecord(value)) return null
+  const conversationId = value['conversationId']
+  if (!isString(conversationId) || conversationId.length === 0) return null
+  return { conversationId }
+}
+
+/**
  * Parse a `task/fields.update` success value.
  *
  * @param value - untrusted value.
@@ -1514,6 +1564,24 @@ export function parseLinkConversationPayload(value: unknown): LinkConversationPa
     conversationId,
     ...(requestId === undefined ? {} : { requestId }),
   }
+}
+
+/**
+ * Parse a `conversation/create` payload.
+ *
+ * Both ids are required non-empty strings. Whether the project exists is the
+ * host's decision (`unknown-project`); nothing is created by this parser.
+ *
+ * @param value - untrusted payload.
+ * @returns the payload, or null when malformed.
+ */
+export function parseCreateConversationPayload(value: unknown): CreateConversationPayload | null {
+  if (!isRecord(value)) return null
+  const projectId = value['projectId']
+  const requestId = value['requestId']
+  if (!isString(projectId) || projectId.length === 0) return null
+  if (!isString(requestId) || requestId.length === 0) return null
+  return { projectId, requestId }
 }
 
 /**

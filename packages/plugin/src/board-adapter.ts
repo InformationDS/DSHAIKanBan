@@ -102,6 +102,8 @@ import type {
   HostActivityInput,
   HostActivityOutcome,
   HostBoardPort,
+  HostCreateConversationInput,
+  HostCreateConversationOutcome,
   HostCreateTaskInput,
   HostCreateTaskOutcome,
   HostLinkConversationInput,
@@ -146,12 +148,28 @@ export interface WorkspaceRegistryLike {
   list(): readonly WorkspaceLike[]
 }
 
+/** Minimal structural view of the host's `sessionController` service (F04). */
+export interface SessionControllerLike {
+  create(request: {
+    workspaceId?: string
+    cwd?: string
+    sessionId?: string
+    agentPreset?: string
+  }): Promise<{ sessionId: string; agentPreset?: string }>
+}
+
 /** What the adapter needs from its owner: live accessors, never captured cores. */
 export interface HostBoardAdapterDeps {
   /** The core opened by the data-layer bootstrap, or `null` while it is not ready. */
   core(): KanbanCore | null
   /** The host `workspaceRegistry` service, or `undefined` when it is not bound. */
   workspaceRegistry(): WorkspaceRegistryLike | undefined
+  /**
+   * The host `sessionController` service, or `undefined` when it is not bound.
+   * Optional so existing tests and minimal compositions keep working; F04's
+   * create endpoint reports `unavailable` when it is absent.
+   */
+  sessionController?(): SessionControllerLike | undefined
 }
 
 /* ------------------------------------------------------------------ *
@@ -363,6 +381,9 @@ function summaryViewAfterSave(core: KanbanCore, scope: { scopeKind: 'task' | 'pr
  * @returns a port safe to hand to `registerBoardChannel`.
  */
 export function createHostBoardPort(deps: HostBoardAdapterDeps): HostBoardPort {
+  /** Per-process dedupe for a retried conversation-entry request (F04). */
+  const createdConversations = new Map<string, string>()
+
   /* ---------------- project resolution (§3.1) ---------------- */
 
   /** One resolved target: the core project key plus this read's display hint. */
@@ -1433,6 +1454,52 @@ export function createHostBoardPort(deps: HostBoardAdapterDeps): HostBoardPort {
       } catch (error) {
         return unknownResult(`撤销结果未知：${messageOf(error)}`)
       }
+    },
+
+    /**
+     * Create a genuinely fresh blank conversation through the host's
+     * `sessionController` (F04). The browser-side `connectWorkspace` reuses any
+     * blank session, including one already attributed to another task, so this
+     * path must exist for task entries.
+     */
+    async createConversation(input: HostCreateConversationInput): Promise<HostCreateConversationOutcome> {
+      const controller = deps.sessionController?.()
+      if (controller === undefined) {
+        return {
+          ok: false,
+          code: 'unavailable',
+          message: '会话创建不可用：宿主的 sessionController 服务未绑定；未创建任何会话。',
+        }
+      }
+
+      const previous = createdConversations.get(input.requestId)
+      if (previous !== undefined) return { ok: true, conversationId: previous }
+
+      // Resolve and register the project first: a fresh task conversation must
+      // target a project the board can subsequently read and attribute.
+      const project = await resolveProject(input.projectId)
+      if (!project.ok) return { ok: false, code: project.code, message: project.message }
+
+      let created: { sessionId: string; agentPreset?: string }
+      try {
+        created = await controller.create({ workspaceId: input.projectId })
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'unknown-result',
+          message: `会话创建结果未知：${messageOf(error)}；请先核对会话列表，不要直接重复创建。`,
+        }
+      }
+      const conversationId = typeof created.sessionId === 'string' ? created.sessionId.trim() : ''
+      if (conversationId.length === 0) {
+        return {
+          ok: false,
+          code: 'unknown-result',
+          message: '会话创建结果未知：宿主未返回有效的会话 id；请先核对会话列表，不要直接重复创建。',
+        }
+      }
+      createdConversations.set(input.requestId, conversationId)
+      return { ok: true, conversationId }
     },
 
     /**

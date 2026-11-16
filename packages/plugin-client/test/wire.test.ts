@@ -648,8 +648,8 @@ describe('F03 summary endpoints and payload guards', () => {
     for (const endpoint of Object.values(BOARD_ENDPOINTS)) {
       expect(BOARD_ENDPOINT_LIST).toContain(endpoint)
     }
-    // Twelve endpoint names; the failure-code table is unchanged at nine.
-    expect(BOARD_ENDPOINT_LIST).toHaveLength(12)
+    // Thirteen endpoint names; the failure-code table is unchanged at nine.
+    expect(BOARD_ENDPOINT_LIST).toHaveLength(13)
     expect(BOARD_FAILURE_CODES).toHaveLength(9)
   })
 
@@ -927,9 +927,10 @@ describe('F03 manual draft save (summary/draft.save)', () => {
 
 describe('F04 conversation attribution (conversation/link)', () => {
   it('publishes conversation/link without touching the nine failure codes', () => {
+    expect(BOARD_ENDPOINTS.conversationCreate).toBe('conversation/create')
     expect(BOARD_ENDPOINTS.conversationLink).toBe('conversation/link')
     expect(BOARD_ENDPOINT_LIST).toContain('conversation/link')
-    expect(BOARD_ENDPOINT_LIST).toHaveLength(12)
+    expect(BOARD_ENDPOINT_LIST).toHaveLength(13)
     expect(BOARD_FAILURE_CODES).toHaveLength(9)
   })
 

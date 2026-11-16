@@ -51,7 +51,7 @@
 import type { KanbanCore } from '@aikanban/core'
 import { BOARD_CHANNEL } from '@aikanban/plugin-client/wire'
 
-import { createHostBoardPort, type WorkspaceRegistryLike } from './board-adapter.js'
+import { createHostBoardPort, type SessionControllerLike, type WorkspaceRegistryLike } from './board-adapter.js'
 import {
   isHostConnectionLike,
   registerBoardChannel,
@@ -593,6 +593,7 @@ export function apply(ctx: HostContext): void {
   const boardAdapter = createHostBoardPort({
     core: () => lastCore,
     workspaceRegistry: () => serviceOf<WorkspaceRegistryLike>(ctx, 'workspaceRegistry'),
+    sessionController: () => serviceOf<SessionControllerLike>(ctx, 'sessionController'),
   })
   const delayedPort = createDelayedBoardPort(
     {

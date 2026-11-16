@@ -26,6 +26,7 @@
 import type {
   HostActivityOutcome,
   HostBoardPort,
+  HostCreateConversationOutcome,
   HostCreateTaskOutcome,
   HostLinkConversationOutcome,
   HostProjectListOutcome,
@@ -135,6 +136,13 @@ export function createDelayedBoardPort(state: DelayedPortState, readyPort: HostB
     message: `数据层尚未就绪，任务归属未写入${reasonSuffix()}；会话本身未被创建或修改。`,
   })
 
+  /** Conversation creation is a host session write; it needs a ready project registry/core. */
+  const unavailableCreateConversation = (): HostCreateConversationOutcome => ({
+    ok: false,
+    code: 'unavailable',
+    message: `数据层尚未就绪，会话未创建${reasonSuffix()}；未产生任何会话或任务归属。`,
+  })
+
   return {
     async readBoard(input, signal) {
       return state.coreReady() ? readyPort.readBoard(input, signal) : unavailableRead()
@@ -153,6 +161,9 @@ export function createDelayedBoardPort(state: DelayedPortState, readyPort: HostB
     },
     async createTask(input, signal) {
       return state.coreReady() ? readyPort.createTask(input, signal) : unavailableCreate()
+    },
+    async createConversation(input, signal) {
+      return state.coreReady() ? readyPort.createConversation(input, signal) : unavailableCreateConversation()
     },
     async linkConversation(input, signal) {
       return state.coreReady() ? readyPort.linkConversation(input, signal) : unavailableLinkConversation()

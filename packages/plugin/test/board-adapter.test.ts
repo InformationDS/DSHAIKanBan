@@ -54,6 +54,7 @@ import {
   type BoardRpcHandler,
   type BoardRpcResult,
   type HostBoardPort,
+  type SessionControllerLike,
   type WorkspaceRegistryLike,
 } from '../src/index.js'
 import { createDelayedBoardPort } from '../src/delayed-board-port.js'
@@ -337,6 +338,7 @@ function createHarness(
     projectStatus?: 'ok' | 'missing-dir' | 'reject'
     registry?: boolean
     armAfterWrite?: boolean
+    sessionController?: SessionControllerLike
   } = {},
 ): Harness {
   const storageFaults: StorageFaults = {}
@@ -353,6 +355,7 @@ function createHarness(
   const adapter = createHostBoardPort({
     core: () => core,
     workspaceRegistry: () => (options.registry === false ? undefined : registry.registry),
+    ...(options.sessionController === undefined ? {} : { sessionController: () => options.sessionController }),
   })
   return {
     core,
@@ -2632,5 +2635,59 @@ describe('F04 conversation/link attribution', () => {
 
     const supported = await harness.handler('board/nope', {}, SIGNAL)
     expect(failureOf(supported).message).toContain('conversation/link')
+  })
+})
+
+describe('F04 conversation/create fresh sessions', () => {
+  it('creates through sessionController and reuses the requestId', async () => {
+    const requests: { workspaceId?: string }[] = []
+    const sessionController: SessionControllerLike = {
+      create: async (request) => {
+        requests.push(request)
+        return { sessionId: `session-${requests.length}` }
+      },
+    }
+    const harness = createHarness({ sessionController })
+
+    const first = successOf(
+      await harness.handler('conversation/create', { projectId: 'ws-1', requestId: 'req-1' }, SIGNAL),
+    )
+    const retry = successOf(
+      await harness.handler('conversation/create', { projectId: 'ws-1', requestId: 'req-1' }, SIGNAL),
+    )
+
+    expect(first).toEqual({ conversationId: 'session-1' })
+    expect(retry).toEqual({ conversationId: 'session-1' })
+    expect(requests).toEqual([{ workspaceId: 'ws-1' }])
+  })
+
+  it('maps an unknown project to unknown-project without creating a session', async () => {
+    const requests: unknown[] = []
+    const harness = createHarness({
+      sessionController: {
+        create: async (request) => {
+          requests.push(request)
+          return { sessionId: 'session-1' }
+        },
+      },
+    })
+
+    const failure = failureOf(
+      await harness.handler('conversation/create', { projectId: 'ws-missing', requestId: 'req-1' }, SIGNAL),
+    )
+
+    expect(failure.code).toBe('unknown-project')
+    expect(requests).toEqual([])
+  })
+
+  it('reports unavailable when sessionController is not bound', async () => {
+    const harness = createHarness()
+
+    const failure = failureOf(
+      await harness.handler('conversation/create', { projectId: 'ws-1', requestId: 'req-1' }, SIGNAL),
+    )
+
+    expect(failure.code).toBe('unavailable')
+    expect(failure.message).toContain('sessionController')
   })
 })

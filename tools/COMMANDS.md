@@ -224,7 +224,7 @@ git -C $BOX checkout --detach <commit-or-branch>
 & $NODE $PNPM install --frozen-lockfile
 & $NODE $PNPM run typecheck              # 期望 EXIT 0
 & $NODE $PNPM run build                  # 期望 EXIT 0；产出 packages/plugin/lib/index.js 与 lib/client.js
-& $NODE $PNPM -r --if-present run test   # 期望 462 通过（core 80 / plugin-client 205 / plugin 177）
+& $NODE $PNPM -r --if-present run test   # 期望 510 通过（core 80 / plugin-client 233 / plugin 197）
 & $NODE tools\verify-host-import.mjs     # 期望 11/11 PASS
 & $NODE tools\probe-host.mjs             # 期望 PROBE OK 5/5（约 40–120 秒）
 ```
@@ -239,7 +239,9 @@ git -C $BOX checkout --detach <commit-or-branch>
 
 **更新（2026-11-12 GUI 反馈修复 @ `1502a15`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **363 passed**（`packages/core` **66** / `packages/plugin-client` **152** / `packages/plugin` **145**）；client bundle 58.23 kB。修复活动历史按钮重复（同级 key 冲突）与空列/拖放（drop 目标移到整列、空 body minHeight、drag ref + dataTransfer）。**该修复版已于 2026-11-12 安装并重启到真实 profile**；profile `client.js`（58231B，SHA256 `5B108FE9…`）与 p6c 构建一致。真实 GUI 已验证创建/两次状态流转/活动/字段编辑/撤销/列内重排/阻塞/完成/取消/重开；失败草稿/重启、拖拽、键盘、故障注入仍未验证。
 
-**更新（2026-11-13 F03 手动概况/项目总览 @ `79e0fa2` + `973ee67` + `58c7c69`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **462 passed**（`packages/core` **80** / `packages/plugin-client` **205** / `packages/plugin` **177**）；`verify-host-import` **12/12**、`probe-host` **5/5**，`verify-rpc-roundtrip` 为 **37/37**，覆盖 **11 端点/9 码**（含 `summary/read`、`summary/save`、`summary/draft.save`）。F03 已安装到真实 profile、因 F03 重启三次，真实 GUI 的 AT-26（通过）与 AT-44（2026-11-14 空项目补测，通过）；R02 保存后卡片不即时刷新缺陷已由 `58c7c69` 修复并复验；AT-49 通过（含故障注入，隔离 storage-file-lock）、联合 AT 待执行/待联合验收，不能写成已验收。
+**更新（2026-11-13 F03 手动概况/项目总览 @ `79e0fa2` + `973ee67` + `58c7c69`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **462 passed**（`packages/core` **80** / `packages/plugin-client` **205** / `packages/plugin` **177**）；`verify-host-import` **11/11**（脚本实测；旧 12/12 口径有误）、`probe-host` **5/5**，`verify-rpc-roundtrip` 为 **37/37**，覆盖 **11 端点/9 码**（含 `summary/read`、`summary/save`、`summary/draft.save`）。F03 已安装到真实 profile、因 F03 重启三次，真实 GUI 的 AT-26（通过）与 AT-44（2026-11-14 空项目补测，通过）；R02 保存后卡片不即时刷新缺陷已由 `58c7c69` 修复并复验；AT-49 通过（含故障注入，隔离 storage-file-lock）、联合 AT 待执行/待联合验收，不能写成已验收。
+
+**更新（2026-11-17 F04 新建工作对话入口 @ `5e88bab`，同一盘外沙盒）**：`build`/`typecheck` EXIT 0；全量测试 **510 passed**（`packages/core` **80** / `packages/plugin-client` **233** / `packages/plugin` **197**）；`verify-host-import` **11/11**、`probe-host` **5/5**；`verify-rpc-roundtrip` 为 **37/37**，但工具仍是 **11 端点/9 码**契约，**不含 `conversation/create`/`conversation/link`**，因此不覆盖 F04 新端点。F04 切片 A（host `conversation/create` + `conversation/link`，通道 13 端点；`5e88bab` 修复任务入口复用已归属 blank session）的代码/门禁已落地并安装到真实 `desktop` profile（备份 `20261117-2`；client bundle 93702 B、SHA256 `866C2A3062F8694CCE537C341A848A7E893B543A411772047AB303B6D7AC743A`）；真实 GUI 验证项目入口未关联新建、两个任务入口新建/归属/打开（会话 id 与 linkedAt 见 F04 implementation/verification），均未自动发送、无记录/成果。真实双击连点未执行；AT-09/AT-100 仅部分执行，AT-12 与联合 AT（AT-10/11/15/20/36/57/92—94/101）待执行/待联合验收，**不能写成 F04 已验收**。
 
 ### 10.4 仍然禁止 / 仍然需要人
 

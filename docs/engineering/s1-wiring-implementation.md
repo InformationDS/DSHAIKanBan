@@ -4250,55 +4250,62 @@ F03 相关测试：`packages/core/test/f03-manual-summary.test.ts`、`packages/p
 - **工具覆盖缺口（已关闭）**：`7db9794` 已将 `verify-rpc-roundtrip` 扩到 11 端点/9 码，p6c 实测 37/37，覆盖 `summary/read`、`summary/save`、`summary/draft.save`；仍不证明浏览器半、真实 profile 或公开注册入口。
 - **F01/F02 的「部分执行」口径不变**：F03 入口依赖其现有 UI，F03 不能借用 F01/F02 未执行的 AT 结论。
 
-## 22. F04 新建工作对话入口（2026-11-14，提交 97d9c78 / 93ab480 / 745bec9）
+## 22. F04 新建工作对话入口（2026-11-17，提交 97d9c78 / 93ab480 / 745bec9 / 5e88bab / fee1c32）
 
 ### 22.1 提交、工作区与边界
 
-- `79e0fa2`/`973ee67` 之后，F04 切片 A 由三个提交落地：`97d9c78 feat(conversation): add conversation/link attribution endpoint`（wire/source/channel-source/host `board-channel`/`board-adapter`/`delayed-board-port` 及测试，共 10 文件）、`93ab480 feat(conversation): add browser entry for new conversations`（`board.tsx`/`controller.ts`/`index.tsx`/`model.ts`/`runtime.ts` 及测试，共 8 文件）、`745bec9 fix(conversation): probe uiWorkspace through reflect first`（只改 `packages/plugin-client/src/index.tsx` 的探测顺序，1 行）。当前 HEAD `745bec9`。
-- **契约**：项目入口 `uiWorkspace.connectWorkspace(projectId)` → `openSession(conversationId)`，**不调用** `conversation/link`，归属保持未关联；任务入口 `connectWorkspace` → host `conversation/link`（`taskId`+`conversationId`，`requestId` 仅重试关联）→ `openSession`；host **不创建 session**，不存在 `conversation/create`，不新增 `sessionController` accessor。会话创建属于浏览器 `workspace` 能力，host 只做归属。
-- **边界**：F04 的代码与 UI 已提交，**未安装到真实 `desktop` profile、未因 F04 重启、未在真实 GUI 操作**；F04 的 AT 全部待执行，无 `verification.md`；联合 AT 不提前通过。F01/F02/F03 的既有口径不变，F04 不借用它们的验收结论。
-- 工作区：本次文档更新前代码工作区干净，仅有 F04 `implementation.md` 未跟踪；本次只改文档，未改代码、未 commit。
+- F04 切片 A 由五个提交落地：`97d9c78 feat(conversation): add conversation/link attribution endpoint`（wire/source/channel-source/host `board-channel`/`board-adapter`/`delayed-board-port` 及测试，共 10 文件）、`93ab480 feat(conversation): add browser entry for new conversations`（`board.tsx`/`controller.ts`/`index.tsx`/`model.ts`/`runtime.ts` 及测试，共 8 文件）、`745bec9 fix(conversation): probe uiWorkspace through reflect first`（只改 `index.tsx` 的探测顺序）、`5e88bab fix(conversation): create fresh sessions and fix task-entry reuse`（host 新增 `conversation/create`；浏览器改为先由 host 创建全新 session，修复任务入口复用已归属 blank session 的 bug）、`fee1c32 fix(f04): resolve uiWorkspace on use after late binding`（client `index.tsx`/`runtime.ts` 及测试，延迟绑定后在使用时解析）。当前 HEAD `5e88bab`。
+- **契约**：项目入口 `conversation/create` → `uiWorkspace.openSession(conversationId)`，**不调用** `conversation/link`，归属保持未关联；任务入口 `conversation/create` → host `conversation/link`（`taskId`+`conversationId`，`requestId` 只用于重试关联）→ `openSession`；host 不创建任务归属，任务归属仍由 core `linkConversation` 写。`uiWorkspace.connectWorkspace` 只作为测试注入 source 的兼容回退，生产路径不再用它创建会话。
+- **边界**：F04 已安装到真实 `desktop` profile 并在真实 GUI 验证项目/任务入口的新建、归属与打开；**真实双击连点未执行**；AT-09/AT-100 部分执行，AT-12 与联合 AT（AT-10、AT-11、AT-15、AT-20、AT-36/101、AT-57、AT-92—94）待执行/待联合验收；无整条 AT 通过。F01/F02/F03 的既有口径不变，F04 不借用它们的验收结论。
+- 工作区：代码实现已在上述提交；本次文档更新只改 docs/，另新增 `docs/evidence/2026-11-17-f04/`（两张 GUI 截图与 `f04-state.txt`）；未改代码、未 commit。
 
 ### 22.2 契约实现（core / wire）
 
 - **core 未改**：复用既有 `KanbanCore.linkConversation({taskId, conversationId, at?})`，返回 `linked`/`already-linked`/`rejected`（`unknown-scope`/`rebind-forbidden`/`invalid-input`）；只写任务 scope 的 conversations 链接与时间，不创建会话、不改任务字段、不产生记录。`LinkOutcome` 另有 `linked-outcome`/`already-linked-outcome` 供 `linkOutcomeTask` 使用，`linkConversation` 本身不返回。
-- **wire**：`BOARD_ENDPOINTS` 由 11 增至 **12**，新增 `conversationLink:'conversation/link'`（`wire.ts:160`）；`BOARD_FAILURE_CODES` 仍 **9 码**（`wire.ts:61-77`），不新增。`LinkConversationPayload {taskId, conversationId, requestId?}`（`:281-286`）；`LinkConversationValue {taskId, conversationId, linkStatus:'linked'|'already-linked'}`（`:571-575`）；`parseLinkConversationPayload`（`:1504-1514`）、`parseLinkConversationValue`（`:1156-1164`）。
-- **失败值只有 `{ok:false, code, message}`，无结构化 details**；客户端自己保存 `conversationId`/`taskId` 用于重试。host-only `invalid-payload` 不发给浏览器。
-- 映射：`invalid-input`（缺字段/空值）、`not-found`（任务不存在）、`unknown-project`（项目未登记）、`save-failed`（会话已归属其他任务，保留原归属；或写入失败）、`unknown-result`（结果未知）、`unavailable`（host 能力未就绪）。**不存在 `conversation/create`**，host 不创建 session。
+- **wire**：`BOARD_ENDPOINTS` 由 11 增至 **13**，新增 `conversationCreate:'conversation/create'`（`wire.ts:159`）与 `conversationLink:'conversation/link'`（`:170`）；`BOARD_FAILURE_CODES` 仍 **9 码**（`:61-77`），不新增。`CreateConversationPayload {projectId, requestId}`（`:306-309`，`requestId` 必填，host 按它识别重复创建）、`CreateConversationValue {conversationId}`（`:606-608`）；`LinkConversationPayload {taskId, conversationId, requestId?}`（`:281-286`）、`LinkConversationValue {taskId, conversationId, linkStatus:'linked'|'already-linked'}`（`:594-598`）；解析器 `parseCreateConversationValue`、`parseLinkConversationPayload`（`:1504-1514`）、`parseLinkConversationValue`（`:1156-1164`）。
+- `conversation/create` 成功值只有新会话 id；失败映射：缺字段/空值 → `invalid-input`；项目未登记/无法解析 → `unknown-project`；`sessionController` 未绑定 → `unavailable`；创建异常/空 id → `unknown-result`（提示先核对，不要直接重复创建）。
+- `conversation/link` 失败值只有 `{ok:false, code, message}`，**无结构化 details**；客户端自己保存 `conversationId`/`taskId` 用于重试。host-only `invalid-payload` 不发给浏览器。
+- link 映射：`invalid-input`（缺字段/空值）、`not-found`（任务不存在）、`unknown-project`（项目未登记）、`save-failed`（会话已归属其他任务，保留原归属；或写入失败）、`unknown-result`（结果未知）、`unavailable`（host 能力未就绪）。
 
 ### 22.3 host 实现
 
-- `packages/plugin/src/board-channel.ts`：`HostLinkConversationInput`（:375-380）、`HostLinkConversationSuccess`（:386-391）、`HostLinkConversationFailure`（:397-401）、`HostLinkConversationOutcome`（:404）；`HostBoardPort` 增 `linkConversation(input, signal?)`（:472）；handler 分支（:588-611）沿用 parse → 校验（空 id/缺字段 → host-only `invalid-payload`）→ port → 映射失败，未捕获异常 → `unknown-result`。
-- `packages/plugin/src/board-adapter.ts:1452-1532`：`workspaceRegistry()` 缺失 → `unavailable`；`deps.core()` 为空 → `unavailable`；`preReadTask`（不存在 → `not-found`，读取异常 → `save-failed`）；任务所属项目未登记 → `unknown-project`；`core.linkConversation` 映射：`linked`/`linked-outcome` → `linkStatus:'linked'`，`already-linked`/`already-linked-outcome` → `'already-linked'`，`rejected/unknown-scope` → `not-found`，`rejected/rebind-forbidden` → `save-failed`（message 说明原归属不变），`rejected/invalid-input` → `invalid-input`，其它 rejected → `save-failed`，默认/异常 → `unknown-result`。
-- `packages/plugin/src/delayed-board-port.ts`（:132、:157-158）：host 未就绪时 `linkConversation` 返回 `unavailable`，coreReady 后委托真实 port。
+- `packages/plugin/src/board-channel.ts`：`HostCreateConversationInput`（:376）、`HostCreateConversationSuccess`（:382）、`HostCreateConversationFailure`（:388）、`HostCreateConversationOutcome`（:395）；`HostLinkConversationInput/Success/Failure/Outcome`（:398-427）；`HostBoardPort` 增 `createConversation(input, signal?)`（:490）与 `linkConversation`（:501）；handler 分别位于 :617、:632，均走 parse → 校验 → port → 失败映射，未捕获异常 → `unknown-result`。
+- `packages/plugin/src/board-adapter.ts`：`SessionControllerLike`（:151）、`deps.sessionController?()`（:172）。`createConversation`（:1465）：未绑定 → `unavailable`（“会话创建不可用：宿主的 sessionController 服务未绑定；未创建任何会话。”）；按 `requestId` 查已创建记录（命中返回同一 `conversationId`）；`resolveProject(projectId)` 解析/登记项目；`controller.create({workspaceId: projectId})`（**不传 `sessionId`**，真正新建）；异常 → `unknown-result`（“会话创建结果未知：…；请先核对会话列表，不要直接重复创建。”）；空 id → `unknown-result`；成功后记录 `requestId → conversationId`。
+- `linkConversation`（:1519）：`workspaceRegistry()`/`deps.core()` 缺失 → `unavailable`；`preReadTask`（不存在 → `not-found`，读取异常 → `save-failed`）；任务所属项目未登记 → `unknown-project`；`core.linkConversation` 映射：`linked`/`linked-outcome` → `linkStatus:'linked'`，`already-linked`/`already-linked-outcome` → `'already-linked'`，`rejected/unknown-scope` → `not-found`，`rejected/rebind-forbidden` → `save-failed`（message 说明原归属不变），`rejected/invalid-input` → `invalid-input`，其它 rejected → `save-failed`，默认/异常 → `unknown-result`。
+- `packages/plugin/src/index.ts`：`HostBoardAdapterDeps` 增 `sessionController: () => serviceOf<SessionControllerLike>(ctx, 'sessionController')`（:596），用 reflect 非抛错获取，不新增硬 `inject`。
+- `packages/plugin/src/delayed-board-port.ts`（:132、:157-158）：host 未就绪时 `createConversation`/`linkConversation` 返回 `unavailable`，coreReady 后委托真实 port。
 - **已知缺口**：adapter 目前只校验任务存在与所属项目登记，**归档/删除任务的拒绝尚未实现**；不能把归档/删除任务当作可用（F04-R02 仍要求归档先恢复、已删除不能新建）。
 
 ### 22.4 浏览器侧实现
 
-- `packages/plugin-client/src/source.ts`：`LinkConversationInput`（:136-142）、`LinkConversationSuccess`（:307-312）、`LinkConversationFailure`（:323-327）、`LinkConversationResult`（:330）；`BoardSource.linkConversation`（:598）；无通道文案“看板数据通道未接通：无法写入任务归属，会话本身未被创建或修改。”（:669），无通道返回 `unavailable`（:691）。
-- `packages/plugin-client/src/channel-source.ts:328-366`：本地校验 id 非空 → `invalid-input`；payload 按需带 `requestId`；`call(BOARD_ENDPOINTS.conversationLink,payload)`；抛错 → `unknown-result`；失败码非 9 码 → `save-failed`；成功值解析失败 → `unknown-result`。
-- `controller.ts`：`WorkspacePort {connectWorkspace(projectId):Promise<string>; openSession(conversationId):void}`（:411-416）；F04 方法 `newProjectConversation`/`newTaskConversation`/`retryConversation`/`dismissConversation`（:592-608）；`ConversationEntryState`（`model.ts:1249-1261`）含 `phase`（connecting/linking/opening/opened/failed）、`step`（connect/link/open）、`conversationId`、`requestId`、`linkStatus`、`code`/`error`；`startConversation`（:1586-1802）每 scope 一个 entry，重复入口忽略；项目入口 connect→open（显式不 link），任务入口 connect→link→open；`requestId=mintOperationId()` 每次入口生成；connect 失败保留 `failed/connect`，link 失败保留 `conversationId` 且只重试 link，open 失败只重试 open；`dismiss` 仅 settled 时清空；seq + scope 校验（`conversationStillCurrent`）丢弃切换项目/关闭详情后的迟到响应。
-- `index.tsx`：`UiWorkspaceLike` 只要求 `connectWorkspace`/`openSession`；探测顺序 `ctx.reflect?.get('uiWorkspace', false) ?? ctx.get?.('uiWorkspace')`（`745bec9` 修复点，之前是先 `get`）；两方法均为函数才 `setWorkspacePort` 并记录“uiWorkspace available: conversation entry enabled”，否则置空并记录“uiWorkspace unavailable: conversation entry explains itself”；不声明 `inject`，不可用时入口解释不伪造。
-- `model.ts:1229-1342`：项目按钮“新建对话（不关联任务）”、任务按钮“新建对话（固定归属当前任务）”；进度文案“正在创建或复用空白对话…”/“对话已就绪，正在写入任务归属…”/“归属已写入，正在打开对话…”；成功文案按 scope 与 `already-linked` 区分；失败 headline 按 step，重试文案“重试创建对话/重试归属/重试打开”；收起。
+- `packages/plugin-client/src/source.ts`：`CreateConversationInput {projectId, requestId}`（:131）、`CreateConversationSuccess`（:138）、`CreateConversationFailure`（:144）、`CreateConversationResult`（:151）；`LinkConversationInput`（:136-142）、`LinkConversationSuccess`（:307-312）、`LinkConversationFailure`（:323-327）、`LinkConversationResult`（:330）；`BoardSource.createConversation`（:625）与 `linkConversation`（:598）；无通道文案分别说明“未创建任何会话”/“会话本身未被创建或修改”，返回 `unavailable`（:711、:734-735）。
+- `packages/plugin-client/src/channel-source.ts`：create 在 :330-356，校验 projectId/requestId 非空 → `invalid-input`，`call(BOARD_ENDPOINTS.conversationCreate,payload)`，抛错 → `unknown-result`，未知失败码 → `save-failed`，解析失败 → `unknown-result`；link 在 :328-366，同样本地校验与归一。
+- `controller.ts`：`WorkspacePort {connectWorkspace(projectId):Promise<string>; openSession(conversationId):void}`（:411-416）；F04 方法 `newProjectConversation`/`newTaskConversation`/`retryConversation`/`dismissConversation`（:592-608）；`ConversationEntryState`（`model.ts:1249-1261`）含 `phase`（connecting/linking/opening/opened/failed）、`step`（connect/link/open）、`conversationId`、`requestId`、`linkStatus`、`code`/`error`。`connectConversationStep`（:1694-1768）：检查 workspace 可用（无/`isAvailable()===false` → `failed/connect` + `unavailable`）；生产 source 有 `createConversation` 时调 `source.createConversation({projectId: state.selectedProjectId ?? entry.scopeId, requestId: entry.requestId})` 取新会话，否则回退 `workspace.connectWorkspace(projectId)`（测试兼容）；项目入口 create → opening → `openConversationStep`（不 link），任务入口 create → linking → `linkConversationStep`（link 成功保存 linkStatus）→ open。`startConversation`（:1770）每 scope 一个 entry，重复入口忽略；`requestId=mintOperationId()` 每次入口生成；重试按 step 只补失败步骤，link/open 复用同一 `conversationId`；`dismiss` 仅 settled 可用；seq + scope 校验（`conversationStillCurrent`）丢弃切换项目/关闭详情后的迟到响应。
+- `runtime.ts`：`currentWorkspaceResolver` 延迟解析，`resolveWorkspacePort()` 每次使用重新探测，`createLazyWorkspacePort()` 的 `connectWorkspace`/`openSession` 在调用时解析，`isAvailable()` 反映当前绑定；`setWorkspaceResolver()` 供 `index.tsx` 使用。
+- `index.tsx`：`UiWorkspaceLike` 只要求 `connectWorkspace`/`openSession`；`probeWorkspace` 每次入口调用，顺序 `ctx.reflect?.get('uiWorkspace', false) ?? ctx.get?.('uiWorkspace')`（`745bec9` 修复顺序，`fee1c32` 后延迟绑定在使用时再解析）；不声明 `inject`，不可用时入口解释，不伪造。
+- `model.ts:1229-1342`：项目按钮“新建对话（不关联任务）”、任务按钮“新建对话（固定归属当前任务）”；进度文案“正在创建或复用空白对话…”（创建阶段）等；成功文案按 scope 与 `already-linked` 区分；失败 headline 按 step，重试文案“重试创建对话/重试归属/重试打开”；收起。
 - `board.tsx`：`renderConversationArea`（:950-1018）；任务详情入口 `data-aikanban-task-new-conversation=<taskId>`（:1064-1077）；项目区入口 `data-aikanban-new-project-conversation='true'`（:1474-1489）；数据属性 `data-aikanban-conversation`、`-phase`、`-status`、`-error`、`-retry`、`-progress`、`-id`、`-dismiss`；`BoardActions` 增四个回调（:191-200）。`DETAIL_PLACEHOLDERS` 的 F04 占位已由真实入口取代。
 
-### 22.5 门禁（2026-11-14 @ `745bec9`）
+### 22.5 门禁、安装与真实 GUI 证据（2026-11-17 @ `5e88bab`）
 
 | 项 | 结果 | 备注 |
 | --- | --- | --- |
-| 全量测试 | **505 passed**（core **80** / plugin-client **231** / plugin **194**） | 含 F04 controller/wire/channel-roundtrip/adapter 用例；不等于 AT |
+| 全量测试 | **510 passed**（core **80** / plugin-client **233** / plugin **197**） | 含 F04 controller/wire/channel-roundtrip/adapter 用例；不等于 AT |
 | `typecheck` / `build` | `EXIT 0` | |
 | `verify-host-import` | **11/11** | 脚本实测；既有 12/12 口径与实测不符 |
 | `probe-host` | **5/5** | 第 5 项 `channel=/aikanban registered=true path=compat dataLayerReady=true` |
-| `verify-rpc-roundtrip` | 37/37 | **仍是 11 端点/9 码契约，不含 `conversation/link`；不覆盖 F04 新端点** |
+| `verify-rpc-roundtrip` | 37/37 | **仍是 11 端点/9 码契约，不含 `conversation/create`/`conversation/link`；不覆盖 F04 新端点** |
 | `check_docs` | PASS（65 Markdown） | 文档检查不等于实现/验收 |
 
-F04 相关测试：`packages/plugin-client/test/controller.test.ts`（11 条）、`packages/plugin-client/test/wire.test.ts`、`packages/plugin/test/channel-roundtrip.test.ts`（6 条）、`packages/plugin/test/board-adapter.test.ts`（6 条）。F04 的 HTTP 层证据来自 host 侧测试，不是 `verify-rpc-roundtrip`。
+- **安装**：2026-11-17 安装到真实 `desktop` profile（备份 `20261117-2`），安装 client bundle 93702 B、SHA256 `866C2A3062F8694CCE537C341A848A7E893B543A411772047AB303B6D7AC743A`。
+- **真实 GUI**（`http://127.0.0.1:13646`，activation `mwjef86q-1`，host pid 8168）：项目入口项目 `pluginInstall` 新建 `session-4ad43a14-991c-4611-a879-6e4b08a074c1`（335 B 空会话），项目 links.conversations 仍为空；任务入口任务 `F04 对话入口测试`（`te817ad493b3fa430e8156eb2237ce317`）新建 `session-a4efa985-5154-448b-9016-d59ac12f447f`（336 B），linkedAt `2026-11-16T15:10:38.659Z`，未复用已归属 t11 的 `session-ee3628ef…`；第二次任务入口任务 `F04 任务入口截图`（`t69c9a4ed47ded64869c5d356301c152f`）新建 `session-c19ce0db-2764-420f-88a7-b66dd3a291db`（336 B），linkedAt `2026-11-16T15:13:47.886Z`。入口点击后 UI 打开空会话输入区，均未自动发送、无记录/成果。
+- F04 相关测试：`packages/plugin-client/test/controller.test.ts`、`wire.test.ts`、`packages/plugin/test/channel-roundtrip.test.ts`、`board-adapter.test.ts`。
 
-### 22.6 未安装、未验证与风险
+### 22.6 验收边界、未验证与风险
 
-- **未安装到真实 `desktop` profile、未因 F04 重启、未真实 GUI**；F04 的 AT-09—12、AT-15、AT-20、AT-36、AT-57、AT-92—94、AT-100、AT-101 全部待执行，联合 AT 需 F06/F11 等另行联合验收；无 `verification.md`；§22.5 的门禁不能写成 F04 验收通过。
-- `uiWorkspace` 的运行时形状、`connectWorkspace` 是否真正复用 blank session、返回 id 语义、`openSession` 是否触发执行/挂到项目工作区，均未在真实 GUI 验证；不可用时代码只解释，不能据此宣称真实环境可用。
+- **没有整条 F04 AT 通过**：AT-09/AT-100 仅部分执行（单次新建/归属/打开在真实 GUI 通过；真实双击连点未执行，仅单测覆盖“双击只 connect 一次”）；AT-12、AT-10/11/15/20/36/101/57/92—94 待执行/待联合验收；不能把本节门禁写成 F04 验收通过。
+- `uiWorkspace` 的运行时形状、`connectWorkspace` 的 blank 复用语义、`openSession` 是否触发执行/挂到项目工作区，仍以真实环境行为为准；本切片的真实 GUI 证据只覆盖入口创建/归属/打开，未覆盖“打开后不执行”等 F04-R04 全链路。
+- **`requestId` 去重只在 host 进程内**（`createdConversations` map）；进程重启/多实例下不能仅靠它保证幂等，结果未知时仍应核对会话列表。
 - 归档/删除任务拒绝未实现（§22.3）；在补齐前不能把此类任务当作可新建对话。
 - 本切片不做列表/搜索/继续任意既有对话/标题同步/F11 背景/F06 记录/F13 系统整理对话隔离/F17 来源降级；打开后的实际工作与背景由宿主/F11 承担。
 - **F01/F02/F03 的「部分执行/进行中」口径不变**：F04 不借用其验收结论，也不改变其状态。

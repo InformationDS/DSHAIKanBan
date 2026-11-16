@@ -1,0 +1,14 @@
+AIKanBan F04 slice A real-GUI evidence
+captured: 2026-11-17 local (Australia/Sydney)
+app: GUI http://127.0.0.1:13646; activation mwjef86q-1; host pid 8168; main window handle 854728
+installed: client.js 93702 B SHA256 866C2A3062F8694CCE537C341A848A7E893B543A411772047AB303B6D7AC743A
+project: pluginInstall bee90684-17b6-42f1-95c1-bdf7b6f36b24
+project-scope links.conversations = {} (project entry did not link)
+project-entry session: session-4ad43a14-991c-4611-a879-6e4b08a074c1; session file 335 B empty
+task: F04 对话入口测试 te817ad493b3fa430e8156eb2237ce317
+task link: session-a4efa985-5154-448b-9016-d59ac12f447f; linkedAt 2026-11-16T15:10:38.659Z; session file 336 B empty
+task: F04 任务入口截图 t69c9a4ed47ded64869c5d356301c152f
+task link: session-c19ce0db-2764-420f-88a7-b66dd3a291db; linkedAt 2026-11-16T15:13:47.886Z; session file 336 B empty
+old session-ee3628ef-0a4c-438f-8561-f1f1ce839c5d was NOT reused
+new sessions contain no messages/records; task link is the only persistence
+not executed: real GUI double-click/idempotency; AT-12 and joint ATs
